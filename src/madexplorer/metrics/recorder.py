@@ -12,6 +12,9 @@ class MetricsRecorder:
 
     def __init__(self, scenario: Scenario, snapshot_interval_years: int) -> None:
         self.species_ids = sorted(scenario.species)
+        knowledge = scenario.knowledge
+        self.domains = tuple(knowledge.domains) if knowledge else ()
+        self.technologies = tuple(t.id for t in knowledge.technologies) if knowledge else ()
         self.interval = snapshot_interval_years
         self.start_year = scenario.config.simulation.start_year
         self.rows: list[dict[str, float | int]] = []
@@ -71,6 +74,50 @@ class MetricsRecorder:
             "temp_anomaly_c": state.climate.temp_anomaly_c,
             "log_rain_anomaly": state.climate.log_rain_anomaly,
         }
+        harvest = ledger.harvest_kcal
+        row.update(
+            {
+                "farm_share_of_harvest": ledger.farm_harvest_kcal / harvest if harvest else 0.0,
+                "cultivated_ha": float(sum(u.fields_ha for u in units)),
+                "farming_population_share": (
+                    sum(u.population for u in units if u.fields_ha > 0) / population
+                    if population
+                    else 0.0
+                ),
+                "sedentary_share": (
+                    sum(u.population for u in units if u.residence_years >= 10) / population
+                    if population
+                    else 0.0
+                ),
+                "stores_per_capita_kcal": float(sum(u.stores_kcal for u in units) / population)
+                if population
+                else 0.0,
+                "cells_over_100": int((cell_pop > 100).sum()),
+                "cells_over_500": int((cell_pop > 500).sum()),
+                "mean_groups_per_unit": float(np.mean([u.groups for u in units])) if units else 0.0,
+                "resolution_merges": ledger.resolution_merges,
+                "trade_volume_kcal": ledger.trade_volume_kcal,
+                "trade_share_of_harvest": ledger.trade_volume_kcal / harvest if harvest else 0.0,
+                "transport_loss_kcal": ledger.transport_loss_kcal,
+                "spoilage_kcal": ledger.spoilage_kcal,
+                "inventions": ledger.inventions,
+                "adoptions": ledger.adoptions,
+                "technology_losses": ledger.technology_losses,
+                "mean_soil_nutrients_farmed": float(
+                    np.mean([eco.soil_nutrients[u.cell] for u in units if u.fields_ha > 0])
+                )
+                if any(u.fields_ha > 0 for u in units)
+                else 1.0,
+            }
+        )
+        for i, domain in enumerate(self.domains):
+            row[f"knowledge_{domain}"] = weighted([float(u.knowledge[i]) for u in units])
+        for tech in self.technologies:
+            row[f"tech_share_{tech}"] = (
+                sum(u.population for u in units if tech in u.technologies) / population
+                if population
+                else 0.0
+            )
         if len(self.species_ids) > 1:
             for sid in self.species_ids:
                 row[f"population_{sid}"] = sum(u.population for u in units if u.species_id == sid)

@@ -78,13 +78,40 @@ def _harvest(
     return h_p, h_g
 
 
+def _marginal_return(
+    accessible: tuple[float, float], rates: tuple[float, float], effort_hours: float
+) -> float:
+    """Derivative of total harvest with respect to effective effort at ``effort_hours``."""
+    (a_p, a_g), (r_p, r_g) = accessible, rates
+    w_p, w_g = r_p * a_p, r_g * a_g
+    total = w_p + w_g
+    if total <= 0:
+        return 0.0
+    marginal = 0.0
+    for a, r, w in ((a_p, r_p, w_p), (a_g, r_g, w_g)):
+        if a > 0:
+            share = w / total
+            marginal += r * share * math.exp(-r * share * effort_hours / a)
+    return marginal
+
+
+@dataclass(frozen=True)
+class CellForagingOutcome:
+    """Result of groups foraging one shared pool."""
+
+    shares: FloatArray  # per-unit harvest, kcal
+    removal: FloatArray  # per-resource removal (plant, game), kcal
+    effort_fraction: float  # share of labor actually applied
+    marginal_kcal_per_effective_hour: float
+
+
 @model_rule(
     name="satisficing_group_foraging",
-    version="1.0",
+    version="1.1",
     rationale=(
         "Co-located groups apply the same fraction of their labor, just enough to meet their "
-        "combined requirement plus a surplus target; harvest is shared by effective effort "
-        "(labor x local familiarity)."
+        "combined requirement (net of crops) plus a surplus target; harvest is shared by effective "
+        "effort (labor x local familiarity x ecological knowledge efficiency)."
     ),
     source_type="heuristic",
     parameters=("surplus_target", "foraging_hours_per_day", "familiarity_learning_rate"),
@@ -95,16 +122,18 @@ def cell_harvest(
     accessible: FloatArray,
     rates: FloatArray,
     labor_hours: FloatArray,
-    familiarity: FloatArray,
+    efficiency: FloatArray,
     target_kcal: float,
-) -> tuple[FloatArray, FloatArray]:
-    """Return ``(per-unit harvest, per-resource removal)`` for groups sharing a cell."""
-    effective = labor_hours * familiarity
+) -> CellForagingOutcome:
+    """Forage a shared pool; ``efficiency`` converts labor hours into effective hours."""
+    effective = labor_hours * efficiency
     capacity = float(effective.sum())
-    if capacity <= 0:
-        return np.zeros_like(labor_hours), np.zeros(2)
     stock = (float(accessible[0]), float(accessible[1]))
     returns = (float(rates[0]), float(rates[1]))
+    if capacity <= 0:
+        return CellForagingOutcome(
+            np.zeros_like(labor_hours), np.zeros(2), 0.0, _marginal_return(stock, returns, 0.0)
+        )
     fraction = 1.0
     if sum(_harvest(stock, returns, capacity)) > target_kcal:
         lo, hi = 0.0, 1.0
@@ -117,16 +146,19 @@ def cell_harvest(
         fraction = hi
     removal = np.array(_harvest(stock, returns, capacity * fraction))
     shares: FloatArray = removal.sum() * effective / capacity
-    return shares, removal
+    marginal = _marginal_return(stock, returns, capacity * fraction)
+    return CellForagingOutcome(shares, removal, fraction, marginal)
 
 
 @dataclass(frozen=True)
 class CellHarvest:
-    """Harvest outcome for one species group in one cell."""
+    """Foraging outcome for one species group in one cell."""
 
     cell: int
     unit_ids: tuple[str, ...]
     unit_harvest_kcal: tuple[float, ...]
+    unit_hours: tuple[float, ...]
+    unit_marginal_kcal_per_hour: tuple[float, ...]
     plant_removed_kcal: float
     game_removed_kcal: float
     learning_rate: float
@@ -141,16 +173,29 @@ class CellHarvest:
         eco.game_stock_kcal[self.cell] = max(
             eco.game_stock_kcal[self.cell] - self.game_removed_kcal, 0.0
         )
-        for unit_id, harvest in zip(self.unit_ids, self.unit_harvest_kcal, strict=True):
+        removed = self.plant_removed_kcal + self.game_removed_kcal
+        plant_share = self.plant_removed_kcal / removed if removed > 0 else 0.0
+        for unit_id, harvest, hours, marginal in zip(
+            self.unit_ids,
+            self.unit_harvest_kcal,
+            self.unit_hours,
+            self.unit_marginal_kcal_per_hour,
+            strict=True,
+        ):
             unit = state.units[unit_id]
-            unit.harvest_kcal = harvest
+            unit.forage_harvest_kcal = harvest
+            unit.forage_hours = hours
+            unit.forage_marginal_kcal_per_hour = marginal
+            unit.forage_plant_share = plant_share
+            unit.harvest_kcal = unit.farm_harvest_kcal + harvest
+            unit.labor_debt_hours = 0.0
             known = unit.familiarity.get(self.cell, self.initial_familiarity)
             unit.familiarity[self.cell] = known + self.learning_rate * (1.0 - known)
-            ctx.ledger.harvest_kcal += harvest
+            ctx.ledger.harvest_kcal += unit.harvest_kcal
 
 
 class ForagingSubsystem:
-    """Every group forages in its current cell."""
+    """Every group forages in its current cell with the labor left after field work."""
 
     name = "foraging"
 
@@ -179,27 +224,50 @@ class ForagingSubsystem:
                 hours_per_year = profile.foraging.foraging_hours_per_day * 365.0
                 labor = np.array(
                     [
-                        float(((u.females + u.males) * tables.labor).sum()) * hours_per_year
+                        max(
+                            float(((u.females + u.males) * tables.labor).sum()) * hours_per_year
+                            - u.labor_debt_hours
+                            - u.farm_hours,
+                            0.0,
+                        )
                         for u in group
                     ]
                 )
-                familiarity = np.array(
-                    [u.familiarity.get(cell, profile.cognition.initial_familiarity) for u in group]
+                efficiency = np.array(
+                    [
+                        u.familiarity.get(cell, profile.cognition.initial_familiarity)
+                        * (
+                            ctx.knowledge.efficiency(u.knowledge, "ecology")
+                            if ctx.knowledge
+                            else 1.0
+                        )
+                        for u in group
+                    ]
                 )
                 temperature = float(state.climate.temperature_c[cell])
-                target = sum(annual_need_kcal(u, profile, tables, temperature) for u in group) * (
-                    1.0 + profile.foraging.surplus_target
+                target = sum(
+                    max(
+                        annual_need_kcal(u, profile, tables, temperature)
+                        * (1.0 + profile.foraging.surplus_target)
+                        - u.farm_harvest_kcal,
+                        0.0,
+                    )
+                    for u in group
                 )
-                shares, removal = cell_harvest(accessible, rates, labor, familiarity, target)
-                plant_left[cell] -= removal[0]
-                game_left[cell] -= removal[1]
+                outcome = cell_harvest(accessible, rates, labor, efficiency, target)
+                plant_left[cell] -= outcome.removal[0]
+                game_left[cell] -= outcome.removal[1]
                 proposals.append(
                     CellHarvest(
                         cell=cell,
                         unit_ids=tuple(u.id for u in group),
-                        unit_harvest_kcal=tuple(float(x) for x in shares),
-                        plant_removed_kcal=float(removal[0]),
-                        game_removed_kcal=float(removal[1]),
+                        unit_harvest_kcal=tuple(float(x) for x in outcome.shares),
+                        unit_hours=tuple(float(x) * outcome.effort_fraction for x in labor),
+                        unit_marginal_kcal_per_hour=tuple(
+                            outcome.marginal_kcal_per_effective_hour * float(e) for e in efficiency
+                        ),
+                        plant_removed_kcal=float(outcome.removal[0]),
+                        game_removed_kcal=float(outcome.removal[1]),
                         learning_rate=profile.cognition.familiarity_learning_rate,
                         initial_familiarity=profile.cognition.initial_familiarity,
                     )

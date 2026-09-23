@@ -4,7 +4,7 @@ Humanity is one profile loaded from ``species/human.yaml``; no species
 parameter has a default in code, so every biological or behavioral assumption
 is visible in a versioned parameter file.
 
-MVP 1 implements the trait groups the ecological-demographic sandbox uses.
+MVP 1-2 implement the trait groups the sandbox and early agriculture use.
 Physiology distributions, social psychology distributions, and manipulation /
 niche-construction traits arrive with the subsystems that consume them.
 """
@@ -75,6 +75,7 @@ class Movement(FrozenModel):
     water_friction: float = Field(ge=1)
     flight_terrain_factor: float = Field(ge=0, le=1)
     travel_kcal_per_km: float = Field(ge=0)
+    carry_kcal_per_capita: float = Field(ge=0)  # stored food one individual can carry when moving
 
 
 class Cognition(FrozenModel):
@@ -86,6 +87,11 @@ class Cognition(FrozenModel):
     memory_years: int = Field(ge=1)
     familiarity_learning_rate: float = Field(ge=0, le=1)
     initial_familiarity: float = Field(gt=0, le=1)
+    learning_speed: float = Field(ge=0)  # multiplier on domain learning rates
+    teaching_efficiency: float = Field(ge=0)  # multiplier on knowledge transmissibility
+    knowledge_retention: float = Field(gt=0)  # divides domain decay rates
+    invention_propensity: float  # additive logit shift on innovation hazards
+    planning_horizon_years: int = Field(ge=1)  # horizon over which investments are weighed
 
 
 class Foraging(FrozenModel):
@@ -102,6 +108,15 @@ class Foraging(FrozenModel):
     surplus_target: float = Field(ge=0)
 
 
+class SubsistenceBehavior(FrozenModel):
+    """How groups adjust cultivation effort (a behavioral hypothesis, spec §4.5)."""
+
+    field_adjustment_rate: float = Field(ge=0, le=1)
+    initial_plot_ha: float = Field(ge=0)
+    return_comparison_margin: float  # farming must beat marginal foraging by this fraction
+    max_farm_labor_share: float = Field(ge=0, le=1)
+
+
 class SocialBehavior(FrozenModel):
     """Group fission/fusion and information-sharing hypotheses."""
 
@@ -115,6 +130,7 @@ class SocialBehavior(FrozenModel):
     fusion_small_group_weight: float
     fusion_mate_shortage_weight: float
     knowledge_sharing_probability: float = Field(ge=0, le=1)
+    food_sharing_propensity: float = Field(ge=0, le=1)  # share of surplus offered to neighbors
 
     @model_validator(mode="after")
     def _check_fraction(self) -> Self:
@@ -135,6 +151,8 @@ class MigrationBehavior(FrozenModel):
     inertia: float
     decisiveness: float = Field(ge=0)
     food_ratio_cap: float = Field(gt=0)
+    abandoned_stores_weight: float = Field(ge=0)  # per year of need left behind when moving
+    abandoned_fields_weight: float = Field(ge=0)  # per year of need of crop output forgone
 
 
 class SpeciesProfile(FrozenModel):
@@ -147,5 +165,6 @@ class SpeciesProfile(FrozenModel):
     movement: Movement
     cognition: Cognition
     foraging: Foraging
+    subsistence: SubsistenceBehavior
     social: SocialBehavior
     migration: MigrationBehavior

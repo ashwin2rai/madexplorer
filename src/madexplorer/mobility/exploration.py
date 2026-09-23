@@ -1,4 +1,4 @@
-"""Local knowledge: perception and social information exchange (spec §10.1, §10.3).
+"""Local spatial beliefs: perception and social information exchange (spec §10.1, §10.3).
 
 Units never see the whole map. Each year they observe cells within a
 perception radius shrunk by vegetation, with observation noise, and forget
@@ -35,15 +35,15 @@ def perception_radius_cells(cognition: Cognition, vegetation: float, cell_size_k
 
 
 @dataclass(frozen=True)
-class KnowledgeUpdate:
-    """Replace a unit's knowledge map."""
+class BeliefUpdate:
+    """Replace a unit's spatial belief map."""
 
     unit_id: str
-    knowledge: dict[int, Observation]
+    beliefs: dict[int, Observation]
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Commit the new knowledge map."""
-        state.units[self.unit_id].knowledge = self.knowledge
+        """Commit the new belief map."""
+        state.units[self.unit_id].beliefs = self.beliefs
 
 
 class PerceptionSubsystem:
@@ -51,8 +51,8 @@ class PerceptionSubsystem:
 
     name = "perception"
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[KnowledgeUpdate]:
-        """Produce updated knowledge maps."""
+    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[BeliefUpdate]:
+        """Produce updated belief maps."""
         rng = ctx.rng.stream(Streams.PERCEPTION)
         world = state.world
         cell_population = state.cell_population()
@@ -60,7 +60,7 @@ class PerceptionSubsystem:
             sid: accessible_food_kcal(state, profile.foraging)
             for sid, profile in ctx.scenario.species.items()
         }
-        updates: list[KnowledgeUpdate] = []
+        updates: list[BeliefUpdate] = []
         for unit in state.units.values():
             cognition = ctx.species(unit.species_id).cognition
             food = food_by_species[unit.species_id]
@@ -68,19 +68,19 @@ class PerceptionSubsystem:
                 cognition, float(world.vegetation_density[unit.cell]), world.cell_size_km
             )
             horizon = state.year - cognition.memory_years
-            knowledge = {c: o for c, o in unit.knowledge.items() if o.year > horizon}
+            beliefs = {c: o for c, o in unit.beliefs.items() if o.year > horizon}
             cells = [c for c in world.cells_within(unit.cell, radius) if not world.is_water[c]]
             noise = np.exp(cognition.observation_noise_sigma * rng.standard_normal(len(cells)))
             n_self = unit.population
             for cell, factor in zip(cells, noise, strict=True):
                 others = int(cell_population[cell]) - (n_self if cell == unit.cell else 0)
-                knowledge[cell] = Observation(
+                beliefs[cell] = Observation(
                     year=state.year,
                     food_kcal=float(food[cell] * factor),
                     water_access=float(world.water_access[cell]),
                     population=others,
                 )
-            updates.append(KnowledgeUpdate(unit.id, knowledge))
+            updates.append(BeliefUpdate(unit.id, beliefs))
         return updates
 
 
@@ -93,11 +93,11 @@ class SharedKnowledge:
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Merge received observations that are fresher than the unit's own."""
-        knowledge = state.units[self.unit_id].knowledge
+        beliefs = state.units[self.unit_id].beliefs
         for cell, obs in self.received.items():
-            mine = knowledge.get(cell)
+            mine = beliefs.get(cell)
             if mine is None or obs.year > mine.year:
-                knowledge[cell] = obs
+                beliefs[cell] = obs
 
 
 @model_rule(
@@ -121,7 +121,7 @@ class KnowledgeSharingSubsystem:
     name = "knowledge_sharing"
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[SharedKnowledge]:
-        """Collect what each unit learns from neighbors (based on pre-sharing knowledge)."""
+        """Collect what each unit learns from neighbors (based on pre-sharing beliefs)."""
         rng = ctx.rng.stream(Streams.PERCEPTION)
         by_cell = state.units_by_cell()
         world = state.world
@@ -135,8 +135,8 @@ class KnowledgeSharingSubsystem:
                         continue
                     if rng.random() >= probability:
                         continue
-                    for c, obs in other.knowledge.items():
-                        best = received.get(c) or unit.knowledge.get(c)
+                    for c, obs in other.beliefs.items():
+                        best = received.get(c) or unit.beliefs.get(c)
                         if best is None or obs.year > best.year:
                             received[c] = obs
             if received:

@@ -1,12 +1,16 @@
 """Shared fixtures: a tiny deterministic world and the baseline human profile."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from madexplorer.config.loader import Scenario
 from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import SpeciesProfile
+
+if TYPE_CHECKING:
+    from madexplorer.knowledge.system import KnowledgeModel
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -38,3 +42,20 @@ def human() -> SpeciesProfile:
 def human_tables(human: SpeciesProfile) -> LifeTables:
     """Life tables of the baseline human profile."""
     return LifeTables.build(human)
+
+
+def mvp2_scenario_dict(n_years: int = 60, seed: int = 1) -> dict[str, object]:
+    """Small MVP 2 world: knowledge system and all MVP 2 mechanisms on."""
+    data = small_scenario_dict(n_years=n_years, seed=seed)
+    data["knowledge_system"] = "technologies/neolithic.yaml"
+    return data
+
+
+@pytest.fixture
+def knowledge_model() -> "KnowledgeModel":
+    """Runtime model of the neolithic knowledge system."""
+    from madexplorer.knowledge.system import KnowledgeModel
+
+    scenario = Scenario.from_dict(mvp2_scenario_dict(), base_dir=ROOT)
+    assert scenario.knowledge is not None
+    return KnowledgeModel(scenario.knowledge)

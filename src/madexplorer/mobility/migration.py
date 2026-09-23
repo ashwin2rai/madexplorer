@@ -8,7 +8,7 @@ perception noise. The probability of moving rises with the utility gain.
 
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -92,12 +92,18 @@ class Relocation:
     path_cost_km: float
     travel_kcal: float
     hazard: float
+    carry_kcal: float
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Relocate the unit and record the migration."""
+        """Relocate the unit: pay travel energy, carry what stores it can, abandon fields."""
         unit = state.units[self.unit_id]
         unit.cell = self.destination
         unit.energy_debt_kcal += self.travel_kcal
+        abandoned = max(unit.stores_kcal - self.carry_kcal, 0.0)
+        unit.stores_kcal -= abandoned
+        ctx.ledger.abandoned_stores_kcal += abandoned
+        unit.fields_ha = 0.0
+        unit.residence_years = 0
         ctx.ledger.migrations += 1
         if ctx.scenario.config.output.log_migrations:
             ctx.events.emit(
@@ -133,7 +139,7 @@ class MigrationSubsystem:
                 - unit.energy_debt_kcal
             )
             reachable = ctx.movement[unit.species_id].reachable(unit.cell)
-            candidates = sorted(c for c in unit.knowledge if c in reachable)
+            candidates = sorted(c for c in unit.beliefs if c in reachable)
             if unit.cell not in candidates:
                 continue  # cannot evaluate staying without a current observation
             noise = (
@@ -141,12 +147,21 @@ class MigrationSubsystem:
                 if behavior.perception_noise > 0
                 else np.zeros(len(candidates))
             )
+            farm_kcal = unit.fields_ha * unit.crop_yield_kcal_per_ha
+            carry = n * profile.movement.carry_kcal_per_capita
+            abandoned = max(unit.stores_kcal - carry, 0.0)
+            stores_cost = behavior.abandoned_stores_weight * abandoned / need if need > 0 else 0.0
+            fields_cost = behavior.abandoned_fields_weight * farm_kcal / need if need > 0 else 0.0
             scores: dict[int, tuple[float, dict[str, float]]] = {}
             for cell, eps in zip(candidates, noise, strict=True):
-                obs = unit.knowledge[cell]
+                obs = unit.beliefs[cell]
+                if cell == unit.cell and farm_kcal > 0:
+                    obs = replace(obs, food_kcal=obs.food_kcal + farm_kcal)
                 components = cell_utility(
                     obs, n, need, reachable[cell], state.year - obs.year, memory, behavior
                 )
+                components["abandoned_stores"] = 0.0 if cell == unit.cell else -stores_cost
+                components["abandoned_fields"] = 0.0 if cell == unit.cell else -fields_cost
                 components["perception_noise"] = float(eps)
                 scores[cell] = (sum(components.values()), components)
             stay_score, stay_components = scores[unit.cell]
@@ -177,6 +192,7 @@ class MigrationSubsystem:
                         cost,
                         n * profile.movement.travel_kcal_per_km * cost,
                         hazard,
+                        carry,
                     )
                 )
         return proposals

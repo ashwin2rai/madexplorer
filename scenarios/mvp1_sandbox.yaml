@@ -28,5 +28,15 @@ initial_populations:
     cell: [44, 36]
     population: 30
 
+# MVP 2 mechanisms are off so this scenario stays the pure foraging sandbox.
+mechanisms:
+  cultivation: false
+  storage: false
+  trade: false
+  knowledge_learning: false
+  knowledge_diffusion: false
+  innovation: false
+  aggregation: false
+
 output:
   spatial_snapshot_interval_years: 10

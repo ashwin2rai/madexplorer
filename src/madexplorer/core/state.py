@@ -10,8 +10,9 @@ from madexplorer.config.schema import MechanismsConfig
 from madexplorer.core.events import EventLog
 from madexplorer.core.ids import IdAllocator
 from madexplorer.core.rng import RngManager
-from madexplorer.core.types import IntArray
+from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.ecology.resources import EcologyState
+from madexplorer.knowledge.system import Capability, KnowledgeModel, default_capabilities
 from madexplorer.mobility.movement import MovementModel
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.life_history import LifeTables
@@ -41,6 +42,13 @@ class SimulationState:
         """Total number of individuals."""
         return sum(unit.population for unit in self.units.values())
 
+    def cell_fields_ha(self) -> FloatArray:
+        """Cultivated hectares per cell."""
+        fields = np.zeros(self.world.n_cells)
+        for unit in self.units.values():
+            fields[unit.cell] += unit.fields_ha
+        return fields
+
     def units_by_cell(self) -> dict[int, list[PopulationUnit]]:
         """Co-located units, in stable order."""
         grouped: dict[int, list[PopulationUnit]] = {}
@@ -61,6 +69,15 @@ class TickLedger:
     extinctions: int = 0
     harvest_kcal: float = 0.0
     need_kcal: float = 0.0
+    farm_harvest_kcal: float = 0.0
+    spoilage_kcal: float = 0.0
+    abandoned_stores_kcal: float = 0.0
+    trade_volume_kcal: float = 0.0
+    transport_loss_kcal: float = 0.0
+    inventions: int = 0
+    adoptions: int = 0
+    technology_losses: int = 0
+    resolution_merges: int = 0
 
 
 @dataclass(eq=False)
@@ -75,6 +92,7 @@ class StepContext:
     tables: Mapping[str, LifeTables]
     movement: Mapping[str, MovementModel]
     trace_units: frozenset[str]
+    knowledge: KnowledgeModel | None = None
     ledger: TickLedger = field(default_factory=TickLedger)
 
     @property
@@ -85,3 +103,16 @@ class StepContext:
     def species(self, species_id: str) -> SpeciesProfile:
         """Species profile by id."""
         return self.scenario.species[species_id]
+
+    def capabilities(self, unit: PopulationUnit) -> dict[Capability, float]:
+        """Technology capabilities of a unit, honoring the storage/cultivation switches."""
+        caps = (
+            dict(self.knowledge.capabilities(unit.technologies))
+            if self.knowledge
+            else default_capabilities()
+        )
+        if not self.mechanisms.cultivation:
+            caps["crop_yield"] = 0.0
+        if not self.mechanisms.storage:
+            caps["storage_retention"] = 0.0
+        return caps

@@ -10,6 +10,7 @@ from typing import Any
 import yaml
 
 from madexplorer.config.schema import ScenarioConfig
+from madexplorer.knowledge.system import KnowledgeSystem
 from madexplorer.species.profile import SpeciesProfile
 
 
@@ -38,6 +39,7 @@ class Scenario:
 
     config: ScenarioConfig
     species: Mapping[str, SpeciesProfile]
+    knowledge: KnowledgeSystem | None = None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "Scenario":
@@ -55,7 +57,20 @@ class Scenario:
             raw = deep_merge(raw, ref.overrides)
             raw["id"] = ref.id
             species[ref.id] = SpeciesProfile.model_validate(raw)
-        return cls(config=config, species=species)
+        knowledge = None
+        if config.knowledge_system is not None:
+            knowledge = KnowledgeSystem.model_validate(
+                _read_yaml(base_dir / config.knowledge_system)
+            )
+            for seed in config.initial_populations:
+                unknown_domains = set(seed.initial_knowledge) - set(knowledge.domains)
+                unknown_techs = set(seed.technologies) - {t.id for t in knowledge.technologies}
+                if unknown_domains or unknown_techs:
+                    raise ValueError(
+                        f"initial population references unknown domains {sorted(unknown_domains)} "
+                        f"or technologies {sorted(unknown_techs)}"
+                    )
+        return cls(config=config, species=species, knowledge=knowledge)
 
     def with_overrides(self, *, seed: int | None = None, n_years: int | None = None) -> "Scenario":
         """Return a copy with the run seed and/or horizon replaced."""
@@ -77,6 +92,7 @@ class Scenario:
             "species_profiles": {
                 sid: profile.model_dump(mode="json") for sid, profile in self.species.items()
             },
+            "knowledge_system": self.knowledge.model_dump(mode="json") if self.knowledge else None,
         }
 
     def config_hash(self) -> str:

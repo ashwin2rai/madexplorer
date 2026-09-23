@@ -19,6 +19,9 @@ class Streams:
     DEMOGRAPHY = "demography"
     SOCIAL = "social"
     MIGRATION = "migration"
+    KNOWLEDGE = "knowledge"
+    INNOVATION = "innovation"
+    TRADE = "trade"
 
 
 def _stable_key(name: str) -> int:

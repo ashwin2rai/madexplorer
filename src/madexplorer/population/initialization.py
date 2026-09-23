@@ -3,6 +3,7 @@
 import numpy as np
 
 from madexplorer.config.schema import InitialPopulation
+from madexplorer.knowledge.system import KnowledgeModel
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import SpeciesProfile
@@ -16,8 +17,9 @@ def found_unit(
     tables: LifeTables,
     year: int,
     rng: np.random.Generator,
+    knowledge: KnowledgeModel | None = None,
 ) -> PopulationUnit:
-    """Sample a founding group with a stationary age structure."""
+    """Sample a founding group with a stationary age structure and starting knowledge."""
     weights = tables.survivorship / tables.survivorship.sum()
     counts = rng.multinomial(seed.population, weights).astype(np.int64)
     males = rng.binomial(counts, profile.life_history.male_birth_fraction).astype(np.int64)
@@ -35,4 +37,6 @@ def found_unit(
         reserve_kcal_per_capita=reserve,
         founded_year=year,
         familiarity={cell: 1.0},  # founders know their homeland
+        knowledge=knowledge.initial_levels(seed.initial_knowledge) if knowledge else np.zeros(0),
+        technologies=frozenset(seed.technologies),
     )

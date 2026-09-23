@@ -74,6 +74,36 @@ class EcologyConfig(FrozenModel):
     soil_fertility_range: tuple[float, float] = (0.6, 1.2)
 
 
+class AgricultureConfig(FrozenModel):
+    """Crop ecology and cultivation labor requirements (spec §4.5)."""
+
+    crop_max_yield_kcal_per_ha: float = Field(default=2.0e6, ge=0)
+    crop_reference_npp_g_m2: float = Field(default=1400.0, gt=0)
+    cultivation_hours_per_ha: float = Field(default=600.0, gt=0)
+    clearing_hours_per_ha: float = Field(default=150.0, ge=0)
+    clearing_vegetation_multiplier: float = Field(default=8.0, ge=0)
+    arable_slope_limit: float = Field(default=0.15, gt=0)
+    max_arable_fraction: float = Field(default=0.3, ge=0, le=1)
+    soil_depletion_rate: float = Field(default=0.08, ge=0)
+    soil_recovery_rate: float = Field(default=0.05, ge=0)
+    wild_plant_displacement: float = Field(default=1.0, ge=0, le=1)
+    wild_game_displacement: float = Field(default=0.5, ge=0, le=1)
+
+
+class TradeConfig(FrozenModel):
+    """Food exchange between nearby groups (spec §9, §11.5)."""
+
+    transport_decay_km: float = Field(default=60.0, gt=0)
+    tie_persistence: float = Field(default=0.7, ge=0, le=1)
+
+
+class ResolutionConfig(FrozenModel):
+    """Adaptive resolution: coarsening of similar co-located units (spec §6.2, §6.5)."""
+
+    max_units_per_cell: int = Field(default=3, ge=1)
+    max_knowledge_distance: float = Field(default=1.0, ge=0)
+
+
 class SpeciesRef(FrozenModel):
     """A species used in the scenario: a profile file plus optional parameter overrides."""
 
@@ -90,6 +120,8 @@ class InitialPopulation(FrozenModel):
     population: int = Field(ge=1)
     age_structure: Literal["stationary"] = "stationary"
     initial_reserve_fraction: float = Field(default=0.8, ge=0, le=1)
+    initial_knowledge: dict[str, float] = Field(default_factory=dict)
+    technologies: tuple[str, ...] = ()
 
 
 class MechanismsConfig(FrozenModel):
@@ -101,6 +133,14 @@ class MechanismsConfig(FrozenModel):
     fission: bool = True
     fusion: bool = True
     migration: bool = True
+    # MVP 2
+    cultivation: bool = True
+    storage: bool = True
+    trade: bool = True
+    knowledge_learning: bool = True
+    knowledge_diffusion: bool = True
+    innovation: bool = True
+    aggregation: bool = True
 
 
 class OutputConfig(FrozenModel):
@@ -125,6 +165,10 @@ class ScenarioConfig(FrozenModel):
     simulation: SimulationConfig = SimulationConfig()
     world: WorldConfig = WorldConfig()
     ecology: EcologyConfig = EcologyConfig()
+    agriculture: AgricultureConfig = AgricultureConfig()
+    trade: TradeConfig = TradeConfig()
+    resolution: ResolutionConfig = ResolutionConfig()
+    knowledge_system: str | None = None  # path to a knowledge-system file, relative to the scenario
     species: tuple[SpeciesRef, ...] = Field(min_length=1)
     initial_populations: tuple[InitialPopulation, ...] = Field(min_length=1)
     mechanisms: MechanismsConfig = MechanismsConfig()

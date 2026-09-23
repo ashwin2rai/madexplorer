@@ -31,8 +31,8 @@ def sigmoid(x: float) -> float:
     name="fission_hazard",
     version="1.0",
     rationale=(
-        "Probability a group splits rises with size relative to a reference size "
-        "(coordination and scalar stress) and with food stress (1 - food ratio)."
+        "Probability a group splits rises with size per social group relative to a reference "
+        "size (coordination and scalar stress) and with food stress (1 - food ratio)."
     ),
     source_type="heuristic",
     parameters=(
@@ -45,13 +45,13 @@ def sigmoid(x: float) -> float:
     known_limitations="No factionalism, inequality, or kinship structure until MVP 3/4.",
 )
 def fission_hazard(
-    population: int, food_ratio: float, social: SocialBehavior
+    population: int, food_ratio: float, social: SocialBehavior, groups: int = 1
 ) -> tuple[float, dict[str, float]]:
     """Annual fission probability and its logit components."""
+    per_group = max(population, 1) / max(groups, 1)
     components = {
         "baseline": social.fission_baseline_logit,
-        "size": social.fission_size_weight
-        * math.log(max(population, 1) / social.reference_group_size),
+        "size": social.fission_size_weight * math.log(per_group / social.reference_group_size),
         "food_stress": social.fission_food_stress_weight * max(0.0, 1.0 - food_ratio),
     }
     return sigmoid(sum(components.values())), components
@@ -99,18 +99,40 @@ def split_cohorts(
     return females - leave_f, males - leave_m, leave_f, leave_m
 
 
-def merge_into(target: PopulationUnit, source: PopulationUnit) -> None:
-    """Absorb ``source`` into ``target``, conserving people, reserves, and knowledge."""
+def merge_into(
+    target: PopulationUnit, source: PopulationUnit, combine_groups: bool = False
+) -> None:
+    """Absorb ``source`` into ``target``, conserving people, food, fields, and beliefs.
+
+    ``combine_groups`` keeps both social groups (resolution coarsening); otherwise
+    the source group is absorbed into the target's social structure (fusion).
+    """
+    n_target, n_source = target.population, source.population
     total_reserve = target.total_reserve_kcal + source.total_reserve_kcal
+    if target.knowledge.size and n_target + n_source > 0:
+        target.knowledge = (target.knowledge * n_target + source.knowledge * n_source) / (
+            n_target + n_source
+        )
+    target.technologies = target.technologies | source.technologies
     target.females = target.females + source.females
     target.males = target.males + source.males
     n = target.population
     target.reserve_kcal_per_capita = total_reserve / n if n else 0.0
     target.energy_debt_kcal += source.energy_debt_kcal
-    for cell, obs in source.knowledge.items():
-        mine = target.knowledge.get(cell)
+    target.stores_kcal += source.stores_kcal
+    target.fields_ha += source.fields_ha
+    target.ever_cultivated = target.ever_cultivated or source.ever_cultivated
+    target.labor_debt_hours += source.labor_debt_hours
+    if combine_groups:
+        target.groups += source.groups
+    for partner, tie in source.trade_ties.items():
+        if partner != target.id:
+            target.trade_ties[partner] = max(tie, target.trade_ties.get(partner, 0.0))
+    target.trade_ties.pop(source.id, None)
+    for cell, obs in source.beliefs.items():
+        mine = target.beliefs.get(cell)
         if mine is None or obs.year > mine.year:
-            target.knowledge[cell] = obs
+            target.beliefs[cell] = obs
     for cell, value in source.familiarity.items():
         target.familiarity[cell] = max(value, target.familiarity.get(cell, 0.0))
 
@@ -125,12 +147,16 @@ class Fission:
     components: dict[str, float]
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Create the daughter unit with conditional cohorts and a share of reserves."""
+        """Create the daughter unit with conditional cohorts and shares of food and fields.
+
+        A multi-group unit buds off exactly one of its social groups.
+        """
         parent = state.units[self.parent_id]
         rng = ctx.rng.stream(Streams.SOCIAL)
         source_population = parent.population
+        fraction = 1.0 / parent.groups if parent.groups > 1 else self.fraction
         keep_f, keep_m, leave_f, leave_m = split_cohorts(
-            parent.females, parent.males, self.fraction, rng
+            parent.females, parent.males, fraction, rng
         )
         moved = int(leave_f.sum() + leave_m.sum())
         if moved == 0 or moved == source_population:
@@ -146,9 +172,20 @@ class Fission:
             parent_id=parent.id,
             food_ratio=parent.food_ratio,
             energy_deficit=parent.energy_deficit,
-            knowledge=dict(parent.knowledge),
+            beliefs=dict(parent.beliefs),
             familiarity=dict(parent.familiarity),
+            knowledge=parent.knowledge.copy(),
+            technologies=parent.technologies,
+            stores_kcal=parent.stores_kcal * moved / source_population,
+            fields_ha=parent.fields_ha * moved / source_population,
+            ever_cultivated=parent.ever_cultivated,
+            residence_years=parent.residence_years,
+            forage_marginal_kcal_per_hour=parent.forage_marginal_kcal_per_hour,
         )
+        parent.stores_kcal -= daughter.stores_kcal
+        parent.fields_ha -= daughter.fields_ha
+        if parent.groups > 1:
+            parent.groups -= 1
         parent.females, parent.males = keep_f, keep_m
         state.units[daughter.id] = daughter
         ctx.ledger.fissions += 1
@@ -238,7 +275,9 @@ class FissionSubsystem:
             if unit.population < 2:
                 continue
             social = ctx.species(unit.species_id).social
-            hazard, components = fission_hazard(unit.population, unit.food_ratio, social)
+            hazard, components = fission_hazard(
+                unit.population, unit.food_ratio, social, unit.groups
+            )
             if rng.random() < hazard:
                 fraction = rng.uniform(social.fission_fraction_min, social.fission_fraction_max)
                 proposals.append(Fission(unit.id, float(fraction), hazard, components))

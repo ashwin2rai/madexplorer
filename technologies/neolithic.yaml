@@ -1,0 +1,106 @@
+# Knowledge system for a forager-to-farmer transition.
+# Every entry is a hypothesis: prerequisites, the need that directs invention,
+# and the capability each technology changes. The engine knows only the
+# capabilities (crop_yield, storage_retention, clearing_efficiency,
+# soil_management) and the activities that count as practice.
+name: Neolithic transition v1
+
+domains:
+  ecology:
+    learning_rate: 0.35
+    decay_rate: 0.03
+    transmissibility: 0.05
+    practitioner_scale: 5
+    half_efficiency_level: 0.05  # experienced foragers (level ~5) are ~99% efficient
+    initial_level: 5.0
+    practice: {plant_foraging: 1.0, game_foraging: 1.0, farming: 0.3}
+  agriculture:
+    learning_rate: 0.35
+    decay_rate: 0.02
+    transmissibility: 0.05
+    practitioner_scale: 2
+    half_efficiency_level: 2.0
+    initial_level: 0.0
+    practice: {plant_foraging: 0.15, farming: 1.0}
+  storage:
+    learning_rate: 0.3
+    decay_rate: 0.03
+    transmissibility: 0.05
+    practitioner_scale: 2
+    half_efficiency_level: 1.0
+    initial_level: 0.0
+    practice: {storing: 1.0}
+  construction:
+    learning_rate: 0.3
+    decay_rate: 0.03
+    transmissibility: 0.05
+    practitioner_scale: 2
+    half_efficiency_level: 1.0
+    initial_level: 0.0
+    practice: {clearing: 1.0, storing: 0.2}
+
+# Capability values before any technology is held.
+base_capabilities:
+  crop_yield: 0.0          # no cultivation without technology
+  storage_retention: 0.15  # drying and caching: most stored food is lost within a year
+  clearing_efficiency: 1.0
+  soil_management: 0.0
+
+technologies:
+  - id: storage_pits
+    domain: storage
+    min_knowledge: {storage: 0.4}
+    need: harvest_variability
+    effects: {storage_retention: 0.35}
+    knowledge_bonus: 0.2
+  - id: plant_cultivation
+    domain: agriculture
+    min_knowledge: {agriculture: 2.2, ecology: 3.0}
+    need: food_stress
+    effects: {crop_yield: 0.5}
+    knowledge_bonus: 0.5
+  - id: seed_selection
+    domain: agriculture
+    requires: [plant_cultivation]
+    min_knowledge: {agriculture: 4.0}
+    need: food_stress
+    effects: {crop_yield: 0.4}
+    knowledge_bonus: 0.5
+  - id: ground_stone_axes
+    domain: construction
+    min_knowledge: {construction: 0.5}
+    need: clearing_burden
+    effects: {clearing_efficiency: 1.0}
+    knowledge_bonus: 0.3
+  - id: fallow_rotation
+    domain: agriculture
+    requires: [plant_cultivation]
+    min_knowledge: {agriculture: 4.0}
+    need: soil_depletion
+    effects: {soil_management: 0.5}
+    knowledge_bonus: 0.3
+  - id: granaries
+    domain: storage
+    requires: [storage_pits, plant_cultivation]
+    min_knowledge: {storage: 1.0, construction: 0.8}
+    need: harvest_variability
+    effects: {storage_retention: 0.3}
+    knowledge_bonus: 0.3
+
+innovation:
+  baseline_logit: -8.0
+  need_weight: 3.0
+  knowledge_weight: 1.0
+  population_weight: 0.5
+  population_scale: 25
+  connectivity_weight: 0.3
+  surplus_weight: 0.5
+  instability_weight: 3.0
+
+diffusion:
+  same_cell_contact: 1.0
+  adjacent_contact: 0.3
+  trade_contact: 1.0
+  adoption_probability: 0.2
+  adoption_knowledge_fraction: 0.5
+  loss_knowledge_fraction: 0.25

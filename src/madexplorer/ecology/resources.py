@@ -103,12 +103,33 @@ class EcologyState:
     game_stock_kcal: FloatArray
     plant_capacity_kcal: FloatArray
     game_capacity_kcal: FloatArray
+    soil_nutrients: FloatArray  # dynamic nutrient state of arable land, in [0, 1]
+
+
+@model_rule(
+    name="land_use_displacement",
+    version="1.0",
+    rationale=(
+        "Cultivated land replaces wild plant food fully and wild game partially (niche "
+        "construction)."
+    ),
+    source_type="heuristic",
+    parameters=("wild_plant_displacement", "wild_game_displacement"),
+    expected_domain="capacity multipliers in [0, 1]",
+    known_limitations="Field edges and weeds that can raise game density are ignored.",
+)
+def displacement_multipliers(
+    cultivated_fraction: FloatArray, plant_displacement: float, game_displacement: float
+) -> tuple[FloatArray, FloatArray]:
+    """Multipliers on wild plant and game capacity from the cultivated fraction of each cell."""
+    fraction = np.clip(cultivated_fraction, 0.0, 1.0)
+    return 1.0 - plant_displacement * fraction, 1.0 - game_displacement * fraction
 
 
 def capacities(
     world: WorldGrid, climate: ClimateYear, config: EcologyConfig
 ) -> tuple[FloatArray, FloatArray]:
-    """Plant and game capacities for the given year's climate."""
+    """Plant and game capacities for the given year's climate (before land use)."""
     npp = miami_npp(climate.temperature_c, climate.rainfall_mm) * world.soil_fertility
     npp = np.where(world.is_water, 0.0, npp)
     area = world.cell_area_km2
@@ -124,4 +145,4 @@ def capacities(
 def initial_ecology(world: WorldGrid, climate: ClimateYear, config: EcologyConfig) -> EcologyState:
     """Stocks start at equilibrium with the base climate."""
     plant, game = capacities(world, climate, config)
-    return EcologyState(plant.copy(), game.copy(), plant, game)
+    return EcologyState(plant.copy(), game.copy(), plant, game, np.ones(world.n_cells))

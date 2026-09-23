@@ -18,7 +18,13 @@ from madexplorer.core.subsystem import Subsystem
 from madexplorer.core.types import IntArray
 from madexplorer.ecology.resources import initial_ecology
 from madexplorer.ecology.subsystems import EcologySubsystem
+from madexplorer.economy.agriculture import FarmingSubsystem, FieldPlanningSubsystem
 from madexplorer.economy.foraging import ForagingSubsystem
+from madexplorer.economy.trade import TradeSubsystem
+from madexplorer.knowledge.diffusion import DiffusionSubsystem
+from madexplorer.knowledge.innovation import InnovationSubsystem
+from madexplorer.knowledge.learning import LearningSubsystem
+from madexplorer.knowledge.system import KnowledgeModel
 from madexplorer.metrics.recorder import MetricsRecorder
 from madexplorer.mobility.exploration import KnowledgeSharingSubsystem, PerceptionSubsystem
 from madexplorer.mobility.migration import MigrationSubsystem
@@ -27,6 +33,7 @@ from madexplorer.population.demography import DemographySubsystem
 from madexplorer.population.energetics import EnergeticsSubsystem
 from madexplorer.population.groups import ExtinctionSubsystem, FissionSubsystem, FusionSubsystem
 from madexplorer.population.initialization import found_unit
+from madexplorer.resolution.coarsening import CoarseningSubsystem
 from madexplorer.species.life_history import LifeTables
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.generation import generate_world
@@ -36,29 +43,43 @@ from madexplorer.world.subsystems import ClimateSubsystem
 logger = logging.getLogger(__name__)
 
 
-def build_pipeline(scenario: Scenario) -> list[Subsystem]:
+def build_pipeline(scenario: Scenario, knowledge: KnowledgeModel | None) -> list[Subsystem]:
     """Ordered subsystems for one step, honoring ablation switches.
 
-    Order (documented because it matters): environment -> perception -> foraging
-    -> energy balance -> demography -> group dynamics -> migration -> cleanup.
-    Each subsystem evaluates against the state left by the previous one.
+    Order (documented because it matters): environment -> perception -> crop
+    harvest -> foraging -> exchange -> energy balance -> demography -> field
+    planning -> learning -> diffusion -> innovation -> group dynamics ->
+    migration -> resolution. Each subsystem evaluates against the state left by
+    the previous one; knowledge-dependent subsystems need a knowledge system.
     """
     mechanisms = scenario.config.mechanisms
+    farming = mechanisms.cultivation and knowledge is not None
     pipeline: list[Subsystem] = [ClimateSubsystem(), EcologySubsystem(), PerceptionSubsystem()]
     if mechanisms.knowledge_sharing:
         pipeline.append(KnowledgeSharingSubsystem())
-    pipeline += [
-        ForagingSubsystem(),
-        EnergeticsSubsystem(),
-        DemographySubsystem(),
-        ExtinctionSubsystem(),
-    ]
+    if farming:
+        pipeline.append(FarmingSubsystem())
+    pipeline.append(ForagingSubsystem())
+    if mechanisms.trade:
+        pipeline.append(TradeSubsystem())
+    pipeline += [EnergeticsSubsystem(), DemographySubsystem(), ExtinctionSubsystem()]
+    if farming:
+        pipeline.append(FieldPlanningSubsystem())
+    if knowledge is not None:
+        if mechanisms.knowledge_learning:
+            pipeline.append(LearningSubsystem(knowledge))
+        if mechanisms.knowledge_diffusion:
+            pipeline.append(DiffusionSubsystem(knowledge))
+        if mechanisms.innovation:
+            pipeline.append(InnovationSubsystem(knowledge))
     if mechanisms.fission:
         pipeline.append(FissionSubsystem())
     if mechanisms.fusion:
         pipeline.append(FusionSubsystem())
     if mechanisms.migration:
         pipeline.append(MigrationSubsystem())
+    if mechanisms.aggregation:
+        pipeline.append(CoarseningSubsystem())
     return pipeline
 
 
@@ -96,7 +117,8 @@ class Simulator:
         self.movement = {
             sid: MovementModel(self.world, p.movement) for sid, p in scenario.species.items()
         }
-        self.pipeline = build_pipeline(scenario)
+        self.knowledge = KnowledgeModel(scenario.knowledge) if scenario.knowledge else None
+        self.pipeline = build_pipeline(scenario, self.knowledge)
         climate = ClimateYear.base(self.world)
         self.state = SimulationState(
             year=config.simulation.start_year,
@@ -122,6 +144,7 @@ class Simulator:
                 self.tables[seed.species],
                 self.state.year,
                 rng,
+                self.knowledge,
             )
             self.state.units[unit.id] = unit
             self.events.emit(
@@ -147,6 +170,7 @@ class Simulator:
             tables=self.tables,
             movement=self.movement,
             trace_units=self.trace_units,
+            knowledge=self.knowledge,
         )
         before = state.total_population()
         for subsystem in self.pipeline:

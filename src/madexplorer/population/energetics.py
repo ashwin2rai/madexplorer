@@ -43,49 +43,94 @@ def annual_need_kcal(
     return need + unit.energy_debt_kcal
 
 
+@dataclass(frozen=True)
+class EnergyBalance:
+    """Outcome of one year's energy accounting for a group."""
+
+    food_ratio: float  # harvest / requirement
+    deficit: float  # unmet share of requirement after drawing on stores and reserves
+    reserve_kcal: float  # body reserve after the year
+    stores_kcal: float  # food stores after the year, before spoilage
+    stored_kcal: float  # surplus put into storage this year
+    spoiled_kcal: float  # surplus that could be neither eaten, stored, nor kept as body reserve
+
+
 @model_rule(
     name="pooled_energy_balance",
-    version="1.0",
+    version="1.1",
     rationale=(
-        "Food is shared within the group (forager pooling). Intake plus reserves covers "
-        "requirement first; any surplus refills reserves up to a physiological cap and the rest "
-        "spoils; any shortfall is the energy deficit that drives starvation mortality."
+        "Food is shared within the group (forager pooling). Harvest covers requirement first; "
+        "shortfalls draw on food stores, then body reserves. Surplus refills body reserves up to "
+        "a physiological cap and then goes to storage if the group can store; otherwise it spoils. "
+        "Any remaining shortfall is the energy deficit that drives starvation mortality."
     ),
     source_type="heuristic",
     parameters=("reserve_days_max",),
-    expected_domain="deficit in [0, 1]; reserve in [0, cap]",
+    expected_domain="deficit in [0, 1]; reserve in [0, cap]; stores >= 0",
     known_limitations="Equal sharing assumed; unequal intra-group access arrives with MVP 3.",
 )
 def energy_balance(
-    need_kcal: float, harvest_kcal: float, reserve_kcal: float, reserve_cap_kcal: float
-) -> tuple[float, float, float]:
-    """Return ``(food_ratio, deficit_fraction, new_reserve_kcal)``."""
-    if need_kcal <= 0:
-        return 1.0, 0.0, min(reserve_kcal + harvest_kcal, reserve_cap_kcal)
-    available = harvest_kcal + reserve_kcal
-    food_ratio = harvest_kcal / need_kcal
-    if available >= need_kcal:
-        return food_ratio, 0.0, min(available - need_kcal, reserve_cap_kcal)
-    return food_ratio, (need_kcal - available) / need_kcal, 0.0
+    need_kcal: float,
+    harvest_kcal: float,
+    reserve_kcal: float,
+    reserve_cap_kcal: float,
+    stores_kcal: float = 0.0,
+    can_store: bool = False,
+) -> EnergyBalance:
+    """Account for one year of intake, requirement, reserves, and storage."""
+    food_ratio = harvest_kcal / need_kcal if need_kcal > 0 else 1.0
+    if harvest_kcal >= need_kcal:
+        surplus = harvest_kcal - need_kcal
+        to_reserve = min(surplus, max(reserve_cap_kcal - reserve_kcal, 0.0))
+        leftover = surplus - to_reserve
+        stored = leftover if can_store else 0.0
+        return EnergyBalance(
+            food_ratio,
+            0.0,
+            reserve_kcal + to_reserve,
+            stores_kcal + stored,
+            stored,
+            leftover - stored,
+        )
+    shortfall = need_kcal - harvest_kcal
+    from_stores = min(shortfall, stores_kcal)
+    shortfall -= from_stores
+    from_reserve = min(shortfall, reserve_kcal)
+    shortfall -= from_reserve
+    return EnergyBalance(
+        food_ratio,
+        shortfall / need_kcal,
+        reserve_kcal - from_reserve,
+        stores_kcal - from_stores,
+        0.0,
+        0.0,
+    )
 
 
 @dataclass(frozen=True)
 class EnergyUpdate:
-    """New nutritional state of one unit."""
+    """New nutritional and storage state of one unit."""
 
     unit_id: str
     need_kcal: float
-    food_ratio: float
-    deficit: float
-    reserve_kcal_per_capita: float
+    balance: EnergyBalance
+    storage_retention: float
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Commit the unit's energy state."""
+        """Commit the unit's energy state; stores spoil at the end of the year."""
         unit = state.units[self.unit_id]
-        unit.food_ratio = self.food_ratio
-        unit.energy_deficit = self.deficit
-        unit.reserve_kcal_per_capita = self.reserve_kcal_per_capita
+        n = unit.population
+        b = self.balance
+        unit.food_ratio = b.food_ratio
+        unit.energy_deficit = b.deficit
+        unit.reserve_kcal_per_capita = b.reserve_kcal / n
+        retained = b.stores_kcal * self.storage_retention
+        ctx.ledger.spoilage_kcal += b.spoiled_kcal + (b.stores_kcal - retained)
+        unit.stores_kcal = retained
+        unit.stored_kcal = b.stored_kcal
         unit.energy_debt_kcal = 0.0
+        unit.residence_years += 1
+        unit.harvest_history.append(unit.harvest_kcal / n)
         ctx.ledger.need_kcal += self.need_kcal
 
 
@@ -105,8 +150,14 @@ class EnergeticsSubsystem:
             temperature = float(state.climate.temperature_c[unit.cell])
             need = annual_need_kcal(unit, profile, ctx.tables[unit.species_id], temperature)
             cap = n * profile.metabolism.reserve_days_max * profile.metabolism.adult_daily_kcal
-            ratio, deficit, reserve = energy_balance(
-                need, unit.harvest_kcal, unit.total_reserve_kcal, cap
+            retention = ctx.capabilities(unit)["storage_retention"]
+            balance = energy_balance(
+                need,
+                unit.harvest_kcal,
+                unit.total_reserve_kcal,
+                cap,
+                unit.stores_kcal,
+                retention > 0,
             )
-            updates.append(EnergyUpdate(unit.id, need, ratio, deficit, reserve / n))
+            updates.append(EnergyUpdate(unit.id, need, balance, retention))
         return updates
