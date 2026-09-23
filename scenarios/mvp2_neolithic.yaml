@@ -1,21 +1,21 @@
 # MVP 2: agriculture, storage, technology, innovation, diffusion, trade, aggregation.
-# Forager bands with no cultivation knowledge colonize the MVP 1 world.
+# Two forager bands with no cultivation knowledge colonize a 400 x 400 km world.
 # Nothing here says where or whether farming or sedentism appear.
 name: mvp2_neolithic
 description: Forager colonization with endogenous knowledge, cultivation, storage, and exchange.
 
 simulation:
   start_year: 0
-  n_years: 1500
+  n_years: 1000
   seed: 0
 
 world:
   topology:
     seed: 7
-    width: 64
-    height: 64
+    width: 40
+    height: 40
     cell_size_km: 10.0
-    sea_fraction: 0.3
+    sea_fraction: 0.25
 
 knowledge_system: ../technologies/neolithic.yaml
 
@@ -25,10 +25,10 @@ species:
 
 initial_populations:
   - species: human
-    cell: [20, 34]
+    cell: [10, 16]
     population: 30
   - species: human
-    cell: [44, 36]
+    cell: [22, 12]
     population: 30
 
 resolution:

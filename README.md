@@ -8,7 +8,7 @@ patterns emerge from local mechanisms rather than hard-coded historical rules.
 The full objective and specification is in
 [`objective/SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`](objective/SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md).
 
-## Status: MVP 1 — ecological-demographic sandbox
+## Status: MVP 2 — agriculture and technology
 
 | Implemented | Mechanism |
 |---|---|
@@ -20,9 +20,22 @@ The full objective and specification is in
 | Behavior | diminishing-returns foraging with crowding, local noisy knowledge + sharing, perceived-utility migration, hazard-based fission/fusion |
 | Engine | staged evaluate/apply subsystems, named RNG streams, conservation checks, ablation switches |
 | Outputs | provenance manifest, yearly metrics, event log with causes, spatial snapshots, decision traces |
+| **MVP 2** | |
+| Knowledge | per-domain knowledge that grows with practice × log(practitioners) and decays with disuse |
+| Technology | tech tree as data (`technologies/*.yaml`): prerequisites, directing need, capability effects |
+| Innovation | hazard needing both pressure (need signal) and capacity (knowledge, size, contacts, surplus) |
+| Diffusion | knowledge gradients and technology adoption through co-location, adjacency, and trade ties; loss when knowledge decays |
+| Cultivation | fields with clearing labor (amortized over expected tenure), soil depletion/recovery, wild-food displacement; expanded when farming beats marginal foraging |
+| Storage | spoiling stores that buffer shortfalls and can't all be carried when moving |
+| Trade | surplus sharing with nearby deficits, transport loss, persistent ties |
+| Aggregation | similar co-located groups coarsened into multi-group units; fission buds groups back off |
 
-Next milestones (spec §33): MVP 2 agriculture/storage/technology, MVP 3 distributional units and
-adaptive resolution, MVP 4 politics, MVP 5 fantasy and multi-species worlds.
+No rule says "invent farming" or "settle down". In the MVP 2 scenario, forager expansion,
+saturation, cultivation, sedentism, and storage-backed population growth emerge from these
+mechanisms; `mechanisms:` switches make each removable for ablation.
+
+Next milestones (spec §33): MVP 3 distributional units (wealth, health, occupations), MVP 4
+politics, MVP 5 fantasy and multi-species worlds.
 
 ## Setup
 
@@ -39,6 +52,7 @@ Run `make` to list all targets (`test`, `lint`, `format`, `typecheck`, `check`, 
 ```bash
 uv run madexplorer validate scenarios/mvp1_sandbox.yaml
 uv run madexplorer run scenarios/mvp1_sandbox.yaml                # writes runs/mvp1_sandbox/seed_0
+uv run madexplorer run scenarios/mvp2_neolithic.yaml              # knowledge, farming, storage, trade
 uv run madexplorer run scenarios/mvp1_sandbox.yaml --seeds 1:10   # replicate ensemble
 uv run madexplorer run scenarios/mvp1_sandbox.yaml --trace u1     # log migration component scores
 uv run madexplorer inspect runs/mvp1_sandbox/seed_0 --map         # summary + ASCII population map
@@ -62,6 +76,8 @@ result.save("runs/experiment_001")
   `simulation.seed` share one map.
 - `species/*.yaml` hold **all** species parameters; none have defaults in code. A scenario can
   override any of them per species (`species[].overrides`) for sweeps and counterfactuals.
+- `technologies/*.yaml` define a knowledge system: domains, base capabilities, the technology
+  tree, and innovation/diffusion weights. A scenario opts in with `knowledge_system:`.
 
 ### Run outputs
 
@@ -81,8 +97,9 @@ src/madexplorer/
   config/      pydantic schemas + YAML loading          core/        engine, RNG, events, invariants, governance
   world/       grid, generation, hydrology, climate     ecology/     productivity and wild food stocks
   species/     profile + life tables                    population/  units, energetics, demography, groups
-  economy/     foraging                                 mobility/    movement, perception, migration
+  economy/     foraging, agriculture, trade             mobility/    movement, perception, migration
   metrics/     recorder                                 persistence/ output files
+  knowledge/   domains, learning, diffusion, innovation resolution/  coarsening
   cli/         command-line interface
 ```
 
