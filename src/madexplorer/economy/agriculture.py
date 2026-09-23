@@ -18,6 +18,7 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray
 from madexplorer.ecology.resources import miami_npp
+from madexplorer.population.energetics import annual_need_kcal
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
@@ -130,12 +131,13 @@ def update_soil_nutrients(
 
 @model_rule(
     name="field_adjustment",
-    version="1.1",
+    version="1.2",
     rationale=(
         "Groups expand fields when farming's return per hour, with clearing labor amortized over "
         "the tenure they expect (years resident so far, capped by the planning horizon), beats "
         "marginal foraging by a margin; they shrink fields when the return on existing fields "
-        "(clearing already sunk) falls short. Adjustment speed is bounded."
+        "(clearing already sunk) falls short. Adjustment speed is bounded, and fields never "
+        "exceed what meets requirement plus the surplus target (satisficing, as in foraging)."
     ),
     source_type="heuristic",
     parameters=(
@@ -321,8 +323,12 @@ class FieldPlanningSubsystem:
                 * unit_labor_hours(unit, ctx)
                 / config.cultivation_hours_per_ha
             )
+            profile = ctx.species(unit.species_id)
+            temperature = float(state.climate.temperature_c[unit.cell])
+            target = annual_need_kcal(unit, profile, ctx.tables[unit.species_id], temperature)
+            need_cap = target * (1.0 + profile.foraging.surplus_target) / yield_per_ha
             desired[unit.id] = (
-                min(fields, labor_cap),
+                min(fields, labor_cap, need_cap),
                 farm_return,
                 unit.forage_marginal_kcal_per_hour,
                 gap,
