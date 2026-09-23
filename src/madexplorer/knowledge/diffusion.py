@@ -134,15 +134,8 @@ class DiffusionSubsystem:
             strength = contacts(unit, state, by_cell, self.model)
             levels = [(w, state.units[j].knowledge) for j, w in strength.items()]
             gain = diffusion_gain(unit.knowledge, levels, self.model.transmissibility, teaching)
-            lost = tuple(
-                t
-                for t in sorted(unit.technologies)
-                if not self.model.prerequisites_met(
-                    self.model.technologies[t],
-                    unit.knowledge,
-                    frozenset(),
-                    spec.loss_knowledge_fraction,
-                )
+            lost = self.model.unsupported(
+                unit.technologies, unit.knowledge, spec.loss_knowledge_fraction
             )
             held = unit.technologies - frozenset(lost)
             adopted: list[tuple[str, str]] = []

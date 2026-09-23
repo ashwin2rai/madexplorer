@@ -77,3 +77,14 @@ def test_innovation_needs_both_pressure_and_capacity(knowledge_model: KnowledgeM
     assert hazard(1.0, 2.0) > hazard(1.0, 1.0)  # capacity raises the hazard
     assert hazard(1.0, 1.0, instability=1.0) < hazard(1.0, 1.0)  # instability suppresses it
     assert 0 < hazard(0.0, 0.5) < 1e-3
+
+
+def test_dependent_technologies_are_kept_while_supported(knowledge_model: KnowledgeModel) -> None:
+    held = frozenset({"plant_cultivation", "seed_selection"})
+    knowledge = knowledge_model.initial_levels({"agriculture": 5.0, "ecology": 5.0})
+    assert knowledge_model.unsupported(held, knowledge, 0.25) == ()
+    forgotten = knowledge_model.initial_levels({"agriculture": 0.1, "ecology": 5.0})
+    assert knowledge_model.unsupported(held, forgotten, 0.25) == (
+        "plant_cultivation",
+        "seed_selection",
+    )

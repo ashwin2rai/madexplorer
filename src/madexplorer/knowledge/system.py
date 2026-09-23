@@ -172,6 +172,28 @@ class KnowledgeModel:
             ]
         )
 
+    def unsupported(
+        self, held: frozenset[str], knowledge: FloatArray, fraction: float
+    ) -> tuple[str, ...]:
+        """Held technologies whose knowledge fell below ``fraction`` of the requirement,
+        plus any that depend on a lost technology (iterated to a fixed point)."""
+        kept = {
+            t
+            for t in held
+            if all(
+                self.level(knowledge, d) >= fraction * v
+                for d, v in self.technologies[t].min_knowledge.items()
+            )
+        }
+        changed = True
+        while changed:
+            changed = False
+            for t in sorted(kept):
+                if not set(self.technologies[t].requires) <= kept:
+                    kept.discard(t)
+                    changed = True
+        return tuple(sorted(held - kept))
+
     def prerequisites_met(
         self,
         tech: TechnologySpec,
