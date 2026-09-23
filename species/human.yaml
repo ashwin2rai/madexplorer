@@ -1,0 +1,90 @@
+# Baseline human forager profile (Homo sapiens). Every value is a hypothesis;
+# see `madexplorer rules -v` for how each parameter enters the model.
+# Units are in the field names.
+name: Homo sapiens (baseline forager)
+
+life_history:
+  max_age_years: 90
+  maturation_age_years: 15
+  # Siler mortality approximating the forager average of Gurven & Kaplan (2007).
+  siler_juvenile_a1: 0.422
+  siler_juvenile_b1: 1.131
+  siler_baseline_a2: 0.013
+  siler_senescent_a3: 0.000147
+  siler_senescent_b3: 0.086
+  fertility_onset_years: 16
+  fertility_end_years: 45
+  fertility_shape_p: 2.0
+  fertility_shape_q: 3.0
+  total_fertility_rate: 6.0
+  offspring_per_birth: 1
+  male_birth_fraction: 0.512
+  sexual_reproduction: true
+  male_fertility_end_years: 65
+
+metabolism:
+  adult_daily_kcal: 2300
+  newborn_need_fraction: 0.25
+  reserve_days_max: 60
+  starvation_mortality_sensitivity: 3.0
+  starvation_vulnerable_multiplier: 1.5
+  vulnerable_child_age_years: 5
+  vulnerable_elder_age_years: 60
+  fertility_food_midpoint: 0.8
+  fertility_food_scale: 0.1
+  comfort_temp_low_c: 8.0
+  comfort_temp_high_c: 30.0
+  cold_cost_per_c: 0.015
+  heat_cost_per_c: 0.01
+
+movement:
+  annual_relocation_range_km: 60
+  can_swim: false
+  can_fly: false
+  slope_friction_coefficient: 8.0
+  vegetation_friction_coefficient: 1.5
+  water_friction: 25.0
+  flight_terrain_factor: 1.0
+  travel_kcal_per_km: 50
+
+cognition:
+  perception_radius_km: 30
+  vegetation_occlusion: 0.5
+  observation_noise_sigma: 0.3
+  memory_years: 20
+  familiarity_learning_rate: 0.3
+  initial_familiarity: 0.6
+
+foraging:
+  plant_return_kcal_per_hour: 1000
+  game_return_kcal_per_hour: 2500
+  plant_canopy_access_penalty: 0.5
+  game_search_vegetation_penalty: 0.4
+  foraging_hours_per_day: 5.0
+  labor_onset_age_years: 6
+  labor_decline_age_years: 55
+  elder_labor_fraction: 0.3
+  surplus_target: 0.2
+
+social:
+  reference_group_size: 25
+  fission_baseline_logit: -4.0
+  fission_size_weight: 2.5
+  fission_food_stress_weight: 3.0
+  fission_fraction_min: 0.3
+  fission_fraction_max: 0.5
+  fusion_baseline_logit: -3.0
+  fusion_small_group_weight: 2.0
+  fusion_mate_shortage_weight: 3.0
+  knowledge_sharing_probability: 0.5
+
+migration:
+  food_weight: 2.0
+  water_weight: 0.5
+  movement_cost_weight: 1.0
+  movement_reference_km: 50
+  uncertainty_weight: 0.5
+  perception_noise: 0.3
+  inertia: 1.0
+  decisiveness: 3.0
+  food_ratio_cap: 2.0

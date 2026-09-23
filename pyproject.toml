@@ -1,16 +1,20 @@
 [project]
 name = "madexplorer"
 version = "0.1.0"
-description = "madexplorer"
+description = "Mechanism-based social-ecological civilization simulator"
 readme = "README.md"
 authors = [
     { name = "ashwin2rai", email = "54918223+ashwin2rai@users.noreply.github.com" }
 ]
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "numpy>=2.5.3",
+    "pydantic>=2.13.5",
+    "pyyaml>=6.0.3",
+]
 
 [project.scripts]
-madexplorer = "madexplorer:main"
+madexplorer = "madexplorer.cli.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.18,<0.13.0"]
@@ -18,11 +22,13 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "hypothesis>=6.168.1",
     "mypy>=2.3.1",
     "pre-commit>=4.6.2",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.8",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 
 [tool.ruff]
@@ -40,4 +46,5 @@ addopts = "-ra"
 [tool.mypy]
 python_version = "3.13"
 strict = true
+plugins = ["pydantic.mypy"]
 files = ["src", "tests"]

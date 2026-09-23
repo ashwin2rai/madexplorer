@@ -2,7 +2,7 @@
 export UV_LINK_MODE ?= copy
 
 .DEFAULT_GOAL := help
-.PHONY: help install sync lint format typecheck test cov check run pre-commit clean
+.PHONY: help install sync lint format typecheck test cov check run sim pre-commit clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -33,8 +33,12 @@ cov: ## Run tests with coverage report
 check: lint typecheck test ## Run lint, typecheck and tests (what CI runs)
 	uv run ruff format --check
 
-run: ## Run the CLI
-	uv run madexplorer
+run: ## Show CLI help
+	uv run madexplorer --help
+
+SCENARIO ?= scenarios/mvp1_sandbox.yaml
+sim: ## Run a scenario (SCENARIO=path, default MVP 1 sandbox)
+	uv run madexplorer run $(SCENARIO)
 
 pre-commit: ## Run pre-commit hooks on all files
 	uv run pre-commit run --all-files

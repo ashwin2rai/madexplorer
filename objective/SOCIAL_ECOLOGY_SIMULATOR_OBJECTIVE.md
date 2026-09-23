@@ -2,7 +2,7 @@
 
 ## Objective, Model Specification, and Software Engineering Guidelines
 
-**Working title:** `socioecology-sim`
+**Working title:** `madexplorer`
 **Primary implementation language:** Python 3.12+
 **Document status:** Initial objective/specification
 **Primary goal:** Build a reproducible, extensible simulation engine in which populations, cultures, institutions, technologies, and political structures emerge from interactions among species biology, environment, resources, ecology, incentives, social behavior, and stochastic events.

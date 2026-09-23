@@ -1,0 +1,32 @@
+# MVP 1: ecological-demographic sandbox (spec §33).
+# Two founding forager bands in a procedurally generated 640 x 640 km world.
+name: mvp1_sandbox
+description: Forager bands colonizing an empty procedurally generated landscape.
+
+simulation:
+  start_year: 0
+  n_years: 500
+  seed: 0
+
+world:
+  topology:
+    seed: 7
+    width: 64
+    height: 64
+    cell_size_km: 10.0
+    sea_fraction: 0.3
+
+species:
+  - id: human
+    profile: ../species/human.yaml
+
+initial_populations:
+  - species: human
+    cell: [20, 34]
+    population: 30
+  - species: human
+    cell: [44, 36]
+    population: 30
+
+output:
+  spatial_snapshot_interval_years: 10
