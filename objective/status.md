@@ -22,7 +22,7 @@ uv run madexplorer inspect runs/mvp2_neolithic/seed_0 --map
 uv run madexplorer rules -v                               # every model rule with rationale
 ```
 
-Then pick up at **Section 6, Recommended next steps**, item 1.
+Then pick up at **Section 7, Recommended next steps**, item 1.
 
 ---
 
@@ -212,18 +212,46 @@ The MVP 2 scenario was shrunk from 64×64/1,500 years to 40×40/1,000 years for 
 
 ---
 
-## 6. Recommended next steps (in order)
+## 6. Cheap speed-up options
+
+All of these keep the model's behavior. Items 1-4 should give identical results for a given
+seed (verify with the MVP 1 regression and `test_deterministic_replay`); items 5-6 change the
+random-draw order or the schedule, so results change statistically but not in kind. Estimates
+come from the profiles taken this session, where belief sharing, perception and migration were
+about half of step time and foraging about 10%.
+
+| # | Method | Effort | Expected gain | Where |
+|---|---|---|---|---|
+| 1 | **Run seeds in parallel** with `concurrent.futures.ProcessPoolExecutor` (or `joblib`) behind `--jobs N` | ~30 lines | ~N× for ensembles (one run per core) | `cli/main.py` `cmd_run` |
+| 2 | **Cache per-tick lookups** in `StepContext`: `units_by_cell()` and `cell_population()` are rebuilt 11 times per step; also each unit's annual need, labor hours and capabilities | small | 10-20% | `core/state.py`, callers |
+| 3 | **Share only useful beliefs**: merge a neighbor's observations only for cells reachable from the receiver (~18) instead of its whole map (~230 cells) | small | large cut in the top hotspot (≈20-25% of step time) | `mobility/exploration.py` `KnowledgeSharingSubsystem` |
+| 4 | **Numba `@njit` on scalar hot loops**: `_harvest`/`_marginal_return` and the bisection in `cell_harvest`, Dijkstra in `NeighborGraph.shortest_costs`, and world generation (flow accumulation, priority-flood) | moderate; add `numba` | 5-50× on those functions; matters most as cells and units grow | `economy/foraging.py`, `world/grid.py`, `world/hydrology.py` |
+| 5 | **Skip no-op evaluations**: rerun perception only for units that moved or whose observations are stale, and evaluate migration for long-settled farming units every few years (their hazard is tiny) | small | 10-30% at farming densities | `mobility/exploration.py`, `mobility/migration.py` |
+| 6 | **Coarser resolution in scenarios**: `resolution.max_units_per_cell: 2`, coarser `cell_size_km`, or smaller grids for exploratory runs | config only | roughly linear in unit count | scenario YAML |
+| 7 | **Compile pure-Python modules with mypyc**: the code already passes `mypy --strict`, so hot modules (exploration, migration, groups) can be compiled as C extensions | moderate; needs build config and a check for dataclass/pydantic compatibility | often 2-4× on pure-Python loops | build config |
+| 8 | **Production-run switches**: `debug.check_invariants: false` and `output.log_migrations: false` (already off in MVP 2) for large ensembles | config only | small (a few %) | scenario YAML |
+
+Measuring tools (all cheap to add as dev dependencies): `py-spy` for sampling profiles of a
+running simulation without code changes (`py-spy record -o profile.svg -- uv run madexplorer run ...`),
+`pyinstrument` for readable call trees, and `line_profiler` for single hot functions. Profile
+before and after each item; the hotspots move as populations grow.
+
+**Not recommended yet:** PyPy (NumPy-heavy code gets slower), GPU/JAX (the hot paths are
+branchy, scalar Python, not array math), and CPython's experimental JIT or free-threading
+builds (immature; process-level parallelism in item 1 is simpler and safer).
+
+Suggested order: 1 → 2 → 3 → 5, then profile again and decide whether 4 or 7 is still needed.
+
+---
+
+## 7. Recommended next steps (in order)
 
 1. **Resolve Issue 1.** Add a minimal `disease/` subsystem: a crowding mortality term,
    `h *= 1 + k·f(density, sedentism) / sanitation`, registered as a model rule with a
    `mechanisms.disease` switch. Then re-run `mvp2_neolithic` and confirm the population
    plateaus, with lower biological welfare in dense farming cells than for foragers.
-2. **Performance pass** before MVP 3 multiplies state size:
-   - restrict belief sharing to cells reachable from the receiver, or prune belief maps to a
-     spatial-memory radius (new cognition parameter);
-   - cache per-tick arrays (need, labor, capabilities) in `StepContext`;
-   - add parallel ensembles (`--seeds 1:20 --jobs N` with `ProcessPoolExecutor`), since §27.6
-     says parallel ensembles come first.
+2. **Performance pass** before MVP 3 multiplies state size: items 1, 2, 3 and 5 from
+   Section 6. §27.6 says parallel ensembles come first.
 3. **Ensemble tooling** (§25): an `ensemble` subcommand that runs seeds in parallel and writes
    distribution summaries of key metrics (time to cultivation, peak population, farm share at
    year N). Use it to rerun the perception-noise experiment properly.
@@ -243,7 +271,7 @@ The MVP 2 scenario was shrunk from 64×64/1,500 years to 40×40/1,000 years for 
 
 ---
 
-## 7. Map of the code
+## 8. Map of the code
 
 ```
 src/madexplorer/
