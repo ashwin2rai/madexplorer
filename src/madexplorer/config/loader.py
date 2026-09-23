@@ -81,9 +81,8 @@ class Scenario:
             updates["n_years"] = n_years
         simulation = self.config.simulation.model_copy(update=updates)
         config = self.config.model_copy(update={"simulation": simulation})
-        return Scenario(
-            config=ScenarioConfig.model_validate(config.model_dump()), species=self.species
-        )
+        validated = ScenarioConfig.model_validate(config.model_dump())
+        return Scenario(config=validated, species=self.species, knowledge=self.knowledge)
 
     def to_dict(self) -> dict[str, Any]:
         """Fully resolved scenario, with species profiles embedded."""

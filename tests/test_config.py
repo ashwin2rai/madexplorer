@@ -40,3 +40,11 @@ def test_species_overrides_are_applied() -> None:
 
 def test_config_hash_tracks_changes(small_scenario: Scenario) -> None:
     assert small_scenario.config_hash() != small_scenario.with_overrides(seed=99).config_hash()
+
+
+def test_overrides_preserve_species_and_knowledge_system() -> None:
+    scenario = Scenario.from_yaml(ROOT / "scenarios" / "mvp2_neolithic.yaml")
+    copy = scenario.with_overrides(seed=5, n_years=3)
+    assert copy.knowledge == scenario.knowledge is not None
+    assert copy.species == scenario.species
+    assert copy.config.simulation.seed == 5 and copy.config.simulation.n_years == 3
