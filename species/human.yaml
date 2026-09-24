@@ -97,7 +97,6 @@ migration:
   movement_cost_weight: 1.0
   movement_reference_km: 50
   uncertainty_weight: 0.5
-  perception_noise: 0.3
   inertia: 1.0
   decisiveness: 3.0
   food_ratio_cap: 2.0

@@ -84,8 +84,9 @@ class AgricultureConfig(FrozenModel):
     clearing_vegetation_multiplier: float = Field(default=8.0, ge=0)
     arable_slope_limit: float = Field(default=0.15, gt=0)
     max_arable_fraction: float = Field(default=0.3, ge=0, le=1)
-    soil_depletion_rate: float = Field(default=0.08, ge=0)
-    soil_recovery_rate: float = Field(default=0.05, ge=0)
+    soil_depletion_rate: float = Field(default=0.08, ge=0)  # per year, cultivated land
+    soil_cultivated_recovery_rate: float = Field(default=0.02, ge=0)  # natural inputs, cultivated
+    soil_recovery_rate: float = Field(default=0.05, ge=0)  # per year, fallow
     wild_plant_displacement: float = Field(default=1.0, ge=0, le=1)
     wild_game_displacement: float = Field(default=0.5, ge=0, le=1)
 

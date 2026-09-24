@@ -10,6 +10,8 @@ from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import SpeciesProfile
 
 if TYPE_CHECKING:
+    from madexplorer.core.simulation import Simulator
+    from madexplorer.core.state import StepContext
     from madexplorer.knowledge.system import KnowledgeModel
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -59,3 +61,25 @@ def knowledge_model() -> "KnowledgeModel":
     scenario = Scenario.from_dict(mvp2_scenario_dict(), base_dir=ROOT)
     assert scenario.knowledge is not None
     return KnowledgeModel(scenario.knowledge)
+
+
+def step_context(sim: "Simulator") -> "StepContext":
+    """A step context for calling one subsystem directly on a simulator's current state."""
+    from madexplorer.core.state import StepContext
+
+    return StepContext(
+        year=sim.state.year,
+        scenario=sim.scenario,
+        rng=sim.rng,
+        ids=sim.ids,
+        events=sim.events,
+        tables=sim.tables,
+        movement=sim.movement,
+        trace_units=frozenset(),
+        knowledge=sim.knowledge,
+    )
+
+
+def replay_key(metrics: list[dict[str, float | int]]) -> list[tuple[str, ...]]:
+    """Metrics rows in a form where equal runs compare equal (NaN included)."""
+    return [tuple(repr(v) for v in row.values()) for row in metrics]

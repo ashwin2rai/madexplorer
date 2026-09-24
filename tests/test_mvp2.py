@@ -6,7 +6,7 @@ from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
 from madexplorer.population.groups import merge_into
 from madexplorer.population.unit import PopulationUnit
-from tests.conftest import ROOT, mvp2_scenario_dict
+from tests.conftest import ROOT, mvp2_scenario_dict, replay_key
 
 
 def _unit(uid: str, n: int, groups: int = 1) -> PopulationUnit:
@@ -46,8 +46,8 @@ def test_population_cache_tracks_cohort_replacement() -> None:
 
 def test_mvp2_run_is_deterministic_and_conserves_population() -> None:
     scenario = Scenario.from_dict(mvp2_scenario_dict(n_years=80), base_dir=ROOT)
-    first = [tuple(r.values()) for r in Simulator(scenario).run().metrics]
-    second = [tuple(r.values()) for r in Simulator(scenario).run().metrics]
+    first = replay_key(Simulator(scenario).run().metrics)
+    second = replay_key(Simulator(scenario).run().metrics)
     assert first == second  # invariants (population accounting) are checked every step
 
 

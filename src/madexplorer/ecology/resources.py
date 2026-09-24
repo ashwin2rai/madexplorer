@@ -103,7 +103,7 @@ class EcologyState:
     game_stock_kcal: FloatArray
     plant_capacity_kcal: FloatArray
     game_capacity_kcal: FloatArray
-    soil_nutrients: FloatArray  # dynamic nutrient state of arable land, in [0, 1]
+    soil_nutrients: FloatArray  # fertility of the cell's cultivated land, in [0, 1]
 
 
 @model_rule(

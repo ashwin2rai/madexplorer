@@ -147,7 +147,6 @@ class MigrationBehavior(FrozenModel):
     movement_cost_weight: float
     movement_reference_km: float = Field(gt=0)
     uncertainty_weight: float
-    perception_noise: float = Field(ge=0)
     inertia: float
     decisiveness: float = Field(ge=0)
     food_ratio_cap: float = Field(gt=0)

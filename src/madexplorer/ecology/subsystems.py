@@ -12,7 +12,7 @@ from madexplorer.ecology.resources import (
     displacement_multipliers,
     logistic_regrowth,
 )
-from madexplorer.economy.agriculture import HECTARES_PER_KM2, arable_hectares, update_soil_nutrients
+from madexplorer.economy.agriculture import HECTARES_PER_KM2, update_soil_nutrients
 
 
 @dataclass(frozen=True)
@@ -47,17 +47,15 @@ class EcologySubsystem:
                 agriculture.wild_game_displacement,
             )
             plant_k, game_k = plant_k * plant_mult, game_k * game_mult
-            arable = arable_hectares(state.world, agriculture)
-            share = np.divide(fields, arable, out=np.zeros_like(fields), where=arable > 0)
             management = np.zeros_like(fields)
             for unit in state.units.values():
                 if unit.fields_ha > 0:
                     level = ctx.capabilities(unit)["soil_management"]
                     management[unit.cell] += level * unit.fields_ha / fields[unit.cell]
-            soil = update_soil_nutrients(soil, np.clip(share, 0.0, 1.0), management, agriculture)
+            soil = update_soil_nutrients(soil, fields > 0, management, agriculture)
         elif (soil < 1.0).any():
             soil = update_soil_nutrients(
-                soil, np.zeros_like(soil), np.zeros_like(soil), agriculture
+                soil, np.zeros(soil.shape, dtype=bool), np.zeros_like(soil), agriculture
             )
         return [
             EcologyUpdate(

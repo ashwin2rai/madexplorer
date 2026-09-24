@@ -6,12 +6,11 @@ import numpy as np
 from madexplorer.config.loader import Scenario
 from madexplorer.core.governance import RULES
 from madexplorer.core.simulation import Simulator
-from tests.conftest import ROOT, small_scenario_dict
+from tests.conftest import ROOT, replay_key, small_scenario_dict
 
 
-def _summary(scenario: Scenario) -> list[tuple[float | int, ...]]:
-    result = Simulator(scenario).run()
-    return [tuple(row.values()) for row in result.metrics]
+def _summary(scenario: Scenario) -> list[tuple[str, ...]]:
+    return replay_key(Simulator(scenario).run().metrics)
 
 
 def test_deterministic_replay(small_scenario: Scenario) -> None:

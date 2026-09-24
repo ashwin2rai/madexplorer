@@ -16,7 +16,7 @@ import numpy as np
 from madexplorer.config.schema import AgricultureConfig
 from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
-from madexplorer.core.types import FloatArray
+from madexplorer.core.types import BoolArray, FloatArray
 from madexplorer.ecology.resources import miami_npp
 from madexplorer.population.energetics import annual_need_kcal
 from madexplorer.population.unit import PopulationUnit
@@ -104,28 +104,42 @@ def clearing_hours_per_ha(
 
 @model_rule(
     name="soil_nutrient_dynamics",
-    version="1.0",
+    version="2.0",
     rationale=(
-        "Cultivation depletes soil nutrients in proportion to the cultivated share of arable land "
-        "(reduced by soil management); uncultivated land recovers toward full fertility."
+        "The nutrient state is the fertility of the cell's cultivated land. While a cell is "
+        "cultivated, cropping depletes it in proportion to its level (reduced by soil "
+        "management) and slow natural inputs (deposition, fixation, weathering) replenish it, "
+        "so unmanaged continuous cropping settles at a low equilibrium "
+        "r_c / (r_c + d(1 - m)). Once cultivation stops the land recovers faster, as fallow. "
+        "How much of the cell is farmed does not matter: uncultivated land in the same cell "
+        "does not restore fertility to the fields (no free fallowing)."
     ),
     source_type="heuristic",
-    parameters=("soil_depletion_rate", "soil_recovery_rate"),
+    parameters=(
+        "soil_depletion_rate",
+        "soil_cultivated_recovery_rate",
+        "soil_recovery_rate",
+    ),
     expected_domain="nutrient state in [0, 1]",
-    known_limitations="Cell-average state; no erosion, manuring, or crop rotation detail.",
+    known_limitations=(
+        "One fertility pool per cell: newly cleared land inherits the state of existing "
+        "fields, and there are no separate fallow, exhausted, manured or eroded pools."
+    ),
 )
 def update_soil_nutrients(
     nutrients: FloatArray,
-    cultivated_share: FloatArray,
+    cultivated: BoolArray,
     soil_management: FloatArray,
     config: AgricultureConfig,
 ) -> FloatArray:
-    """Advance the soil nutrient state by one year."""
-    depletion = (
-        config.soil_depletion_rate * cultivated_share * (1.0 - np.clip(soil_management, 0.0, 1.0))
+    """Advance the fertility of cultivated land by one year (fallow where not cultivated)."""
+    management = np.clip(soil_management, 0.0, 1.0)
+    depletion = config.soil_depletion_rate * (1.0 - management) * nutrients
+    recovery_rate = np.where(
+        cultivated, config.soil_cultivated_recovery_rate, config.soil_recovery_rate
     )
-    recovery = config.soil_recovery_rate * (1.0 - nutrients) * (1.0 - cultivated_share)
-    updated: FloatArray = np.clip(nutrients - depletion * nutrients + recovery, 0.0, 1.0)
+    change = np.where(cultivated, -depletion, 0.0) + recovery_rate * (1.0 - nutrients)
+    updated: FloatArray = np.clip(nutrients + change, 0.0, 1.0)
     return updated
 
 

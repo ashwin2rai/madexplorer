@@ -4,7 +4,9 @@ import numpy as np
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.state import SimulationState, StepContext
-from madexplorer.core.types import IntArray
+from madexplorer.core.types import FloatArray, IntArray
+from madexplorer.economy.agriculture import arable_hectares
+from madexplorer.population.unit import PopulationUnit
 
 
 class MetricsRecorder:
@@ -20,6 +22,57 @@ class MetricsRecorder:
         self.rows: list[dict[str, float | int]] = []
         self.snapshot_years: list[int] = []
         self.snapshots: list[IntArray] = []
+        self._arable: FloatArray | None = None
+
+    def _farming_metrics(
+        self,
+        state: SimulationState,
+        ctx: StepContext,
+        units: list[PopulationUnit],
+        cell_pop: IntArray,
+    ) -> dict[str, float]:
+        """Land use, labor and density diagnostics of farming (NaN where nothing is farmed).
+
+        Everything is computed from cell totals or summed over units, so splitting identical
+        groups into more computational units does not change the values.
+        """
+        if self._arable is None:
+            self._arable = arable_hectares(state.world, ctx.scenario.config.agriculture)
+        fields = state.cell_fields_ha()
+        farmed = fields > 0
+        occupied = cell_pop > 0
+        area = state.world.cell_area_km2
+        cultivated = float(fields.sum())
+        hours = sum(u.farm_hours for u in units)
+        farm_pop = sum(u.population for u in units if u.farm_hours > 0)
+        nan = float("nan")
+
+        def ratio(numerator: float, denominator: float) -> float:
+            return numerator / denominator if denominator > 0 else nan
+
+        def quantile(values: FloatArray, q: float) -> float:
+            return float(np.quantile(values, q)) if values.size else nan
+
+        farmed_density = cell_pop[farmed] / area
+        occupied_density = cell_pop[occupied] / area
+        return {
+            "mean_soil_nutrients_farmed": ratio(
+                float((state.ecology.soil_nutrients * fields).sum()), cultivated
+            ),
+            "arable_utilization": ratio(cultivated, float(self._arable[farmed].sum())),
+            "cultivated_ha_per_capita": ratio(
+                cultivated, sum(u.population for u in units if u.fields_ha > 0)
+            ),
+            "farm_hours_per_capita": ratio(hours, farm_pop),
+            "crop_kcal_per_farm_hour": ratio(ctx.ledger.farm_harvest_kcal, hours),
+            "farmed_cell_population_density": ratio(
+                float(cell_pop[farmed].sum()), float(farmed.sum()) * area
+            ),
+            "farmed_density_p50": quantile(farmed_density, 0.5),
+            "farmed_density_p90": quantile(farmed_density, 0.9),
+            "occupied_density_p50": quantile(occupied_density, 0.5),
+            "occupied_density_p90": quantile(occupied_density, 0.9),
+        }
 
     def snapshot(self, state: SimulationState) -> None:
         """Store the population-per-cell field for the current year."""
@@ -103,13 +156,9 @@ class MetricsRecorder:
                 "inventions": ledger.inventions,
                 "adoptions": ledger.adoptions,
                 "technology_losses": ledger.technology_losses,
-                "mean_soil_nutrients_farmed": float(
-                    np.mean([eco.soil_nutrients[u.cell] for u in units if u.fields_ha > 0])
-                )
-                if any(u.fields_ha > 0 for u in units)
-                else 1.0,
             }
         )
+        row.update(self._farming_metrics(state, ctx, units, cell_pop))
         for i, domain in enumerate(self.domains):
             row[f"knowledge_{domain}"] = weighted([float(u.knowledge[i]) for u in units])
         for tech in self.technologies:
