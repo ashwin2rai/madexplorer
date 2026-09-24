@@ -1,4 +1,5 @@
 {
+  "platform": "numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3",
   "final_year": 250,
   "final_population": 1098,
   "final_units": 40,
@@ -12,6 +13,6 @@
     "inventions": 7.0
   },
   "event_count": 210,
-  "metrics_sha256": "b581889bcf087620c1f7f1bd7e8bd63cac32366a198bd5212ea2e0183adbb1ce",
+  "metrics_sha256": "e9489f8357e7b084b8f21fda54490e05a7ef38964ea907451a06341550b4aacb",
   "events_sha256": "932af52752834329ffa3bf956da2fdba5fed3ea64bc797a3417dbbf88159fb7b"
 }

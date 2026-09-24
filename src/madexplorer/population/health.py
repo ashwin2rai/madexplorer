@@ -24,6 +24,8 @@ The total annual hazard is ``h_baseline + h_starvation + h_crowding``.
 import math
 from collections.abc import Iterable, Mapping
 
+import numpy as np
+
 from madexplorer.core.governance import model_rule
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import Health
@@ -97,21 +99,39 @@ def crowding_hazards(
     species: Mapping[str, Health],
     cell_area_km2: float,
 ) -> dict[str, float]:
-    """Adult crowding hazard for every unit, from co-located same-species settled people."""
-    by_cell: dict[tuple[int, str], list[tuple[PopulationUnit, float]]] = {}
-    for unit in units:
-        health = species[unit.species_id]
-        s = sedentism(unit.residence_years, health.sedentism_timescale_years)
-        by_cell.setdefault((unit.cell, unit.species_id), []).append((unit, s))
-    hazards: dict[str, float] = {}
-    for (_, species_id), members in by_cell.items():
-        health = species[species_id]
-        w = contact_weight(health.contact_radius_km, cell_area_km2)
-        settled_total = sum(u.population * s for u, s in members)
-        for unit, s in members:
-            village = unit.population / max(unit.groups, 1)
-            others = settled_total - unit.population * s + (unit.population - village) * s
-            contact = village * s + w * others
-            pressure = settlement_crowding_pressure(contact, health.crowding_reference_population)
-            hazards[unit.id] = crowding_mortality_hazard(pressure, s, health)
-    return hazards
+    """Adult crowding hazard for every unit, from co-located same-species settled people.
+
+    Vectorized over units; it computes the rules above (``sedentism``,
+    ``settlement_crowding_pressure``, ``crowding_mortality_hazard``) up to rounding.
+    """
+    units = list(units)
+    if not units:
+        return {}
+    species_ids = sorted(species)
+    code = {sid: k for k, sid in enumerate(species_ids)}
+    kind = np.array([code[u.species_id] for u in units], dtype=np.int64)
+    cell = np.array([u.cell for u in units], dtype=np.int64)
+    people = np.array([u.population for u in units], dtype=np.float64)
+    groups = np.array([max(u.groups, 1) for u in units], dtype=np.float64)
+    residence = np.array([max(u.residence_years, 0) for u in units], dtype=np.float64)
+    params = np.array(
+        [
+            (
+                h.sedentism_timescale_years,
+                contact_weight(h.contact_radius_km, cell_area_km2),
+                h.crowding_reference_population,
+                h.crowding_mortality_per_log_contact,
+            )
+            for h in (species[sid] for sid in species_ids)
+        ]
+    )[kind]
+    s = -np.expm1(-residence / params[:, 0])
+    settled = people * s
+    key = cell * len(species_ids) + kind  # one settlement pool per (cell, species)
+    _, pool = np.unique(key, return_inverse=True)
+    settled_total = np.bincount(pool, weights=settled)[pool]
+    village = people / groups
+    others = settled_total - settled + (people - village) * s
+    contact = village * s + params[:, 1] * others
+    hazard = params[:, 3] * s * np.log1p(np.maximum(contact, 0.0) / params[:, 2])
+    return dict(zip((u.id for u in units), hazard.tolist(), strict=True))

@@ -143,27 +143,27 @@ class KnowledgeSharingSubsystem:
 def freshest_from_partners(own: BeliefMap, partners: Sequence[BeliefMap]) -> BeliefMap | None:
     """``own`` updated with every partner observation fresher than anything known so far.
 
-    Partners are consulted in order and only a strictly fresher observation replaces the
-    best so far, so on equal years the first partner wins. ``None`` if nothing is fresher.
+    Per cell, the freshest partner observation replaces ``own`` if strictly fresher; among
+    equally fresh partners the first wins (``argmax`` returns the first maximum), exactly
+    as consulting partners one by one. ``None`` if nothing is fresher.
     """
     n = max([own.n_cells, *(p.n_cells for p in partners)])
     own = own.sized(n)
-    best = own.year
-    winner = np.full(n, -1, dtype=np.int64)
-    for k, partner in enumerate(partners):
-        partner_years = partner.sized(n).year
-        fresher = partner_years > best
-        if fresher.any():
-            best = np.where(fresher, partner_years, best)
-            winner[fresher] = k
-    if not (winner >= 0).any():
+    maps = [p.sized(n) for p in partners]
+    years = np.stack([m.year for m in maps])
+    first = years.argmax(axis=0)
+    columns = np.arange(n)
+    freshest = years[first, columns]
+    fresher = freshest > own.year
+    if not fresher.any():
         return None
+    cells = np.flatnonzero(fresher)
+    chosen = first[cells]
     year, food_kcal, water, population = own.arrays()
-    for k, partner in enumerate(partners):
-        take = winner == k
-        if take.any():
-            source = partner.sized(n)
-            year[take] = source.year[take]
+    year[cells] = freshest[cells]
+    for k, source in enumerate(maps):
+        take = cells[chosen == k]
+        if take.size:
             food_kcal[take] = source.food_kcal[take]
             water[take] = source.water_access[take]
             population[take] = source.population[take]

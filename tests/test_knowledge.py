@@ -3,11 +3,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 import yaml
+from hypothesis import given, settings
+from hypothesis import strategies as st
 from pydantic import ValidationError
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
-from madexplorer.knowledge.diffusion import diffusion_gain
+from madexplorer.knowledge.diffusion import diffusion_gain, diffusion_gains
 from madexplorer.knowledge.innovation import choose_invention, innovation_hazard
 from madexplorer.knowledge.learning import learn
 from madexplorer.knowledge.system import KnowledgeModel, KnowledgeSystem
@@ -149,3 +151,41 @@ def test_technology_file_order_does_not_change_seeded_results(tmp_path: Path) ->
         )
     assert len({tech for _, _, tech in runs[0]}) >= 3
     assert runs[0] == runs[1]
+
+
+@settings(max_examples=100, deadline=None)
+@given(seed=st.integers(0, 10_000), n_units=st.integers(1, 12))
+def test_batched_diffusion_equals_per_unit_rule_exactly(seed: int, n_units: int) -> None:
+    rng = np.random.default_rng(seed)
+    knowledge = rng.uniform(0, 6, (n_units, 4))
+    transmissibility = rng.uniform(0, 0.1, 4)
+    teaching = rng.uniform(0.5, 1.5, n_units)
+    receivers, sources, weights, expected = [], [], [], []
+    for i in range(n_units):
+        partners = [j for j in range(n_units) if j != i and rng.random() < 0.8]
+        strength = [float(rng.uniform(0, 2)) for _ in partners]
+        receivers += [i] * len(partners)
+        sources += partners
+        weights += strength
+        levels = [(w, knowledge[j]) for j, w in zip(partners, strength, strict=True)]
+        expected.append(diffusion_gain(knowledge[i], levels, transmissibility, teaching[i]))
+    got = diffusion_gains(
+        knowledge,
+        np.array(receivers, dtype=np.int64),
+        np.array(sources, dtype=np.int64),
+        np.array(weights),
+        transmissibility,
+        teaching,
+    )
+    assert np.array_equal(got, np.array(expected))
+
+
+def test_batched_support_matches_per_unit_loss_check(knowledge_model: KnowledgeModel) -> None:
+    rng = np.random.default_rng(1)
+    everything = frozenset(knowledge_model.technologies)
+    levels = rng.uniform(0, 5, (50, len(knowledge_model.domains)))
+    supported = knowledge_model.knowledge_supported(levels, 0.25)
+    for row, k in zip(supported, levels, strict=True):
+        assert knowledge_model.unsupported_given(everything, row) == (
+            knowledge_model.unsupported(everything, k, 0.25)
+        )

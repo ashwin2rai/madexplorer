@@ -11,6 +11,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
+import numpy.typing as npt
 
 from madexplorer.core.types import FloatArray, IntArray
 
@@ -27,7 +28,8 @@ class Observation:
     population: int  # other people perceived in the cell (excluding the observer)
 
 
-NEVER_OBSERVED = -(2**62)  # observation year of a cell the unit knows nothing about
+NEVER_OBSERVED = -(2**31)  # observation year of a cell the unit knows nothing about
+YEAR_DTYPE = np.int32  # observation years (halves memory traffic versus int64)
 
 
 @dataclass(frozen=True, eq=False)
@@ -40,7 +42,7 @@ class BeliefMap:
     stay valid until applied, and maps can be shared between units safely.
     """
 
-    year: IntArray
+    year: npt.NDArray[np.int32]
     food_kcal: FloatArray  # perceived accessible wild food stock
     water_access: FloatArray
     population: IntArray  # other people perceived in the cell (excluding the observer)
@@ -49,7 +51,7 @@ class BeliefMap:
     def empty(cls, n_cells: int) -> "BeliefMap":
         """A map in which nothing is known."""
         return cls(
-            np.full(n_cells, NEVER_OBSERVED, dtype=np.int64),
+            np.full(n_cells, NEVER_OBSERVED, dtype=YEAR_DTYPE),
             np.zeros(n_cells),
             np.zeros(n_cells),
             np.zeros(n_cells, dtype=np.int64),
@@ -69,7 +71,7 @@ class BeliefMap:
         """Number of cells the map covers (0 for a unit that has never perceived)."""
         return int(self.year.size)
 
-    def arrays(self) -> tuple[IntArray, FloatArray, FloatArray, IntArray]:
+    def arrays(self) -> tuple[npt.NDArray[np.int32], FloatArray, FloatArray, IntArray]:
         """Fresh copies of the four arrays, for building a new map."""
         return (
             self.year.copy(),

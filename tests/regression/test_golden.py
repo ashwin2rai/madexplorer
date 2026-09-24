@@ -9,9 +9,11 @@ says so in the commit message.
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from madexplorer.config.loader import Scenario
@@ -52,6 +54,22 @@ CASES = {
 }
 
 
+def numeric_platform() -> str:
+    """numpy version, machine and the SIMD targets numpy dispatches to on this CPU."""
+    try:
+        from numpy._core._multiarray_umath import (  # type: ignore[import-not-found]
+            __cpu_baseline__,
+            __cpu_dispatch__,
+            __cpu_features__,
+        )
+
+        active = [t for t in __cpu_dispatch__ if __cpu_features__.get(t)]
+        simd = f"baseline={','.join(__cpu_baseline__)} dispatch={','.join(active)}"
+    except ImportError:  # pragma: no cover - numpy internals moved
+        simd = "simd=unknown"
+    return f"numpy={np.__version__} machine={platform.machine()} {simd}"
+
+
 def _digest(value: Any) -> str:
     return hashlib.sha256(json.dumps(value, default=repr).encode()).hexdigest()
 
@@ -76,12 +94,21 @@ def _fingerprint(result: SimulationResult) -> dict[str, Any]:
 
 @pytest.mark.parametrize("name", sorted(CASES))
 def test_seeded_output_matches_recorded_fixture(name: str) -> None:
-    fingerprint = _fingerprint(Simulator(CASES[name]()).run())
     path = GOLDEN / f"{name}.json"
+    here = numeric_platform()
+    if not os.environ.get("UPDATE_GOLDEN") and path.exists():
+        recorded = json.loads(path.read_text())
+        if recorded.get("platform") != here:
+            pytest.skip(
+                f"{path.name} was recorded on [{recorded.get('platform')}], this is [{here}]; "
+                "exact seeded output is platform-specific. Run `make golden` to record fixtures "
+                "for this platform (do not commit them over the reference ones)."
+            )
+    fingerprint = {"platform": here, **_fingerprint(Simulator(CASES[name]()).run())}
     if os.environ.get("UPDATE_GOLDEN") or not path.exists():
         path.write_text(json.dumps(fingerprint, indent=2) + "\n")
         pytest.skip(f"recorded {path.name}")
-    assert fingerprint == json.loads(path.read_text())
+    assert fingerprint == recorded
 
 
 def test_replay_is_deterministic_within_a_process() -> None:

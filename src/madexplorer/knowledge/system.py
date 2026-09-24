@@ -16,7 +16,7 @@ import numpy as np
 from pydantic import Field, model_validator
 
 from madexplorer.config.base import FrozenModel
-from madexplorer.core.types import FloatArray
+from madexplorer.core.types import BoolArray, FloatArray
 
 # Engine-facing quantities that technologies modify.
 Capability = Literal["crop_yield", "storage_retention", "clearing_efficiency", "soil_management"]
@@ -128,6 +128,7 @@ class KnowledgeModel:
         self.practitioner_scale = np.array([s.practitioner_scale for s in specs])
         self.half_efficiency = np.array([s.half_efficiency_level for s in specs])
         self._capability_cache: dict[frozenset[str], dict[Capability, float]] = {}
+        self._tech_positions: dict[str, int] = {t: i for i, t in enumerate(self.technologies)}
 
     def initial_levels(self, overrides: Mapping[str, float] | None = None) -> FloatArray:
         """Starting knowledge vector, with optional per-domain overrides."""
@@ -172,6 +173,38 @@ class KnowledgeModel:
             ]
         )
 
+    def knowledge_supported(self, knowledge: FloatArray, fraction: float) -> BoolArray:
+        """``(units, technologies)``: whether each unit's knowledge still supports each
+        technology (every required domain at least ``fraction`` of its minimum).
+
+        Technologies are in ``self.technologies`` order. Same comparisons as
+        :meth:`unsupported`, done for all units at once.
+        """
+        supported = np.ones((knowledge.shape[0], len(self.technologies)), dtype=bool)
+        for t, tech in enumerate(self.technologies.values()):
+            for domain, minimum in tech.min_knowledge.items():
+                supported[:, t] &= knowledge[:, self.index[domain]] >= fraction * minimum
+        return supported
+
+    def unsupported_given(self, held: frozenset[str], supported: BoolArray) -> tuple[str, ...]:
+        """:meth:`unsupported` from a precomputed row of :meth:`knowledge_supported`."""
+        if not held:
+            return ()
+        positions = self._tech_positions
+        kept = {t for t in held if supported[positions[t]]}
+        return self._cascade(held, kept)
+
+    def _cascade(self, held: frozenset[str], kept: set[str]) -> tuple[str, ...]:
+        """Drop kept technologies whose required technologies are gone (to a fixed point)."""
+        changed = True
+        while changed:
+            changed = False
+            for t in sorted(kept):
+                if not set(self.technologies[t].requires) <= kept:
+                    kept.discard(t)
+                    changed = True
+        return tuple(sorted(held - kept))
+
     def unsupported(
         self, held: frozenset[str], knowledge: FloatArray, fraction: float
     ) -> tuple[str, ...]:
@@ -185,14 +218,7 @@ class KnowledgeModel:
                 for d, v in self.technologies[t].min_knowledge.items()
             )
         }
-        changed = True
-        while changed:
-            changed = False
-            for t in sorted(kept):
-                if not set(self.technologies[t].requires) <= kept:
-                    kept.discard(t)
-                    changed = True
-        return tuple(sorted(held - kept))
+        return self._cascade(held, kept)
 
     def prerequisites_met(
         self,

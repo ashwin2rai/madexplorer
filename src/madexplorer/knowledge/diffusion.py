@@ -18,7 +18,7 @@ import numpy as np
 from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
-from madexplorer.core.types import FloatArray
+from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.knowledge.system import KnowledgeModel
 from madexplorer.population.unit import PopulationUnit
 
@@ -77,6 +77,40 @@ def diffusion_gain(
     return capped
 
 
+def diffusion_gains(
+    knowledge: FloatArray,
+    receivers: IntArray,
+    sources: IntArray,
+    strengths: FloatArray,
+    transmissibility: FloatArray,
+    teaching: FloatArray,
+) -> FloatArray:
+    """:func:`diffusion_gain` for every unit at once, shape ``(units, domains)``.
+
+    ``knowledge`` is ``(units, domains)``; each contact edge ``e`` carries knowledge from
+    unit ``sources[e]`` to ``receivers[e]`` with weight ``strengths[e]``. Edges must be
+    grouped by receiver, in each receiver's contact order, so the per-receiver sums add
+    terms in the same order as the per-unit rule (identical floating-point results).
+    """
+    gains = np.zeros_like(knowledge)
+    if receivers.size == 0:
+        return gains
+    gaps = np.maximum(knowledge[sources] - knowledge[receivers], 0.0)
+    starts = np.flatnonzero(np.r_[True, receivers[1:] != receivers[:-1]])
+    owners = receivers[starts]
+    weighted = strengths[:, None] * gaps
+    # Sum each receiver's contiguous block with numpy's own reduction: for 8+ contacts it
+    # adds pairwise, so reduceat (strictly sequential) would differ in the last bits.
+    ends = np.r_[starts[1:], receivers.size]
+    summed = np.stack(
+        [weighted[a:b].sum(axis=0) for a, b in zip(starts.tolist(), ends.tolist(), strict=True)]
+    )
+    largest = np.maximum.reduceat(gaps, starts, axis=0)
+    gain = teaching[owners, None] * transmissibility[None, :] * summed
+    gains[owners] = np.minimum(gain, largest)
+    return gains
+
+
 @dataclass(frozen=True)
 class DiffusionUpdate:
     """Knowledge gained and technologies adopted or lost by one unit."""
@@ -128,15 +162,37 @@ class DiffusionSubsystem:
         rng = ctx.rng.stream(Streams.TECHNOLOGY_ADOPTION)
         spec = self.model.system.diffusion
         by_cell = state.units_by_cell()
+        units = list(state.units.values())
+        if not units:
+            return []
+        index = {u.id: i for i, u in enumerate(units)}
+        strengths = [contacts(u, state, by_cell, self.model) for u in units]
+        receivers: list[int] = []
+        sources: list[int] = []
+        weights: list[float] = []
+        for i, strength in enumerate(strengths):
+            for j, w in strength.items():
+                receivers.append(i)
+                sources.append(index[j])
+                weights.append(w)
+        knowledge = np.stack([u.knowledge for u in units])
+        teaching = np.array(
+            [ctx.species(u.species_id).cognition.teaching_efficiency for u in units]
+        )
+        gains = diffusion_gains(
+            knowledge,
+            np.array(receivers, dtype=np.int64),
+            np.array(sources, dtype=np.int64),
+            np.array(weights, dtype=np.float64),
+            self.model.transmissibility,
+            teaching,
+        )
+        supported = self.model.knowledge_supported(knowledge, spec.loss_knowledge_fraction)
         updates: list[DiffusionUpdate] = []
-        for unit in state.units.values():
-            teaching = ctx.species(unit.species_id).cognition.teaching_efficiency
-            strength = contacts(unit, state, by_cell, self.model)
-            levels = [(w, state.units[j].knowledge) for j, w in strength.items()]
-            gain = diffusion_gain(unit.knowledge, levels, self.model.transmissibility, teaching)
-            lost = self.model.unsupported(
-                unit.technologies, unit.knowledge, spec.loss_knowledge_fraction
-            )
+        for i, unit in enumerate(units):
+            strength = strengths[i]
+            gain = gains[i]
+            lost = self.model.unsupported_given(unit.technologies, supported[i])
             held = unit.technologies - frozenset(lost)
             adopted: list[tuple[str, str]] = []
             candidates: dict[str, str] = {}

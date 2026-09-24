@@ -1,4 +1,5 @@
 {
+  "platform": "numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3",
   "final_year": 150,
   "final_population": 254,
   "final_units": 7,

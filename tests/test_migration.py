@@ -137,3 +137,32 @@ def test_fast_score_equals_sum_of_traced_components() -> None:
         components = destination_components(unit, cell, costs, sim.state.year, 20, behavior)
         score = destination_score(unit, cell, costs, sim.state.year, 20, behavior)
         assert score == sum(components.values())
+
+
+def test_vectorized_scores_match_scalar_rule() -> None:
+    sim = _simulator()
+    unit = _only_unit(sim)
+    rng = np.random.default_rng(9)
+    unit.fields_ha, unit.crop_yield_kcal_per_ha, unit.stores_kcal = 2.0, 8e5, 4e6
+    cells = [unit.cell, *_neighbors_by_cost(sim, unit)[:15]]
+    unit.beliefs = BeliefMap.from_observations(
+        sim.world.n_cells,
+        {
+            c: Observation(
+                year=sim.state.year - int(rng.integers(0, 15)),
+                food_kcal=float(rng.uniform(1e5, 1e7)),
+                water_access=float(rng.uniform()),
+                population=int(rng.integers(0, 300)),
+            )
+            for c in cells
+        },
+    )
+    subsystem = MigrationSubsystem()
+    prepared = subsystem._prepare(unit, sim.state, step_context(sim))
+    assert prepared is not None
+    (scores,) = subsystem._scores([prepared], sim.state.year)
+    for cell, score in zip(prepared.candidates.tolist(), scores.tolist(), strict=True):
+        expected = destination_score(
+            unit, cell, prepared.costs, sim.state.year, prepared.memory_years, prepared.behavior
+        )
+        assert score == pytest.approx(expected, rel=1e-9, abs=1e-12)

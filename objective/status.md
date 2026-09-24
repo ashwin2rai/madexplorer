@@ -27,9 +27,10 @@ uv run madexplorer ensemble ... --set resolution.max_units_per_cell=8 --set mech
 uv run madexplorer rules -v          # every model rule with rationale (43 rules)
 ```
 
-Exact seeded regressions now live in `tests/regression/golden/*.json` (five fixed cases). A
+Exact seeded regressions now live in `tests/regression/golden/*.json` (five fixed cases),
+recorded on `numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3`. A
 behavior-preserving change must leave them untouched; an intended model change re-records
-them with `make golden` and says so in the commit.
+them with `make golden` and says so in the commit. On another numeric platform they skip.
 
 Then pick up at **Section 10, Recommended next steps**.
 
@@ -200,7 +201,28 @@ assumptions, the tests, whether seeded results change, and the kind of change.
     (aggregation 3) 400 s → 326 s; late step (920 units) 1.13 s → 0.76 s;
   - dense belief maps: late step 0.76 s → 0.40 s (sharing 293 → 98 ms, perception 175 → 44 ms);
     4 seeds × 600 years in reference mode 250 s → 175 s (−30%); 1,000-year seed 0 in reference
-    mode 421 s → 212 s (−50%).
+    mode 421 s → 212 s (−50%);
+  - tensorized diffusion (one knowledge matrix, contact edge list, per-receiver sums with
+    numpy's own reduction so results stay bit-identical, all-units × technologies support
+    check) and sharing (stacked partner years, `argmax` = first freshest partner; int32
+    observation years): diffusion 68 → 27 ms per late step; 1,000-year seed 0 212 s → 181 s.
+- **Tried and reverted** (no measurable gain): vectorizing the metrics recorder's mean age and
+  technology shares, and the per-unit invariant check. Their remaining cost (~11 ms and ~4 ms
+  per late step) is per-unit Python overhead; stacking ~900 small arrays costs as much as the
+  loop. `--set debug.check_invariants=false` saves the ~4 ms (~1%) in production ensembles.
+- **Vectorized with rounding-level changes** (accepted explicitly): migration utilities for all
+  candidates of all units in one numpy pass (`candidate_utilities`; per-unit choice, tie
+  draws and move draws keep their order), and crowding hazards for all units at once
+  (`np.bincount` per (cell, species) pool, `-expm1` for sedentism). Differences from the scalar
+  rules are at most ~1e-15 relative (crowding) and ~1e-12 (migration utilities near zero);
+  tests check agreement to 1e-12 / 1e-9. Late step 0.37 → 0.31 s (migration 50 → 34 ms,
+  demography 22 → 16 ms); 1,000-year seed 0 181 → 178 s.
+- **Consequence: exact seeded output is platform-specific.** numpy picks SIMD kernels by CPU
+  feature, so another machine may differ in the last bit and seeded runs can diverge. Golden
+  fixtures record a numeric-platform signature (numpy version, machine, active SIMD dispatch);
+  on a different platform the exact comparison is *skipped* with instructions, never failed.
+  All other tests are platform-independent. Fixtures were re-recorded for this change
+  (4 of 5 changed; MVP 1, which has crowding off, did not).
 - **Not done, deliberately.** A cached `units_by_cell` / `cell_population` index with
   invalidation: measured at 0.26 ms and 0.58 ms per call with 920 units (~4 ms per step, 0.5%),
   not worth the stale-cache risk. Belief pruning: a model change, not done.
@@ -316,11 +338,12 @@ aggregation off. `max_units_per_cell: 1` nearly stops colonization.
 | MVP 1, 64×64, 450 years | ~8-20 s |
 | MVP 2, 40×40, 600 years, aggregation off (16-seed ensemble, `--jobs 2`) | median ~45 s per run, ~7 min per ensemble |
 | MVP 2, 40×40, 600 years, reference mode, 4-seed ensemble (`--jobs 2`) | 25-67 s per run, 1.5 min wall |
-| MVP 2, 40×40, 1,000 years, reference mode, seed 0 (one of the slowest seeds) | 212 s |
-| Estimated baseline, 1,000 years, `--jobs 2`: 8 / 16 / 32 seeds | ~7 / ~15 / ~29 min (range 6-10 / 11-20 / 23-39) |
+| MVP 2, 40×40, 1,000 years, reference mode, seed 0 (one of the slowest seeds) | 178 s |
+| Estimated baseline, 1,000 years, `--jobs 2`: 8 / 16 / 32 seeds | ~6 / ~13 / ~25 min (range 5-9 / 9-17 / 20-33) |
 
-A late step (920 units) is now ~0.40 s: sharing 98 ms, diffusion 68, migration 55, perception
-44, foraging 32. Belief sharing still relays observations until every unit knows most of the
+A late step (920 units) is now ~0.31 s: sharing ~99 ms, foraging ~38, perception ~35,
+migration ~34, diffusion ~24, demography ~16, field planning ~14, learning ~16, plus ~15 ms of
+metrics and invariant checks. Belief sharing still relays observations until every unit knows most of the
 map (median 786 cells at year 850); a spatial memory limit would cut this further but is a
 model change.
 
@@ -422,8 +445,8 @@ aggregation stays within tolerance of the reference.
 ## 9. MVP 2 baseline (item 12)
 
 **Not yet recorded.** Canonical `scenarios/mvp2_neolithic.yaml`, reference mode, 1,000 years.
-After the dense-belief speed-up, the estimated wall time on the 2-core codespace is ~15 min for
-seeds 0-15 and ~29 min for seeds 0-31 (the earlier "2 hours" assumed every seed was as slow as
+After the speed-ups, the estimated wall time on the 2-core codespace is ~13 min for
+seeds 0-15 and ~25 min for seeds 0-31 (the earlier "2 hours" assumed every seed was as slow as
 seed 0 before the speed-up). Command, once approved:
 
 ```bash

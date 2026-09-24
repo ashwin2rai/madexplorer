@@ -5,7 +5,9 @@ import pytest
 
 from madexplorer.population.demography import mortality_probability
 from madexplorer.population.health import (
+    contact_weight,
     crowding_hazards,
+    crowding_mortality_hazard,
     sedentism,
     settlement_crowding_pressure,
 )
@@ -87,3 +89,31 @@ def test_computational_aggregation_does_not_change_the_hazard(human: SpeciesProf
     merged = _hazards([_unit("g", 300, groups=3), _unit("x", 50)], human.health)
     assert merged["g"] == pytest.approx(separate["g0"])
     assert merged["x"] == pytest.approx(separate["x"])
+
+
+def test_vectorized_hazards_match_the_scalar_rules(human: SpeciesProfile) -> None:
+    rng = np.random.default_rng(3)
+    units = [
+        _unit(
+            f"u{i}",
+            int(rng.integers(5, 400)),
+            cell=int(rng.integers(0, 4)),
+            residence=int(rng.integers(0, 40)),
+            groups=int(rng.integers(1, 4)),
+        )
+        for i in range(40)
+    ]
+    health = human.health
+    got = _hazards(units, health)
+    w = contact_weight(health.contact_radius_km, 100.0)
+    for unit in units:
+        members = [u for u in units if u.cell == unit.cell]
+        s = {u.id: sedentism(u.residence_years, health.sedentism_timescale_years) for u in members}
+        total = sum(u.population * s[u.id] for u in members)
+        village = unit.population / unit.groups
+        others = total - unit.population * s[unit.id] + (unit.population - village) * s[unit.id]
+        pressure = settlement_crowding_pressure(
+            village * s[unit.id] + w * others, health.crowding_reference_population
+        )
+        expected = crowding_mortality_hazard(pressure, s[unit.id], health)
+        assert got[unit.id] == pytest.approx(expected, rel=1e-12, abs=1e-15)

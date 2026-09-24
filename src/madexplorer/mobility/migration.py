@@ -20,6 +20,7 @@ import numpy as np
 from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
+from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.population.energetics import annual_need_kcal
 from madexplorer.population.groups import sigmoid
 from madexplorer.population.unit import NEVER_OBSERVED, Observation, PopulationUnit
@@ -92,25 +93,24 @@ def migration_probability(utility_gain: float, behavior: MigrationBehavior) -> f
 
 
 def choose_destination(
-    candidates: Sequence[int], scores: Sequence[float], current: int, rng: np.random.Generator
+    candidates: Sequence[int] | IntArray,
+    scores: Sequence[float] | FloatArray,
+    current: int,
+    rng: np.random.Generator,
 ) -> int | None:
     """Best-scoring cell other than ``current``; exact ties are broken uniformly at random.
 
     Candidates must be in a deterministic order. Returns ``None`` without alternatives. The
     random draw happens only on an exact tie, which continuous beliefs make rare.
     """
-    best_score = -math.inf
-    best: list[int] = []
-    for cell, score in zip(candidates, scores, strict=True):
-        if cell == current:
-            continue
-        if score > best_score:
-            best_score, best = score, [cell]
-        elif score == best_score:
-            best.append(cell)
-    if not best:
+    cells = np.asarray(candidates, dtype=np.int64)
+    values = np.where(cells == current, -np.inf, np.asarray(scores, dtype=np.float64))
+    if cells.size == 0 or not np.isfinite(values).any():
         return None
-    return best[0] if len(best) == 1 else best[int(rng.integers(len(best)))]
+    best = np.flatnonzero(values == values.max())
+    if best.size == 1:
+        return int(cells[best[0]])
+    return int(cells[best[int(rng.integers(best.size))]])
 
 
 @dataclass(frozen=True)
@@ -181,6 +181,42 @@ def _utility(
             0.0 if staying else -costs.fields_cost,
         )
     )
+
+
+def candidate_utilities(
+    food_kcal: FloatArray,
+    water_access: FloatArray,
+    others: FloatArray,
+    age_years: FloatArray,
+    path_cost_km: FloatArray,
+    staying: BoolArray,
+    population: FloatArray,
+    need_kcal: FloatArray,
+    farm_kcal: FloatArray,
+    stores_cost: FloatArray,
+    fields_cost: FloatArray,
+    memory_years: FloatArray,
+    weights: FloatArray,
+) -> FloatArray:
+    """:func:`cell_utility` plus leaving costs for many candidates at once (numpy).
+
+    Every argument is one value per candidate (per-unit values repeated); ``weights`` has
+    columns food, water, movement, movement reference km, uncertainty, food-ratio cap.
+    Matches the scalar rule up to floating-point rounding.
+    """
+    food = np.where(staying & (farm_kcal > 0), food_kcal + farm_kcal, food_kcal)
+    per_head = population + others
+    ratio = food / np.maximum(need_kcal * per_head / np.maximum(population, 1.0), 1.0)
+    ratio = np.minimum(np.maximum(ratio, 0.05), weights[:, 5])
+    utility: FloatArray = (
+        weights[:, 0] * np.log(ratio)
+        + weights[:, 1] * water_access
+        - weights[:, 2] * path_cost_km / weights[:, 3]
+        - weights[:, 4] * age_years / memory_years
+        - np.where(staying, 0.0, stores_cost)
+        - np.where(staying, 0.0, fields_cost)
+    )
+    return utility
 
 
 def destination_score(
@@ -258,10 +294,145 @@ class MigrationDecision:
     carry_kcal: float
 
 
+@dataclass(frozen=True)
+class _Prepared:
+    """One unit's inputs to this year's migration choice."""
+
+    unit: PopulationUnit
+    candidates: IntArray  # reachable believed cells, ascending (includes the current cell)
+    path_costs: FloatArray
+    costs: MoveCosts
+    carry_kcal: float
+    behavior: MigrationBehavior
+    memory_years: int
+
+
 class MigrationSubsystem:
     """Evaluates relocation decisions for all units."""
 
     name = "migration"
+
+    def _prepare(
+        self, unit: PopulationUnit, state: SimulationState, ctx: StepContext
+    ) -> _Prepared | None:
+        n = unit.population
+        beliefs = unit.beliefs
+        if n == 0 or beliefs.n_cells == 0:
+            return None
+        profile = ctx.species(unit.species_id)
+        behavior = profile.migration
+        temperature = float(state.climate.temperature_c[unit.cell])
+        need = (
+            annual_need_kcal(unit, profile, ctx.tables[unit.species_id], temperature)
+            - unit.energy_debt_kcal
+        )
+        movement = ctx.movement[unit.species_id]
+        cells, path_costs = movement.reachable_arrays(unit.cell)
+        known = beliefs.year[cells] != NEVER_OBSERVED
+        candidates = cells[known]
+        if not (candidates == unit.cell).any():
+            return None  # cannot evaluate staying without a current observation
+        farm_kcal = unit.fields_ha * unit.crop_yield_kcal_per_ha
+        carry = n * profile.movement.carry_kcal_per_capita
+        abandoned = max(unit.stores_kcal - carry, 0.0)
+        stores_cost = behavior.abandoned_stores_weight * abandoned / need if need > 0 else 0.0
+        fields_cost = behavior.abandoned_fields_weight * farm_kcal / need if need > 0 else 0.0
+        costs = MoveCosts(movement.reachable(unit.cell), need, stores_cost, fields_cost, farm_kcal)
+        return _Prepared(
+            unit,
+            candidates,
+            path_costs[known],
+            costs,
+            carry,
+            behavior,
+            profile.cognition.memory_years,
+        )
+
+    @staticmethod
+    def _scores(prepared: Sequence[_Prepared], year: int) -> list[FloatArray]:
+        """Utilities of every candidate of every prepared unit, in one vectorized pass."""
+        if not prepared:
+            return []
+        counts = np.array([p.candidates.size for p in prepared])
+        cells = np.concatenate([p.candidates for p in prepared])
+        owner = np.repeat(np.arange(len(prepared)), counts)
+
+        def gather(field: str) -> np.ndarray:
+            return np.concatenate([getattr(p.unit.beliefs, field)[p.candidates] for p in prepared])
+
+        food, water = gather("food_kcal"), gather("water_access")
+        others, observed = gather("population"), gather("year")
+
+        def per_unit(values: list[float]) -> FloatArray:
+            array: FloatArray = np.asarray(values, dtype=np.float64)[owner]
+            return array
+
+        weights = np.array(
+            [
+                (
+                    p.behavior.food_weight,
+                    p.behavior.water_weight,
+                    p.behavior.movement_cost_weight,
+                    p.behavior.movement_reference_km,
+                    p.behavior.uncertainty_weight,
+                    p.behavior.food_ratio_cap,
+                )
+                for p in prepared
+            ]
+        )[owner]
+        scores = candidate_utilities(
+            food,
+            water,
+            others.astype(np.float64),
+            (year - observed).astype(np.float64),
+            np.concatenate([p.path_costs for p in prepared]),
+            cells == per_unit([p.unit.cell for p in prepared]),
+            per_unit([p.unit.population for p in prepared]),
+            per_unit([p.costs.need_kcal for p in prepared]),
+            per_unit([p.costs.farm_kcal for p in prepared]),
+            per_unit([p.costs.stores_cost for p in prepared]),
+            per_unit([p.costs.fields_cost for p in prepared]),
+            per_unit([p.memory_years for p in prepared]),
+            weights,
+        )
+        return np.split(scores, np.cumsum(counts)[:-1])
+
+    def _finish(
+        self,
+        prepared: _Prepared,
+        scores: FloatArray,
+        state: SimulationState,
+        ctx: StepContext,
+        rng: np.random.Generator,
+    ) -> MigrationDecision | None:
+        unit = prepared.unit
+        best = choose_destination(prepared.candidates, scores, unit.cell, rng)
+        if best is None:
+            return None
+        position = {int(c): i for i, c in enumerate(prepared.candidates.tolist())}
+        gain = float(scores[position[best]] - scores[position[unit.cell]])
+        hazard = migration_probability(gain, prepared.behavior)
+        if unit.id in ctx.trace_units:
+            components = partial(
+                destination_components,
+                unit,
+                costs=prepared.costs,
+                year=state.year,
+                memory_years=prepared.memory_years,
+                behavior=prepared.behavior,
+            )
+            ctx.events.emit(
+                state.year,
+                "trace_migration",
+                unit_id=unit.id,
+                current_cell=list(state.world.coords(unit.cell)),
+                best_cell=list(state.world.coords(best)),
+                candidates=int(prepared.candidates.size),
+                current={k: round(v, 3) for k, v in components(unit.cell).items()},
+                best={k: round(v, 3) for k, v in components(best).items()},
+                final_hazard=round(hazard, 4),
+            )
+        return MigrationDecision(best, hazard, int(prepared.candidates.size), prepared.carry_kcal)
 
     def decide(
         self,
@@ -271,81 +442,23 @@ class MigrationSubsystem:
         rng: np.random.Generator,
     ) -> MigrationDecision | None:
         """Best-believed destination and move hazard, or ``None`` if staying is the only option."""
-        n = unit.population
-        if n == 0:
+        prepared = self._prepare(unit, state, ctx)
+        if prepared is None:
             return None
-        profile = ctx.species(unit.species_id)
-        behavior, memory = profile.migration, profile.cognition.memory_years
-        temperature = float(state.climate.temperature_c[unit.cell])
-        need = (
-            annual_need_kcal(unit, profile, ctx.tables[unit.species_id], temperature)
-            - unit.energy_debt_kcal
-        )
-        movement = ctx.movement[unit.species_id]
-        reachable = movement.reachable(unit.cell)
-        beliefs = unit.beliefs
-        if beliefs.n_cells == 0:
-            return None
-        cells, path_costs = movement.reachable_arrays(unit.cell)
-        known = beliefs.year[cells] != NEVER_OBSERVED
-        candidate_ids = cells[known]
-        candidates: list[int] = candidate_ids.tolist()
-        if unit.cell not in candidates:
-            return None  # cannot evaluate staying without a current observation
-        farm_kcal = unit.fields_ha * unit.crop_yield_kcal_per_ha
-        carry = n * profile.movement.carry_kcal_per_capita
-        abandoned = max(unit.stores_kcal - carry, 0.0)
-        stores_cost = behavior.abandoned_stores_weight * abandoned / need if need > 0 else 0.0
-        fields_cost = behavior.abandoned_fields_weight * farm_kcal / need if need > 0 else 0.0
-        costs = MoveCosts(reachable, need, stores_cost, fields_cost, farm_kcal)
-        components = partial(
-            destination_components,
-            unit,
-            costs=costs,
-            year=state.year,
-            memory_years=memory,
-            behavior=behavior,
-        )
-        scores = [
-            _utility(f, w, p, y, d, c == unit.cell, n, costs, state.year, memory, behavior)
-            for c, f, w, p, y, d in zip(
-                candidates,
-                beliefs.food_kcal[candidate_ids].tolist(),
-                beliefs.water_access[candidate_ids].tolist(),
-                beliefs.population[candidate_ids].tolist(),
-                beliefs.year[candidate_ids].tolist(),
-                path_costs[known].tolist(),
-                strict=True,
-            )
-        ]
-        best = choose_destination(candidates, scores, unit.cell, rng)
-        if best is None:
-            return None
-        stay_score = scores[candidates.index(unit.cell)]
-        hazard = migration_probability(scores[candidates.index(best)] - stay_score, behavior)
-        if unit.id in ctx.trace_units:
-            ctx.events.emit(
-                state.year,
-                "trace_migration",
-                unit_id=unit.id,
-                current_cell=list(state.world.coords(unit.cell)),
-                best_cell=list(state.world.coords(best)),
-                candidates=len(candidates),
-                current={k: round(v, 3) for k, v in components(unit.cell).items()},
-                best={k: round(v, 3) for k, v in components(best).items()},
-                final_hazard=round(hazard, 4),
-            )
-        return MigrationDecision(best, hazard, len(candidates), carry)
+        (scores,) = self._scores([prepared], state.year)
+        return self._finish(prepared, scores, state, ctx, rng)
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Relocation]:
-        """Decide which units move where this year."""
+        """Decide which units move where this year (scores for all units computed at once)."""
         rng = ctx.rng.stream(Streams.MIGRATION)
+        prepared = [p for u in state.units.values() if (p := self._prepare(u, state, ctx))]
         proposals: list[Relocation] = []
-        for unit in state.units.values():
-            decision = self.decide(unit, state, ctx, rng)
+        for item, scores in zip(prepared, self._scores(prepared, state.year), strict=True):
+            unit = item.unit
+            decision = self._finish(item, scores, state, ctx, rng)
             if decision is None or rng.random() >= decision.hazard:
                 continue
-            cost = ctx.movement[unit.species_id].reachable(unit.cell)[decision.destination]
+            cost = item.costs.reachable[decision.destination]
             travel = unit.population * ctx.species(unit.species_id).movement.travel_kcal_per_km
             proposals.append(
                 Relocation(
