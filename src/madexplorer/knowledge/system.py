@@ -175,11 +175,8 @@ class KnowledgeModel:
 
     def knowledge_supported(self, knowledge: FloatArray, fraction: float) -> BoolArray:
         """``(units, technologies)``: whether each unit's knowledge still supports each
-        technology (every required domain at least ``fraction`` of its minimum).
-
-        Technologies are in ``self.technologies`` order. Same comparisons as
-        :meth:`unsupported`, done for all units at once.
-        """
+        technology (every required domain at least ``fraction`` of its minimum), with
+        technologies in ``self.technologies`` order."""
         supported = np.ones((knowledge.shape[0], len(self.technologies)), dtype=bool)
         for t, tech in enumerate(self.technologies.values()):
             for domain, minimum in tech.min_knowledge.items():
@@ -188,16 +185,9 @@ class KnowledgeModel:
 
     def unsupported_given(self, held: frozenset[str], supported: BoolArray) -> tuple[str, ...]:
         """:meth:`unsupported` from a precomputed row of :meth:`knowledge_supported`."""
-        if not held:
-            return ()
-        positions = self._tech_positions
-        kept = {t for t in held if supported[positions[t]]}
-        return self._cascade(held, kept)
-
-    def _cascade(self, held: frozenset[str], kept: set[str]) -> tuple[str, ...]:
-        """Drop kept technologies whose required technologies are gone (to a fixed point)."""
+        kept = {t for t in held if supported[self._tech_positions[t]]}
         changed = True
-        while changed:
+        while changed:  # drop technologies whose required technologies are gone
             changed = False
             for t in sorted(kept):
                 if not set(self.technologies[t].requires) <= kept:
@@ -210,15 +200,8 @@ class KnowledgeModel:
     ) -> tuple[str, ...]:
         """Held technologies whose knowledge fell below ``fraction`` of the requirement,
         plus any that depend on a lost technology (iterated to a fixed point)."""
-        kept = {
-            t
-            for t in held
-            if all(
-                self.level(knowledge, d) >= fraction * v
-                for d, v in self.technologies[t].min_knowledge.items()
-            )
-        }
-        return self._cascade(held, kept)
+        supported = self.knowledge_supported(knowledge[None, :], fraction)[0]
+        return self.unsupported_given(held, supported)
 
     def prerequisites_met(
         self,

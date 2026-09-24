@@ -61,22 +61,6 @@ def contacts(
     expected_domain="gain per domain in [0, max gap to any contact]",
     known_limitations="Symmetric contact; no language or cultural barriers yet.",
 )
-def diffusion_gain(
-    knowledge: FloatArray,
-    contact_levels: list[tuple[float, FloatArray]],
-    transmissibility: FloatArray,
-    teaching_efficiency: float,
-) -> FloatArray:
-    """Knowledge gained this year from contacts ``(strength, levels)``."""
-    if not contact_levels:
-        return np.zeros_like(knowledge)
-    gaps = np.stack([np.maximum(levels - knowledge, 0.0) for _, levels in contact_levels])
-    weights = np.array([strength for strength, _ in contact_levels])
-    gain = teaching_efficiency * transmissibility * (weights[:, None] * gaps).sum(axis=0)
-    capped: FloatArray = np.minimum(gain, gaps.max(axis=0))
-    return capped
-
-
 def diffusion_gains(
     knowledge: FloatArray,
     receivers: IntArray,
@@ -85,12 +69,12 @@ def diffusion_gains(
     transmissibility: FloatArray,
     teaching: FloatArray,
 ) -> FloatArray:
-    """:func:`diffusion_gain` for every unit at once, shape ``(units, domains)``.
+    """Knowledge gained this year by every unit, shape ``(units, domains)``.
 
-    ``knowledge`` is ``(units, domains)``; each contact edge ``e`` carries knowledge from
-    unit ``sources[e]`` to ``receivers[e]`` with weight ``strengths[e]``. Edges must be
-    grouped by receiver, in each receiver's contact order, so the per-receiver sums add
-    terms in the same order as the per-unit rule (identical floating-point results).
+    For receiver ``i``: ``teaching_i * transmissibility * sum_e strength_e * max(K_src - K_i, 0)``,
+    capped per domain at the largest gap to any contact. ``knowledge`` is
+    ``(units, domains)``; edge ``e`` carries knowledge from ``sources[e]`` to ``receivers[e]``
+    with weight ``strengths[e]``. Edges are grouped by receiver in contact order.
     """
     gains = np.zeros_like(knowledge)
     if receivers.size == 0:

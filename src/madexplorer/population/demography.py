@@ -74,19 +74,6 @@ def mortality_hazards(
     return total, crowd
 
 
-def mortality_probability(
-    tables: LifeTables,
-    deficit: FloatArray,
-    sensitivity: float,
-    crowding: FloatArray | None = None,
-) -> FloatArray:
-    """Annual death probability, shape ``(units, ages)``."""
-    extra = np.zeros_like(deficit) if crowding is None else crowding
-    hazard, _ = mortality_hazards(tables, deficit, sensitivity, extra)
-    probability: FloatArray = 1.0 - np.exp(-hazard)
-    return probability
-
-
 @dataclass(frozen=True)
 class CohortOutcome:
     """Vectorized demographic outcome for a batch of units of one species."""

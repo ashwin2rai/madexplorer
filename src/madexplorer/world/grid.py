@@ -146,23 +146,13 @@ class WorldGrid:
             cache[key] = cells
         return cells
 
-    def land_cell_ids_within(self, cell: int, radius_cells: int) -> IntArray:
-        """``land_cells_within`` as a cached integer array (for vectorized indexing)."""
-        cache: dict[tuple[int, int], IntArray] = self.__dict__.setdefault("_land_ids", {})
-        key = (cell, radius_cells)
-        ids = cache.get(key)
-        if ids is None:
-            ids = np.array(self.land_cells_within(cell, radius_cells), dtype=np.int64)
-            cache[key] = ids
-        return ids
-
-    def land_cells_within(self, cell: int, radius_cells: int) -> list[int]:
-        """Land cells within Chebyshev distance ``radius_cells`` (cached like ``cells_within``)."""
-        cache: dict[tuple[int, int], list[int]] = self.__dict__.setdefault("_land_within", {})
+    def land_cells_within(self, cell: int, radius_cells: int) -> IntArray:
+        """Land cells within Chebyshev distance ``radius_cells``, as a cached array."""
+        cache: dict[tuple[int, int], IntArray] = self.__dict__.setdefault("_land_within", {})
         key = (cell, radius_cells)
         cells = cache.get(key)
         if cells is None:
-            water = self.is_water
-            cells = [c for c in self.cells_within(cell, radius_cells) if not water[c]]
+            within = np.array(self.cells_within(cell, radius_cells), dtype=np.int64)
+            cells = within[~self.is_water[within]]
             cache[key] = cells
         return cells

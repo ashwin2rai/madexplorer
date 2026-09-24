@@ -104,14 +104,9 @@ class BeliefMap:
             int(self.population[cell]),
         )
 
-    def known_cells(self) -> IntArray:
-        """Ids of cells with an observation, ascending."""
-        cells: IntArray = np.flatnonzero(self.year != NEVER_OBSERVED)
-        return cells
-
     def to_dict(self) -> dict[int, Observation]:
         """``{cell: Observation}`` for every known cell."""
-        return {int(c): self[int(c)] for c in self.known_cells()}
+        return {c: self[c] for c in np.flatnonzero(self.year != NEVER_OBSERVED).tolist()}
 
     def merged_with(self, other: "BeliefMap") -> "BeliefMap":
         """Per cell, ``other``'s observation where it is strictly fresher than this map's."""

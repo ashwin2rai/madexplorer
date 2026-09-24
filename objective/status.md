@@ -180,11 +180,10 @@ assumptions, the tests, whether seeded results change, and the kind of change.
   - Migration scores candidates as floats with the same terms and `sum()` order (Python ≥ 3.12
     `sum` is compensated, so a running `+=` would *not* be bit-identical), iterates the small
     reachable set, and builds component dicts only for traced units.
-  - Belief sharing collects partners in the same RNG order, compares per-cell observation
-    years as dense per-step arrays (first partner wins ties, as before), and builds Python
-    objects only for changed cells. `SharedKnowledge.apply` is a `dict.update` (the freshness
-    check made in `evaluate` still holds because each proposal changes only its own unit).
-    A Hypothesis test checks equality with the original dictionary merge.
+  - Belief sharing collects partners in the same RNG order and keeps, per cell, the first
+    freshest partner observation (as before); perception and sharing both emit a
+    `BeliefUpdate` with a new map. A Hypothesis test checks equality with the original
+    dictionary merge.
   - **Beliefs are dense per-unit arrays** (`population/unit.py` `BeliefMap`: observation year,
     food, water, population per cell; `NEVER_OBSERVED` marks unknown cells). Maps are never
     modified after construction: perception, sharing and merging build new ones, so staged
@@ -301,6 +300,19 @@ aggregation off. `max_units_per_cell: 1` nearly stops colonization.
 - **Tests.** Choice frequencies proportional to λ and total rate `1 − ∏(1 − p)`; a run with the
   technology list reversed produces the identical invention sequence (fails on the old code).
 - **Seeded results.** Change.
+
+### Refactor after the speed-ups (no behavior change)
+
+Removed scalar duplicates that survived only as test references: `destination_score` /
+`_utility` (migration now has the documented component rule plus the vectorized
+`candidate_utilities`), the per-unit `diffusion_gain` (the rule now lives on
+`diffusion_gains`), `mortality_probability`, `unit_field_names`, `BeliefMap.known_cells`,
+the `SharedKnowledge` proposal (same as `BeliefUpdate`), and the list-returning
+`land_cells_within` (now one cached array function). The health rules (`sedentism`,
+`settlement_crowding_pressure`, `crowding_mortality_hazard`) work elementwise on scalars or
+arrays and `crowding_hazards` is built from them, so the formulas exist once.
+`KnowledgeModel.unsupported` delegates to the batched `knowledge_supported`. Net −150 lines;
+golden fixtures unchanged.
 
 ### Item 11. Test classes (implementation)
 

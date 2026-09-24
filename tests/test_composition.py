@@ -1,5 +1,7 @@
 """Merge/split semantics and network rewiring (spec §6.4, §6.5, §38)."""
 
+from dataclasses import fields
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -11,7 +13,6 @@ from madexplorer.population.composition import (
     absorb,
     merge_state,
     split_off,
-    unit_field_names,
 )
 from madexplorer.population.unit import PopulationUnit
 
@@ -37,7 +38,7 @@ def _unit(uid: str, n_female: int, n_male: int = 0, cell: int = 0) -> Population
 
 
 def test_every_unit_field_has_merge_and_split_rules() -> None:
-    assert set(FIELD_RULES) == unit_field_names()
+    assert set(FIELD_RULES) == {f.name for f in fields(PopulationUnit)}
 
 
 def test_merge_rejects_units_in_different_cells() -> None:

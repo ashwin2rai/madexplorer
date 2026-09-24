@@ -6,7 +6,7 @@ from hypothesis.extra.numpy import arrays
 from madexplorer.population.demography import (
     demographic_step,
     fertility_multiplier,
-    mortality_probability,
+    mortality_hazards,
 )
 from madexplorer.population.groups import split_cohorts
 from madexplorer.species.life_history import LifeTables
@@ -42,9 +42,8 @@ def test_split_conserves_every_cohort(
 
 
 def test_starvation_raises_mortality(human_tables: LifeTables) -> None:
-    probability = mortality_probability(human_tables, np.array([0.0, 0.5]), sensitivity=3.0)
-    assert (probability[1] > probability[0]).all()
-    assert (probability <= 1).all()
+    hazard, _ = mortality_hazards(human_tables, np.array([0.0, 0.5]), 3.0, np.zeros(2))
+    assert (hazard[1] > hazard[0]).all()
 
 
 def test_fertility_falls_with_food_shortfall() -> None:

@@ -3,7 +3,7 @@
 import numpy as np
 import pytest
 
-from madexplorer.population.demography import mortality_probability
+from madexplorer.population.demography import mortality_hazards
 from madexplorer.population.health import (
     contact_weight,
     crowding_hazards,
@@ -66,12 +66,11 @@ def test_mobile_groups_avoid_most_of_the_penalty(human: SpeciesProfile) -> None:
     assert 0.0 < recent < hazards["settled"]
 
 
-def test_crowding_raises_death_probability(human_tables: LifeTables) -> None:
-    deficit = np.zeros(2)
-    base = mortality_probability(human_tables, deficit, 3.0, np.zeros(2))
-    crowded = mortality_probability(human_tables, deficit, 3.0, np.array([0.0, 0.01]))
-    assert np.allclose(crowded[0], base[0])
-    assert (crowded[1] > base[1]).all()
+def test_crowding_adds_to_the_death_hazard(human_tables: LifeTables) -> None:
+    base, _ = mortality_hazards(human_tables, np.zeros(2), 3.0, np.zeros(2))
+    total, crowd = mortality_hazards(human_tables, np.zeros(2), 3.0, np.array([0.0, 0.01]))
+    assert np.array_equal(total[0], base[0]) and not crowd[0].any()
+    assert np.allclose(total[1], base[1] + crowd[1]) and (crowd[1] > 0).all()
 
 
 def test_grid_resolution_barely_changes_the_hazard(human: SpeciesProfile) -> None:
@@ -115,5 +114,7 @@ def test_vectorized_hazards_match_the_scalar_rules(human: SpeciesProfile) -> Non
         pressure = settlement_crowding_pressure(
             village * s[unit.id] + w * others, health.crowding_reference_population
         )
-        expected = crowding_mortality_hazard(pressure, s[unit.id], health)
+        expected = crowding_mortality_hazard(
+            pressure, s[unit.id], health.crowding_mortality_per_log_contact
+        )
         assert got[unit.id] == pytest.approx(expected, rel=1e-12, abs=1e-15)

@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
-from madexplorer.knowledge.diffusion import diffusion_gain, diffusion_gains
+from madexplorer.knowledge.diffusion import diffusion_gains
 from madexplorer.knowledge.innovation import choose_invention, innovation_hazard
 from madexplorer.knowledge.learning import learn
 from madexplorer.knowledge.system import KnowledgeModel, KnowledgeSystem
@@ -64,12 +64,17 @@ def test_equilibrium_knowledge_is_higher_in_larger_populations(
     assert (equilibrium(500) > equilibrium(20)).all()
 
 
+def _gain_from_one_contact(strength: float) -> np.ndarray:
+    knowledge = np.array([[1.0, 3.0], [2.0, 1.0]])  # unit 0 learns from unit 1
+    edge = np.array([0]), np.array([1]), np.array([strength])
+    learner: np.ndarray = diffusion_gains(knowledge, *edge, np.array([0.5, 0.5]), np.ones(2))[0]
+    return learner
+
+
 def test_diffusion_flows_down_gradients_only() -> None:
-    mine = np.array([1.0, 3.0])
-    gain = diffusion_gain(mine, [(1.0, np.array([2.0, 1.0]))], np.array([0.5, 0.5]), 1.0)
+    gain = _gain_from_one_contact(1.0)
     assert gain[0] == pytest.approx(0.5) and gain[1] == 0.0
-    huge = diffusion_gain(mine, [(100.0, np.array([2.0, 1.0]))], np.array([0.5, 0.5]), 1.0)
-    assert huge[0] == pytest.approx(1.0)  # never overshoots the best contact
+    assert _gain_from_one_contact(100.0)[0] == pytest.approx(1.0)  # never overshoots
 
 
 def test_innovation_needs_both_pressure_and_capacity(knowledge_model: KnowledgeModel) -> None:
@@ -153,6 +158,23 @@ def test_technology_file_order_does_not_change_seeded_results(tmp_path: Path) ->
     assert runs[0] == runs[1]
 
 
+def _reference_gain(
+    knowledge: np.ndarray,
+    i: int,
+    partners: list[int],
+    strength: list[float],
+    transmissibility: np.ndarray,
+    teaching: float,
+) -> np.ndarray:
+    """The original one-unit-at-a-time formula."""
+    if not partners:
+        return np.zeros(knowledge.shape[1])
+    gaps = np.stack([np.maximum(knowledge[j] - knowledge[i], 0.0) for j in partners])
+    gain = teaching * transmissibility * (np.array(strength)[:, None] * gaps).sum(axis=0)
+    result: np.ndarray = np.minimum(gain, gaps.max(axis=0))
+    return result
+
+
 @settings(max_examples=100, deadline=None)
 @given(seed=st.integers(0, 10_000), n_units=st.integers(1, 12))
 def test_batched_diffusion_equals_per_unit_rule_exactly(seed: int, n_units: int) -> None:
@@ -167,8 +189,8 @@ def test_batched_diffusion_equals_per_unit_rule_exactly(seed: int, n_units: int)
         receivers += [i] * len(partners)
         sources += partners
         weights += strength
-        levels = [(w, knowledge[j]) for j, w in zip(partners, strength, strict=True)]
-        expected.append(diffusion_gain(knowledge[i], levels, transmissibility, teaching[i]))
+        reference = _reference_gain(knowledge, i, partners, strength, transmissibility, teaching[i])
+        expected.append(reference)
     got = diffusion_gains(
         knowledge,
         np.array(receivers, dtype=np.int64),

@@ -36,7 +36,11 @@ def perception_radius_cells(cognition: Cognition, vegetation: float, cell_size_k
 
 @dataclass(frozen=True)
 class BeliefUpdate:
-    """Replace a unit's spatial belief map."""
+    """Replace a unit's spatial belief map (from perception or sharing).
+
+    Maps are computed from the pre-update beliefs of all units and each update changes
+    only its own unit's map, so the order of applying them does not matter.
+    """
 
     unit_id: str
     beliefs: BeliefMap
@@ -70,7 +74,7 @@ class PerceptionSubsystem:
             horizon = state.year - cognition.memory_years
             year, food_kcal, water, population = unit.beliefs.sized(world.n_cells).arrays()
             year[year <= horizon] = NEVER_OBSERVED  # forget stale observations
-            cells = world.land_cell_ids_within(unit.cell, radius)
+            cells = world.land_cells_within(unit.cell, radius)
             noise = np.exp(cognition.observation_noise_sigma * rng.standard_normal(cells.size))
             year[cells] = state.year
             food_kcal[cells] = food[cells] * noise
@@ -80,22 +84,6 @@ class PerceptionSubsystem:
             beliefs = BeliefMap(year, food_kcal, water, population)
             updates.append(BeliefUpdate(unit.id, beliefs))
         return updates
-
-
-@dataclass(frozen=True)
-class SharedKnowledge:
-    """Observations one unit receives from its neighbors."""
-
-    unit_id: str
-    beliefs: BeliefMap  # the unit's map after adopting fresher partner observations
-
-    def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Adopt the merged map.
-
-        It was computed from pre-sharing beliefs, and each proposal changes only its own
-        unit's map, so applying proposals in any order gives the same result.
-        """
-        state.units[self.unit_id].beliefs = self.beliefs
 
 
 @model_rule(
@@ -118,12 +106,12 @@ class KnowledgeSharingSubsystem:
 
     name = "knowledge_sharing"
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[SharedKnowledge]:
+    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[BeliefUpdate]:
         """Collect what each unit learns from neighbors (based on pre-sharing beliefs)."""
         rng = ctx.rng.stream(Streams.KNOWLEDGE_SHARING)
         by_cell = state.units_by_cell()
         world = state.world
-        proposals: list[SharedKnowledge] = []
+        proposals: list[BeliefUpdate] = []
         for unit in state.units.values():
             probability = ctx.species(unit.species_id).social.knowledge_sharing_probability
             partners: list[PopulationUnit] = []
@@ -136,7 +124,7 @@ class KnowledgeSharingSubsystem:
             if partners:
                 merged = freshest_from_partners(unit.beliefs, [p.beliefs for p in partners])
                 if merged is not None:
-                    proposals.append(SharedKnowledge(unit.id, merged))
+                    proposals.append(BeliefUpdate(unit.id, merged))
         return proposals
 
 

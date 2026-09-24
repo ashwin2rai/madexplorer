@@ -151,38 +151,6 @@ def destination_components(
     return components
 
 
-def _utility(
-    food_kcal: float,
-    water_access: float,
-    others: int,
-    observed_year: int,
-    path_cost_km: float,
-    staying: bool,
-    population: int,
-    costs: MoveCosts,
-    year: int,
-    memory_years: int,
-    behavior: MigrationBehavior,
-) -> float:
-    """Total utility from plain values; the arithmetic of :func:`destination_components`."""
-    if staying and costs.farm_kcal > 0:
-        food_kcal = food_kcal + costs.farm_kcal
-    per_head = population + others
-    ratio = food_kcal / max(costs.need_kcal * per_head / max(population, 1), 1.0)
-    ratio = min(max(ratio, 0.05), behavior.food_ratio_cap)
-    # sum() (compensated for floats since Python 3.12) over the same terms, in the same order.
-    return sum(
-        (
-            behavior.food_weight * math.log(ratio),
-            behavior.water_weight * water_access,
-            -behavior.movement_cost_weight * path_cost_km / behavior.movement_reference_km,
-            -behavior.uncertainty_weight * (year - observed_year) / memory_years,
-            0.0 if staying else -costs.stores_cost,
-            0.0 if staying else -costs.fields_cost,
-        )
-    )
-
-
 def candidate_utilities(
     food_kcal: FloatArray,
     water_access: FloatArray,
@@ -217,35 +185,6 @@ def candidate_utilities(
         - np.where(staying, 0.0, fields_cost)
     )
     return utility
-
-
-def destination_score(
-    unit: PopulationUnit,
-    cell: int,
-    costs: MoveCosts,
-    year: int,
-    memory_years: int,
-    behavior: MigrationBehavior,
-) -> float:
-    """Total utility of ``cell``: the sum of :func:`destination_components`, computed directly.
-
-    Same arithmetic and summation order as the components (so results are bit-identical)
-    without building a dict per candidate; the components are only needed for tracing.
-    """
-    obs = unit.beliefs[cell]
-    return _utility(
-        obs.food_kcal,
-        obs.water_access,
-        obs.population,
-        obs.year,
-        costs.reachable[cell],
-        cell == unit.cell,
-        unit.population,
-        costs,
-        year,
-        memory_years,
-        behavior,
-    )
 
 
 @dataclass(frozen=True)

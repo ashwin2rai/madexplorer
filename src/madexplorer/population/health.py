@@ -27,8 +27,11 @@ from collections.abc import Iterable, Mapping
 import numpy as np
 
 from madexplorer.core.governance import model_rule
+from madexplorer.core.types import FloatArray
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import Health
+
+Real = float | FloatArray  # the rules below work elementwise on scalars or arrays
 
 
 @model_rule(
@@ -43,9 +46,10 @@ from madexplorer.species.profile import Health
     expected_domain="[0, 1): 0 for a group that just moved, near 1 after several timescales",
     known_limitations="Residence is per cell; seasonal mobility within a cell is not modeled.",
 )
-def sedentism(residence_years: int, timescale_years: float) -> float:
-    """Degree of sedentism from years of continuous residence."""
-    return 1.0 - math.exp(-max(residence_years, 0) / timescale_years)
+def sedentism(residence_years: Real, timescale_years: Real) -> Real:
+    """Degree of sedentism from years of continuous residence (scalars or arrays)."""
+    level: Real = -np.expm1(-np.maximum(residence_years, 0.0) / timescale_years)
+    return level
 
 
 def contact_weight(contact_radius_km: float, cell_area_km2: float) -> float:
@@ -69,9 +73,10 @@ def contact_weight(contact_radius_km: float, cell_area_km2: float) -> float:
         "ecology; contacts beyond the cell are ignored."
     ),
 )
-def settlement_crowding_pressure(contact_population: float, reference_population: float) -> float:
-    """Pressure ``log(1 + N_contact / N0)``."""
-    return math.log1p(max(contact_population, 0.0) / reference_population)
+def settlement_crowding_pressure(contact_population: Real, reference_population: Real) -> Real:
+    """Pressure ``log(1 + N_contact / N0)`` (scalars or arrays)."""
+    pressure: Real = np.log1p(np.maximum(contact_population, 0.0) / reference_population)
+    return pressure
 
 
 @model_rule(
@@ -89,9 +94,9 @@ def settlement_crowding_pressure(contact_population: float, reference_population
         "Magnitudes are placeholders; no immunity, epidemics, or zoonotic reservoirs yet."
     ),
 )
-def crowding_mortality_hazard(pressure: float, sedentism_level: float, health: Health) -> float:
+def crowding_mortality_hazard(pressure: Real, sedentism_level: Real, per_log_contact: Real) -> Real:
     """Adult annual crowding hazard (age multipliers are applied by the life tables)."""
-    return health.crowding_mortality_per_log_contact * sedentism_level * pressure
+    return per_log_contact * sedentism_level * pressure
 
 
 def crowding_hazards(
@@ -99,22 +104,13 @@ def crowding_hazards(
     species: Mapping[str, Health],
     cell_area_km2: float,
 ) -> dict[str, float]:
-    """Adult crowding hazard for every unit, from co-located same-species settled people.
-
-    Vectorized over units; it computes the rules above (``sedentism``,
-    ``settlement_crowding_pressure``, ``crowding_mortality_hazard``) up to rounding.
-    """
+    """Adult crowding hazard for every unit, from co-located same-species settled people."""
     units = list(units)
     if not units:
         return {}
     species_ids = sorted(species)
-    code = {sid: k for k, sid in enumerate(species_ids)}
-    kind = np.array([code[u.species_id] for u in units], dtype=np.int64)
-    cell = np.array([u.cell for u in units], dtype=np.int64)
-    people = np.array([u.population for u in units], dtype=np.float64)
-    groups = np.array([max(u.groups, 1) for u in units], dtype=np.float64)
-    residence = np.array([max(u.residence_years, 0) for u in units], dtype=np.float64)
-    params = np.array(
+    kind = np.array([species_ids.index(u.species_id) for u in units])
+    timescale, weight, reference, per_log = np.array(
         [
             (
                 h.sedentism_timescale_years,
@@ -124,14 +120,14 @@ def crowding_hazards(
             )
             for h in (species[sid] for sid in species_ids)
         ]
-    )[kind]
-    s = -np.expm1(-residence / params[:, 0])
+    )[kind].T
+    people = np.array([u.population for u in units], dtype=np.float64)
+    village = people / np.array([max(u.groups, 1) for u in units])
+    s = sedentism(np.array([u.residence_years for u in units]), timescale)
     settled = people * s
-    key = cell * len(species_ids) + kind  # one settlement pool per (cell, species)
-    _, pool = np.unique(key, return_inverse=True)
-    settled_total = np.bincount(pool, weights=settled)[pool]
-    village = people / groups
-    others = settled_total - settled + (people - village) * s
-    contact = village * s + params[:, 1] * others
-    hazard = params[:, 3] * s * np.log1p(np.maximum(contact, 0.0) / params[:, 2])
-    return dict(zip((u.id for u in units), hazard.tolist(), strict=True))
+    cells = np.array([u.cell for u in units])
+    _, pool = np.unique(cells * len(species_ids) + kind, return_inverse=True)  # (cell, species)
+    others = np.bincount(pool, weights=settled)[pool] - settled + (people - village) * s
+    pressure = settlement_crowding_pressure(village * s + weight * others, reference)
+    hazard = crowding_mortality_hazard(pressure, s, per_log)
+    return dict(zip((u.id for u in units), np.asarray(hazard).tolist(), strict=True))

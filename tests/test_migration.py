@@ -7,10 +7,8 @@ from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
 from madexplorer.mobility.migration import (
     MigrationSubsystem,
-    MoveCosts,
     choose_destination,
     destination_components,
-    destination_score,
 )
 from madexplorer.population.unit import BeliefMap, Observation, PopulationUnit
 from tests.conftest import ROOT, small_scenario_dict, step_context
@@ -114,32 +112,7 @@ def test_choose_destination_ignores_current_cell_and_breaks_ties_uniformly() -> 
     assert 0.45 < share < 0.55
 
 
-def test_fast_score_equals_sum_of_traced_components() -> None:
-    sim = _simulator()
-    unit = _only_unit(sim)
-    unit.fields_ha, unit.crop_yield_kcal_per_ha, unit.stores_kcal = 3.0, 1e6, 5e6
-    rng = np.random.default_rng(5)
-    cells = [unit.cell, *_neighbors_by_cost(sim, unit)[:10]]
-    observations = {
-        c: Observation(
-            year=sim.state.year - int(rng.integers(0, 15)),
-            food_kcal=float(rng.uniform(1e5, 1e7)),
-            water_access=float(rng.uniform()),
-            population=int(rng.integers(0, 300)),
-        )
-        for c in cells
-    }
-    unit.beliefs = BeliefMap.from_observations(sim.world.n_cells, observations)
-    reachable = sim.movement[unit.species_id].reachable(unit.cell)
-    costs = MoveCosts(reachable, 4e5, 0.7, 1.3, 3e6)
-    behavior = sim.scenario.species["human"].migration
-    for cell in cells:
-        components = destination_components(unit, cell, costs, sim.state.year, 20, behavior)
-        score = destination_score(unit, cell, costs, sim.state.year, 20, behavior)
-        assert score == sum(components.values())
-
-
-def test_vectorized_scores_match_scalar_rule() -> None:
+def test_vectorized_scores_match_the_component_rule() -> None:
     sim = _simulator()
     unit = _only_unit(sim)
     rng = np.random.default_rng(9)
@@ -162,7 +135,8 @@ def test_vectorized_scores_match_scalar_rule() -> None:
     assert prepared is not None
     (scores,) = subsystem._scores([prepared], sim.state.year)
     for cell, score in zip(prepared.candidates.tolist(), scores.tolist(), strict=True):
-        expected = destination_score(
+        components = destination_components(
             unit, cell, prepared.costs, sim.state.year, prepared.memory_years, prepared.behavior
         )
+        expected = sum(components.values())
         assert score == pytest.approx(expected, rel=1e-9, abs=1e-12)

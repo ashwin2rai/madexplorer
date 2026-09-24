@@ -14,7 +14,6 @@ merging units disappears rather than becoming a self-edge.
 """
 
 from collections.abc import MutableMapping
-from dataclasses import fields
 from enum import Enum
 
 import numpy as np
@@ -90,11 +89,6 @@ _WEIGHTED_MEAN = (
     "forage_marginal_kcal_per_hour",
     "forage_plant_share",
 )
-
-
-def unit_field_names() -> set[str]:
-    """Dataclass fields of :class:`PopulationUnit` (the state that needs a rule)."""
-    return {f.name for f in fields(PopulationUnit)}
 
 
 def _weighted(a: float, n_a: int, b: float, n_b: int) -> float:
