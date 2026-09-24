@@ -1,17 +1,17 @@
 {
   "final_year": 250,
-  "final_population": 1116,
-  "final_units": 38,
-  "final_occupied_cells": 32,
+  "final_population": 1098,
+  "final_units": 40,
+  "final_occupied_cells": 35,
   "totals": {
-    "births": 3800.0,
-    "deaths": 2744.0,
-    "migrations": 510.0,
+    "births": 3775.0,
+    "deaths": 2737.0,
+    "migrations": 493.0,
     "fissions": 96.0,
-    "fusions": 57.0,
-    "inventions": 4.0
+    "fusions": 58.0,
+    "inventions": 7.0
   },
-  "event_count": 203,
-  "metrics_sha256": "f446419bad10ecb018023c62fbe825842ecdb59162b1d7428c85cb9041ed2a4c",
-  "events_sha256": "61be034f78fb1e34f42dff50229e0e12b2a3fc633d8c45abb637af2409bca2a8"
+  "event_count": 210,
+  "metrics_sha256": "b581889bcf087620c1f7f1bd7e8bd63cac32366a198bd5212ea2e0183adbb1ce",
+  "events_sha256": "932af52752834329ffa3bf956da2fdba5fed3ea64bc797a3417dbbf88159fb7b"
 }

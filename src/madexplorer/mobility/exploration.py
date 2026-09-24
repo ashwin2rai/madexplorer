@@ -185,4 +185,5 @@ def freshest_from_partners(
             best = np.where(fresher, partner_years, best)
             winner[fresher] = k
     cells = np.flatnonzero(winner >= 0)
-    return {int(c): partners[int(winner[c])].beliefs[int(c)] for c in cells}
+    maps = [partner.beliefs for partner in partners]
+    return {c: maps[k][c] for c, k in zip(cells.tolist(), winner[cells].tolist(), strict=True)}

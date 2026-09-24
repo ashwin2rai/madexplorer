@@ -8,7 +8,9 @@ patterns emerge from local mechanisms rather than hard-coded historical rules.
 The full objective and specification is in
 [`objective/SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`](objective/SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md).
 
-## Status: MVP 2 — agriculture and technology
+## Status: MVP 2 cleanup — stabilizing before MVP 3
+
+See `objective/status.md` for what changed, measured results, and open issues.
 
 | Implemented | Mechanism |
 |---|---|
@@ -17,22 +19,25 @@ The full objective and specification is in
 | Ecology | Miami-model NPP → edible plant and game stocks with logistic regrowth and depletion |
 | Species | `SpeciesProfile` from YAML (Siler mortality, fertility schedule, metabolism, movement, cognition) |
 | Population | bands with exact age × sex cohorts; energy balance and reserves; nutrition-dependent births/deaths |
-| Behavior | diminishing-returns foraging with crowding, local noisy knowledge + sharing, perceived-utility migration, hazard-based fission/fusion |
-| Engine | staged evaluate/apply subsystems, named RNG streams, conservation checks, ablation switches |
+| Behavior | diminishing-returns foraging with crowding, local noisy knowledge + sharing, perceived-utility migration (argmax over beliefs, one move hazard), hazard-based fission/fusion |
+| Engine | staged evaluate/apply subsystems, one RNG stream per mechanism, conservation checks, ablation switches, declared merge/split rules for all unit state |
+| Health | additive settlement-crowding mortality from sedentism and settled contact population |
 | Outputs | provenance manifest, yearly metrics, event log with causes, spatial snapshots, decision traces |
 | **MVP 2** | |
 | Knowledge | per-domain knowledge that grows with practice × log(practitioners) and decays with disuse |
 | Technology | tech tree as data (`technologies/*.yaml`): prerequisites, directing need, capability effects |
-| Innovation | hazard needing both pressure (need signal) and capacity (knowledge, size, contacts, surplus) |
+| Innovation | hazard needing both pressure (need signal) and capacity (knowledge, size, contacts, surplus); candidates compete as independent risks |
 | Diffusion | knowledge gradients and technology adoption through co-location, adjacency, and trade ties; loss when knowledge decays |
-| Cultivation | fields with clearing labor (amortized over expected tenure), soil depletion/recovery, wild-food displacement; expanded when farming beats marginal foraging |
+| Cultivation | fields with clearing labor (amortized over expected tenure), fertility of cultivated land that depletes under cropping and recovers in fallow, wild-food displacement; expanded when farming beats marginal foraging |
 | Storage | spoiling stores that buffer shortfalls and can't all be carried when moving |
 | Trade | surplus sharing with nearby deficits, transport loss, persistent ties |
-| Aggregation | similar co-located groups coarsened into multi-group units; fission buds groups back off |
+| Aggregation | optional coarsening of similar co-located groups (off in the MVP 2 reference mode, because it biases outcomes) |
+| Experiments | parallel multi-seed ensembles with milestone summaries, `--set` parameter overrides, paired comparisons |
 
-No rule says "invent farming" or "settle down". In the MVP 2 scenario, forager expansion,
-saturation, cultivation, sedentism, and storage-backed population growth emerge from these
-mechanisms; `mechanisms:` switches make each removable for ablation.
+No rule says "invent farming" or "settle down"; `mechanisms:` switches make each mechanism
+removable for ablation. After the cleanup, cultivation technology appears early but farming
+rarely takes hold within 1,000 years in the reference mode; that is the open calibration
+question entering MVP 3.
 
 Next milestones (spec §33): MVP 3 distributional units (wealth, health, occupations), MVP 4
 politics, MVP 5 fantasy and multi-species worlds.
@@ -45,7 +50,9 @@ Requires [uv](https://docs.astral.sh/uv/).
 make install                 # uv sync + install pre-commit git hooks
 ```
 
-Run `make` to list all targets (`test`, `lint`, `format`, `typecheck`, `check`, `cov`, `clean`, ...).
+Run `make` to list all targets (`test`, `test-stat`, `golden`, `lint`, `format`, `typecheck`,
+`check`, `cov`, `clean`, ...). `make test` runs exact regressions and mechanism tests;
+`make test-stat` runs the slow multi-seed statistical tests.
 
 ## Running simulations
 
@@ -53,7 +60,11 @@ Run `make` to list all targets (`test`, `lint`, `format`, `typecheck`, `check`, 
 uv run madexplorer validate scenarios/mvp1_sandbox.yaml
 uv run madexplorer run scenarios/mvp1_sandbox.yaml                # writes runs/mvp1_sandbox/seed_0
 uv run madexplorer run scenarios/mvp2_neolithic.yaml              # knowledge, farming, storage, trade
-uv run madexplorer run scenarios/mvp1_sandbox.yaml --seeds 1:10   # replicate ensemble
+uv run madexplorer run scenarios/mvp1_sandbox.yaml --seeds 1:10   # several seeds, full outputs each
+uv run madexplorer ensemble scenarios/mvp2_neolithic.yaml --seeds 0:15 --jobs 2 --years 600
+uv run madexplorer ensemble scenarios/mvp2_neolithic.yaml --seeds 0:15 --jobs 2 --years 600 \
+    --set species.human.cognition.observation_noise_sigma=0.1 --out ensembles/noise01
+uv run madexplorer compare ensembles/mvp2_neolithic ensembles/noise01  # paired by seed
 uv run madexplorer run scenarios/mvp1_sandbox.yaml --trace u1     # log migration component scores
 uv run madexplorer inspect runs/mvp1_sandbox/seed_0 --map         # summary + ASCII population map
 uv run madexplorer rules -v                                       # every model rule and its rationale

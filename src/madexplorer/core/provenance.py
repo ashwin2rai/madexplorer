@@ -37,6 +37,20 @@ def _lock_hash() -> str | None:
     return None
 
 
+def source_tree_hash() -> str:
+    """SHA-256 over the package's Python sources (path and content, sorted by path).
+
+    Identifies the code that produced a run even when the git working tree is dirty.
+    """
+    package = Path(__file__).resolve().parents[1]
+    digest = hashlib.sha256()
+    for path in sorted(package.rglob("*.py")):
+        digest.update(path.relative_to(package).as_posix().encode())
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def run_manifest(scenario: Scenario, **extra: Any) -> dict[str, Any]:
     """Metadata sufficient to reproduce and audit a run."""
     status = _git("status", "--porcelain")
@@ -48,6 +62,7 @@ def run_manifest(scenario: Scenario, **extra: Any) -> dict[str, Any]:
         "model_version": model_version(),
         "git_commit": _git("rev-parse", "HEAD"),
         "git_dirty": bool(status) if status is not None else None,
+        "source_tree_sha256": source_tree_hash(),
         "dependency_lock_hash": _lock_hash(),
         "python_version": platform.python_version(),
         "numpy_version": np.__version__,

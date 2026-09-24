@@ -35,6 +35,13 @@ resolution:
   max_units_per_cell: 3
   max_knowledge_distance: 1.0
 
+# Reference calibration mode: no computational aggregation. Coarsening to 3 units per cell
+# measurably changes outcomes (population -11%, migration -7%, inventions +24% over 600
+# years; see objective/status.md), so calibration and baselines run without it. Setting
+# `aggregation: true` with `max_units_per_cell: 8` matches this reference within noise.
+mechanisms:
+  aggregation: false
+
 output:
   spatial_snapshot_interval_years: 25
   log_migrations: false

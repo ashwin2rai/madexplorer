@@ -40,6 +40,7 @@ def test_save_writes_all_outputs(small_scenario: Scenario, tmp_path: Path) -> No
         assert (directory / name).is_file()
     manifest = json.loads((directory / "manifest.json").read_text())
     assert manifest["seed"] == 1
+    assert len(manifest["source_tree_sha256"]) == 64
     spatial = np.load(directory / "spatial.npz")
     assert spatial["population"].shape[1:] == (16, 16)
 
