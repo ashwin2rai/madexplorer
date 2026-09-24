@@ -78,6 +78,7 @@ class TickLedger:
     adoptions: int = 0
     technology_losses: int = 0
     resolution_merges: int = 0
+    crowding_deaths_expected: float = 0.0  # deaths attributable to crowding (expected value)
 
 
 @dataclass(eq=False)

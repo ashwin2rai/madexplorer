@@ -161,6 +161,16 @@ def starvation_vulnerability(life_history: LifeHistory, metabolism: Metabolism) 
     return np.where(vulnerable, metabolism.starvation_vulnerable_multiplier, 1.0)
 
 
+def crowding_vulnerability(life_history: LifeHistory, profile: SpeciesProfile) -> FloatArray:
+    """Age multiplier on the crowding hazard (same frail ages as for starvation)."""
+    a = ages(life_history)
+    metabolism = profile.metabolism
+    vulnerable = (a < metabolism.vulnerable_child_age_years) | (
+        a >= metabolism.vulnerable_elder_age_years
+    )
+    return np.where(vulnerable, profile.health.crowding_vulnerable_multiplier, 1.0)
+
+
 @dataclass(frozen=True, eq=False)
 class LifeTables:
     """Precomputed age schedules for one species."""
@@ -170,6 +180,7 @@ class LifeTables:
     need_fraction: FloatArray
     labor: FloatArray
     vulnerability: FloatArray
+    crowding_vulnerability: FloatArray
     survivorship: FloatArray
     male_reproductive: FloatArray  # 1.0 where males can sire offspring
     female_reproductive: FloatArray  # 1.0 where females can conceive
@@ -187,6 +198,7 @@ class LifeTables:
             need_fraction=need_fraction_by_age(lh, profile.metabolism),
             labor=labor_capacity_by_age(lh, profile.foraging),
             vulnerability=starvation_vulnerability(lh, profile.metabolism),
+            crowding_vulnerability=crowding_vulnerability(lh, profile),
             survivorship=survivorship(lh),
             male_reproductive=male_ok.astype(np.float64),
             female_reproductive=(fertility > 0).astype(np.float64),

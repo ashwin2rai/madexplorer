@@ -142,6 +142,8 @@ class MechanismsConfig(FrozenModel):
     knowledge_diffusion: bool = True
     innovation: bool = True
     aggregation: bool = True
+    # MVP 2 cleanup
+    crowding_mortality: bool = True
 
 
 class OutputConfig(FrozenModel):

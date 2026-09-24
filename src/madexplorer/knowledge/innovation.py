@@ -7,11 +7,16 @@ surplus - while instability suppresses it::
 
     hazard = sigmoid(b0 + w_need*need + w_k*log(K/K_min) + w_n*log1p(N/n0)
                      + w_c*log1p(contacts) + w_s*surplus - w_i*instability + propensity)
+
+Candidates compete as independent risks, so at most one technology is invented per
+group per year and file order does not favor any technology.
 """
 
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+
+import numpy as np
 
 from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
@@ -94,6 +99,39 @@ def innovation_hazard(
     return sigmoid(sum(components.values())), components
 
 
+@model_rule(
+    name="competing_risk_invention",
+    version="1.0",
+    rationale=(
+        "Candidate technologies compete as independent hazards lambda_i = -ln(1 - p_i). A group "
+        "invents something with probability 1 - exp(-sum lambda), the same as independent "
+        "trials, and at most one technology per year, chosen with probability "
+        "lambda_i / sum lambda. The order of technologies in the knowledge-system file is "
+        "therefore causally irrelevant."
+    ),
+    source_type="theoretical",
+    parameters=(),
+    expected_domain="index of the invented candidate, or None",
+    known_limitations="One invention per group per year is itself a simplification.",
+)
+def choose_invention(hazards: Sequence[float], rng: np.random.Generator) -> int | None:
+    """Index of the candidate invented this year, or ``None``; draws exactly one uniform."""
+    rates = [-math.log1p(-min(max(p, 0.0), 1.0 - 1e-12)) for p in hazards]
+    total = sum(rates)
+    u = rng.random()
+    p_any = -math.expm1(-total)
+    if u >= p_any:
+        return None
+    # Reuse the draw: conditional on an invention, u / p_any is uniform on [0, 1).
+    target = u / p_any * total
+    cumulative = 0.0
+    for i, rate in enumerate(rates):
+        cumulative += rate
+        if target < cumulative:
+            return i
+    return len(rates) - 1
+
+
 @dataclass(frozen=True)
 class Invention:
     """A group invents a technology."""
@@ -140,12 +178,15 @@ class InnovationSubsystem:
         by_cell = state.units_by_cell()
         proposals: list[Invention] = []
         for unit in state.units.values():
-            candidates = [
-                t
-                for t in self.model.system.technologies
-                if t.id not in unit.technologies
-                and self.model.prerequisites_met(t, unit.knowledge, unit.technologies)
-            ]
+            candidates = sorted(
+                (
+                    t
+                    for t in self.model.system.technologies
+                    if t.id not in unit.technologies
+                    and self.model.prerequisites_met(t, unit.knowledge, unit.technologies)
+                ),
+                key=lambda t: t.id,
+            )
             if not candidates:
                 continue
             profile = ctx.species(unit.species_id)
@@ -165,6 +206,7 @@ class InnovationSubsystem:
                 if need > 0
                 else 0.0
             )
+            evaluated: list[tuple[TechnologySpec, float, dict[str, float]]] = []
             for tech in candidates:
                 ratios = [
                     self.model.level(unit.knowledge, d) / v
@@ -185,6 +227,7 @@ class InnovationSubsystem:
                     spec,
                     profile.cognition.invention_propensity,
                 )
+                evaluated.append((tech, hazard, components))
                 if unit.id in ctx.trace_units:
                     ctx.events.emit(
                         state.year,
@@ -194,16 +237,17 @@ class InnovationSubsystem:
                         hazard=round(hazard, 6),
                         components={k: round(v, 3) for k, v in components.items()},
                     )
-                if rng.random() < hazard:
-                    proposals.append(
-                        Invention(
-                            unit.id,
-                            tech.id,
-                            hazard,
-                            components,
-                            self.model.index[tech.domain],
-                            tech.knowledge_bonus,
-                        )
+            chosen = choose_invention([h for _, h, _ in evaluated], rng)
+            if chosen is not None:
+                tech, hazard, components = evaluated[chosen]
+                proposals.append(
+                    Invention(
+                        unit.id,
+                        tech.id,
+                        hazard,
+                        components,
+                        self.model.index[tech.domain],
+                        tech.knowledge_bonus,
                     )
-                    break  # at most one invention per group per year
+                )
         return proposals

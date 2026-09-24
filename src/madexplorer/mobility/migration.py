@@ -151,6 +151,41 @@ def destination_components(
     return components
 
 
+def destination_score(
+    unit: PopulationUnit,
+    cell: int,
+    costs: MoveCosts,
+    year: int,
+    memory_years: int,
+    behavior: MigrationBehavior,
+) -> float:
+    """Total utility of ``cell``: the sum of :func:`destination_components`, computed directly.
+
+    Same arithmetic and summation order as the components (so results are bit-identical)
+    without building a dict per candidate; the components are only needed for tracing.
+    """
+    obs = unit.beliefs[cell]
+    staying = cell == unit.cell
+    food_kcal = (
+        obs.food_kcal + costs.farm_kcal if staying and costs.farm_kcal > 0 else obs.food_kcal
+    )
+    population = unit.population
+    per_head = population + obs.population
+    ratio = food_kcal / max(costs.need_kcal * per_head / max(population, 1), 1.0)
+    ratio = min(max(ratio, 0.05), behavior.food_ratio_cap)
+    # sum() (compensated for floats since Python 3.12) over the same terms, in the same order.
+    return sum(
+        (
+            behavior.food_weight * math.log(ratio),
+            behavior.water_weight * obs.water_access,
+            -behavior.movement_cost_weight * costs.reachable[cell] / behavior.movement_reference_km,
+            -behavior.uncertainty_weight * (year - obs.year) / memory_years,
+            0.0 if staying else -costs.stores_cost,
+            0.0 if staying else -costs.fields_cost,
+        )
+    )
+
+
 @dataclass(frozen=True)
 class Relocation:
     """Move a unit to a new cell, paying the travel energy cost."""
@@ -221,7 +256,8 @@ class MigrationSubsystem:
             - unit.energy_debt_kcal
         )
         reachable = ctx.movement[unit.species_id].reachable(unit.cell)
-        candidates = sorted(c for c in unit.beliefs if c in reachable)
+        beliefs = unit.beliefs
+        candidates = sorted(c for c in reachable if c in beliefs)
         if unit.cell not in candidates:
             return None  # cannot evaluate staying without a current observation
         farm_kcal = unit.fields_ha * unit.crop_yield_kcal_per_ha
@@ -238,7 +274,9 @@ class MigrationSubsystem:
             memory_years=memory,
             behavior=behavior,
         )
-        scores = [sum(components(c).values()) for c in candidates]
+        scores = [
+            destination_score(unit, c, costs, state.year, memory, behavior) for c in candidates
+        ]
         best = choose_destination(candidates, scores, unit.cell, rng)
         if best is None:
             return None

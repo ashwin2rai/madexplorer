@@ -225,7 +225,7 @@ class ForagingSubsystem:
                 labor = np.array(
                     [
                         max(
-                            float(((u.females + u.males) * tables.labor).sum()) * hours_per_year
+                            u.weighted_count(tables.labor) * hours_per_year
                             - u.labor_debt_hours
                             - u.farm_hours,
                             0.0,

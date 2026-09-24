@@ -2,6 +2,8 @@
 
 madexplorer validate scenario.yaml
 madexplorer run scenario.yaml [--seed 42 | --seeds 1:10] [--years N] [--out DIR]
+madexplorer ensemble scenario.yaml --seeds 0:31 [--jobs 8] [--set path=value ...]
+madexplorer compare ensembles/a ensembles/b
 madexplorer inspect runs/<scenario>/seed_0 [--map]
 madexplorer rules
 """
@@ -12,10 +14,17 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.governance import RULES
 from madexplorer.core.simulation import Simulator
+from madexplorer.experiments.ensemble import (
+    aggregate,
+    paired_differences,
+    read_runs,
+    timed_ensemble,
+)
 from madexplorer.persistence.output import read_manifest, read_metrics
 from madexplorer.world.generation import generate_world
 
@@ -79,6 +88,76 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"seed={seed} final_year={final.get('year')} population={final.get('population')} "
             f"units={final.get('units')} occupied_cells={final.get('occupied_cells')} "
             f"runtime={result.manifest['runtime_seconds']:.1f}s -> {directory}"
+        )
+    return 0
+
+
+def _parse_settings(items: list[str] | None) -> dict[str, object]:
+    """Parse ``path=value`` pairs; values are YAML scalars (numbers, booleans, strings)."""
+    settings: dict[str, object] = {}
+    for item in items or []:
+        path, sep, value = item.partition("=")
+        if not sep:
+            raise SystemExit(f"--set expects path=value, got {item!r}")
+        settings[path.strip()] = yaml.safe_load(value)
+    return settings
+
+
+def cmd_ensemble(args: argparse.Namespace) -> int:
+    """Run many seeds in parallel and write per-run rows and distribution summaries."""
+    base = Scenario.from_yaml(args.scenario)
+    seeds = _parse_seeds(args.seeds)
+    settings = _parse_settings(args.set)
+    out = Path(args.out) if args.out else Path("ensembles") / base.config.name
+    done = 0
+
+    def progress(row: dict[str, float | int]) -> None:
+        nonlocal done
+        done += 1
+        logger.info(
+            "run %d/%d seed=%d population=%d first_cultivation=%s runtime=%.0fs",
+            done,
+            len(seeds),
+            row["seed"],
+            row["final_population"],
+            row["first_cultivation_year"],
+            row["runtime_seconds"],
+        )
+
+    rows, directory = timed_ensemble(
+        base,
+        seeds,
+        out,
+        jobs=args.jobs,
+        n_years=args.years,
+        settings=settings,
+        save_runs=args.save_runs,
+        progress=None if args.quiet else progress,
+    )
+    summary = aggregate(rows)
+    for key in args.show:
+        stats = summary.get(key)
+        if stats is None:
+            continue
+        print(
+            f"{key}: reached={stats['reached']:.2f} median={stats.get('q50', float('nan')):.4g} "
+            f"q05={stats.get('q05', float('nan')):.4g} q95={stats.get('q95', float('nan')):.4g}"
+        )
+    print(f"{len(rows)} runs -> {directory}")
+    return 0
+
+
+def cmd_compare(args: argparse.Namespace) -> int:
+    """Paired comparison of two ensembles over their shared seeds."""
+    baseline = read_runs(Path(args.baseline) / "runs.csv")
+    variant = read_runs(Path(args.variant) / "runs.csv")
+    table = paired_differences(baseline, variant)
+    print(f"{'measure':34} {'pairs':>5} {'baseline':>11} {'variant':>11} {'diff':>11} {'se':>9}")
+    for key, stats in table.items():
+        print(
+            f"{key:34} {stats['pairs']:5.0f} {stats['baseline_mean']:11.4g} "
+            f"{stats['variant_mean']:11.4g} {stats['mean_difference']:11.4g} "
+            f"{stats['se_difference']:9.3g}"
         )
     return 0
 
@@ -176,6 +255,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--quiet", action="store_true", help="suppress progress logging")
     p.set_defaults(func=cmd_run)
+
+    p = sub.add_parser("ensemble", help="run many seeds in parallel and summarize")
+    p.add_argument("scenario")
+    p.add_argument("--seeds", required=True, help="'0:31' (inclusive) or '1,4,7'")
+    p.add_argument("--jobs", type=int, default=1, help="worker processes")
+    p.add_argument("--years", type=int, help="override simulation.n_years")
+    p.add_argument("--out", help="output directory (default ensembles/<scenario name>)")
+    p.add_argument(
+        "--set",
+        action="append",
+        metavar="PATH=VALUE",
+        help="override a parameter, e.g. resolution.max_units_per_cell=1 or "
+        "species.human.cognition.observation_noise_sigma=0.1 (repeatable)",
+    )
+    p.add_argument("--save-runs", action="store_true", help="also write every run's outputs")
+    p.add_argument(
+        "--show",
+        nargs="*",
+        default=["final_population", "first_cultivation_year", "farm_share_25pct_year"],
+        help="measures to print",
+    )
+    p.add_argument("--quiet", action="store_true", help="suppress progress logging")
+    p.set_defaults(func=cmd_ensemble)
+
+    p = sub.add_parser("compare", help="paired comparison of two ensembles")
+    p.add_argument("baseline")
+    p.add_argument("variant")
+    p.set_defaults(func=cmd_compare)
 
     p = sub.add_parser("inspect", help="summarize a run directory")
     p.add_argument("run_dir")

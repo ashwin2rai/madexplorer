@@ -6,19 +6,7 @@ import numpy as np
 from madexplorer.config.loader import Scenario
 from madexplorer.core.governance import RULES
 from madexplorer.core.simulation import Simulator
-from tests.conftest import ROOT, replay_key, small_scenario_dict
-
-
-def _summary(scenario: Scenario) -> list[tuple[str, ...]]:
-    return replay_key(Simulator(scenario).run().metrics)
-
-
-def test_deterministic_replay(small_scenario: Scenario) -> None:
-    assert _summary(small_scenario) == _summary(small_scenario)
-
-
-def test_different_seeds_diverge(small_scenario: Scenario) -> None:
-    assert _summary(small_scenario) != _summary(small_scenario.with_overrides(seed=2))
+from tests.conftest import ROOT, small_scenario_dict
 
 
 def test_run_records_metrics_events_and_snapshots(small_scenario: Scenario) -> None:

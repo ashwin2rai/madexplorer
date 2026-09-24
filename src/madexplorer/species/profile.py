@@ -64,6 +64,16 @@ class Metabolism(FrozenModel):
     heat_cost_per_c: float = Field(ge=0)
 
 
+class Health(FrozenModel):
+    """Settlement health costs (a minimal precursor of the MVP 3 health system)."""
+
+    crowding_mortality_per_log_contact: float = Field(ge=0)  # adult hazard per unit pressure
+    crowding_reference_population: float = Field(gt=0)  # settled contacts at pressure log(2)
+    sedentism_timescale_years: float = Field(gt=0)  # residence at which sedentism is 63%
+    contact_radius_km: float = Field(gt=0)  # settlement-scale contact radius
+    crowding_vulnerable_multiplier: float = Field(ge=0)  # children and elders vs adults
+
+
 class Movement(FrozenModel):
     """Locomotion capabilities and terrain sensitivity."""
 
@@ -161,6 +171,7 @@ class SpeciesProfile(FrozenModel):
     name: str
     life_history: LifeHistory
     metabolism: Metabolism
+    health: Health
     movement: Movement
     cognition: Cognition
     foraging: Foraging

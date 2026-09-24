@@ -17,6 +17,19 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.hookimpl(tryfirst=True)  # before `-m` deselection, which reads these markers
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Classify tests by directory: regression/, statistical/, everything else is mechanism."""
+    for item in items:
+        parts = Path(str(item.fspath)).parts
+        if "regression" in parts:
+            item.add_marker(pytest.mark.regression)
+        elif "statistical" in parts:
+            item.add_marker(pytest.mark.statistical)
+        else:
+            item.add_marker(pytest.mark.mechanism)
+
+
 def small_scenario_dict(n_years: int = 40, seed: int = 1) -> dict[str, object]:
     """A 16x16 world with one founding band, small enough for fast tests."""
     return {

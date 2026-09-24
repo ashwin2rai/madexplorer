@@ -37,6 +37,7 @@ mechanisms:
   knowledge_diffusion: false
   innovation: false
   aggregation: false
+  crowding_mortality: false
 
 output:
   spatial_snapshot_interval_years: 10

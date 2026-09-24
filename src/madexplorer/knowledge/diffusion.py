@@ -125,7 +125,7 @@ class DiffusionSubsystem:
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[DiffusionUpdate]:
         """All units read pre-diffusion knowledge (staged update)."""
-        rng = ctx.rng.stream(Streams.KNOWLEDGE)
+        rng = ctx.rng.stream(Streams.TECHNOLOGY_ADOPTION)
         spec = self.model.system.diffusion
         by_cell = state.units_by_cell()
         updates: list[DiffusionUpdate] = []

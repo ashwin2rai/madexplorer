@@ -27,6 +27,30 @@ class Observation:
     population: int  # other people perceived in the cell (excluding the observer)
 
 
+class _Cohort:
+    """Descriptor for a cohort vector: assignment clears the unit's derived head counts.
+
+    Cohort arrays are always replaced, never mutated in place, so resetting caches on
+    assignment keeps ``population`` and ``weighted_count`` exact while every other
+    attribute stays a plain, fast instance attribute.
+    """
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.slot = "_" + name
+
+    def __get__(self, instance: object, owner: type | None = None) -> IntArray:
+        if instance is None:
+            raise AttributeError(self.slot)  # no class-level default for the dataclass
+        value: IntArray = instance.__dict__[self.slot]
+        return value
+
+    def __set__(self, instance: object, value: IntArray) -> None:
+        state = instance.__dict__
+        state[self.slot] = value
+        state["_population"] = None
+        state["_weighted"] = None
+
+
 @dataclass(eq=False)
 class PopulationUnit:
     """A co-residing group of one species."""
@@ -34,7 +58,7 @@ class PopulationUnit:
     id: str
     species_id: str
     cell: int
-    females: IntArray  # counts by completed age
+    females: IntArray  # counts by completed age (a _Cohort descriptor, installed below)
     males: IntArray
     reserve_kcal_per_capita: float
     founded_year: int
@@ -69,21 +93,31 @@ class PopulationUnit:
     )  # per-capita harvest, most recent last
     trade_ties: dict[str, float] = field(default_factory=dict)  # partner id -> tie strength
 
-    def __setattr__(self, name: str, value: object) -> None:
-        # Cohort arrays are always replaced, never mutated in place, so resetting the
-        # cached head count on assignment keeps ``population`` exact.
-        if name in ("females", "males"):
-            object.__setattr__(self, "_population", None)
-        object.__setattr__(self, name, value)
-
     @property
     def population(self) -> int:
         """Number of individuals (cached until the cohort arrays are replaced)."""
-        cached: int | None = getattr(self, "_population", None)
+        cached: int | None = self.__dict__["_population"]
         if cached is None:
             cached = int(self.females.sum() + self.males.sum())
-            object.__setattr__(self, "_population", cached)
+            self.__dict__["_population"] = cached
         return cached
+
+    def weighted_count(self, weights: FloatArray) -> float:
+        """``sum((females + males) * weights)`` over ages, cached per weight array.
+
+        Used for age schedules that are fixed for a run (need fractions, labor capacity);
+        the cache is cleared whenever a cohort array is replaced.
+        """
+        cache: dict[int, tuple[FloatArray, float]] | None = self.__dict__["_weighted"]
+        if cache is None:
+            cache = {}
+            self.__dict__["_weighted"] = cache
+        hit = cache.get(id(weights))
+        if hit is not None and hit[0] is weights:
+            return hit[1]
+        value = float(((self.females + self.males) * weights).sum())
+        cache[id(weights)] = (weights, value)
+        return value
 
     @property
     def total_reserve_kcal(self) -> float:
@@ -103,3 +137,9 @@ class PopulationUnit:
     ) -> tuple[bool, bool]:
         """Whether the unit contains at least one fertile-age female and male."""
         return bool((self.females * female_ok).sum() > 0), bool((self.males * male_ok).sum() > 0)
+
+
+for _name in ("females", "males"):
+    _descriptor = _Cohort()
+    _descriptor.__set_name__(PopulationUnit, _name)
+    setattr(PopulationUnit, _name, _descriptor)

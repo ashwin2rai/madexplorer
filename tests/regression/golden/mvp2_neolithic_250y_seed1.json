@@ -1,0 +1,17 @@
+{
+  "final_year": 250,
+  "final_population": 1116,
+  "final_units": 38,
+  "final_occupied_cells": 32,
+  "totals": {
+    "births": 3800.0,
+    "deaths": 2744.0,
+    "migrations": 510.0,
+    "fissions": 96.0,
+    "fusions": 57.0,
+    "inventions": 4.0
+  },
+  "event_count": 203,
+  "metrics_sha256": "f446419bad10ecb018023c62fbe825842ecdb59162b1d7428c85cb9041ed2a4c",
+  "events_sha256": "61be034f78fb1e34f42dff50229e0e12b2a3fc633d8c45abb637af2409bca2a8"
+}

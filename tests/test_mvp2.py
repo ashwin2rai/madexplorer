@@ -4,9 +4,9 @@ import numpy as np
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
-from madexplorer.population.groups import merge_into
+from madexplorer.population.composition import MergeMode, merge_state
 from madexplorer.population.unit import PopulationUnit
-from tests.conftest import ROOT, mvp2_scenario_dict, replay_key
+from tests.conftest import ROOT, mvp2_scenario_dict
 
 
 def _unit(uid: str, n: int, groups: int = 1) -> PopulationUnit:
@@ -30,7 +30,7 @@ def _unit(uid: str, n: int, groups: int = 1) -> PopulationUnit:
 def test_merge_conserves_people_food_and_fields() -> None:
     a, b = _unit("u1", 30), _unit("u2", 10)
     b.knowledge = np.array([3.0, 2.0])
-    merge_into(a, b, combine_groups=True)
+    merge_state(a, b, MergeMode.AGGREGATION)
     assert a.population == 40 and a.groups == 2
     assert a.stores_kcal == 100.0 and a.fields_ha == 6.0
     assert a.total_reserve_kcal == 40 * 100.0
@@ -42,13 +42,6 @@ def test_population_cache_tracks_cohort_replacement() -> None:
     assert unit.population == 30
     unit.females = unit.females * 2
     assert unit.population == 60
-
-
-def test_mvp2_run_is_deterministic_and_conserves_population() -> None:
-    scenario = Scenario.from_dict(mvp2_scenario_dict(n_years=80), base_dir=ROOT)
-    first = replay_key(Simulator(scenario).run().metrics)
-    second = replay_key(Simulator(scenario).run().metrics)
-    assert first == second  # invariants (population accounting) are checked every step
 
 
 def test_mvp2_metrics_include_knowledge_and_technology() -> None:

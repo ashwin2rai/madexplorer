@@ -10,17 +10,23 @@ import numpy as np
 
 
 class Streams:
-    """Canonical stream names. Each subsystem draws only from its own stream."""
+    """Canonical stream names, one per stochastic mechanism.
+
+    No two mechanisms share a stream, so changing how many numbers one mechanism draws
+    (a parameter change, an ablation, a new rule) never shifts another's draws.
+    """
 
     WORLD = "world"
     INITIALIZATION = "initialization"
     ENVIRONMENT = "environment"
     PERCEPTION = "perception"
+    KNOWLEDGE_SHARING = "knowledge_sharing"
     DEMOGRAPHY = "demography"
-    SOCIAL = "social"
+    FISSION = "fission"
+    FUSION = "fusion"
     MIGRATION = "migration"
-    KNOWLEDGE = "knowledge"
     INNOVATION = "innovation"
+    TECHNOLOGY_ADOPTION = "technology_adoption"
     TRADE = "trade"
 
 
@@ -48,3 +54,16 @@ class RngManager:
             generator = np.random.default_rng(sequence)
             self._streams[name] = generator
         return generator
+
+    def keyed(self, mechanism: str, *keys: int | str) -> np.random.Generator:
+        """A fresh generator for one ``(mechanism, keys...)`` draw site, e.g. year and unit id.
+
+        Unlike :meth:`stream`, its numbers do not depend on how many draws other units or
+        years made, so splitting or merging units cannot perturb unrelated units. It is
+        slower (one generator per call); subsystems adopt it when adaptive resolution in
+        MVP 3 makes draw order unstable.
+        """
+        entropy = [self.seed, _stable_key(mechanism)] + [
+            k if isinstance(k, int) else _stable_key(k) for k in keys
+        ]
+        return np.random.default_rng(np.random.SeedSequence(entropy))

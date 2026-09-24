@@ -5,7 +5,13 @@ import pytest
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
-from madexplorer.mobility.migration import MigrationSubsystem, choose_destination
+from madexplorer.mobility.migration import (
+    MigrationSubsystem,
+    MoveCosts,
+    choose_destination,
+    destination_components,
+    destination_score,
+)
 from madexplorer.population.unit import Observation, PopulationUnit
 from tests.conftest import ROOT, small_scenario_dict, step_context
 
@@ -105,3 +111,27 @@ def test_choose_destination_ignores_current_cell_and_breaks_ties_uniformly() -> 
     picks = [choose_destination([1, 2, 3], [0.0, 1.0, 1.0], 1, rng) for _ in range(2000)]
     share = picks.count(2) / len(picks)
     assert 0.45 < share < 0.55
+
+
+def test_fast_score_equals_sum_of_traced_components() -> None:
+    sim = _simulator()
+    unit = _only_unit(sim)
+    unit.fields_ha, unit.crop_yield_kcal_per_ha, unit.stores_kcal = 3.0, 1e6, 5e6
+    rng = np.random.default_rng(5)
+    cells = [unit.cell, *_neighbors_by_cost(sim, unit)[:10]]
+    unit.beliefs = {
+        c: Observation(
+            year=sim.state.year - int(rng.integers(0, 15)),
+            food_kcal=float(rng.uniform(1e5, 1e7)),
+            water_access=float(rng.uniform()),
+            population=int(rng.integers(0, 300)),
+        )
+        for c in cells
+    }
+    reachable = sim.movement[unit.species_id].reachable(unit.cell)
+    costs = MoveCosts(reachable, 4e5, 0.7, 1.3, 3e6)
+    behavior = sim.scenario.species["human"].migration
+    for cell in cells:
+        components = destination_components(unit, cell, costs, sim.state.year, 20, behavior)
+        score = destination_score(unit, cell, costs, sim.state.year, 20, behavior)
+        assert score == sum(components.values())

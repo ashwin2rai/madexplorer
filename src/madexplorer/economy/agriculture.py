@@ -194,7 +194,7 @@ def unit_labor_hours(unit: PopulationUnit, ctx: StepContext) -> float:
     """Annual labor capacity of a unit."""
     profile = ctx.species(unit.species_id)
     tables = ctx.tables[unit.species_id]
-    adults = float(((unit.females + unit.males) * tables.labor).sum())
+    adults = unit.weighted_count(tables.labor)
     return adults * profile.foraging.foraging_hours_per_day * 365.0
 
 

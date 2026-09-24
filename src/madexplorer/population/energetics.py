@@ -32,7 +32,7 @@ def annual_need_kcal(
     unit: PopulationUnit, profile: SpeciesProfile, tables: LifeTables, temperature_c: float
 ) -> float:
     """Energy the unit requires this year, including carried-over energy debt."""
-    adult_equivalents = float(((unit.females + unit.males) * tables.need_fraction).sum())
+    adult_equivalents = unit.weighted_count(tables.need_fraction)
     daily = profile.metabolism.adult_daily_kcal
     need = (
         adult_equivalents

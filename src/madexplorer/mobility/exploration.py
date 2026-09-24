@@ -14,9 +14,12 @@ import numpy as np
 from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
+from madexplorer.core.types import IntArray
 from madexplorer.economy.foraging import accessible_food_kcal
-from madexplorer.population.unit import Observation
+from madexplorer.population.unit import Observation, PopulationUnit
 from madexplorer.species.profile import Cognition
+
+_NEVER = -(2**62)  # older than any observation year
 
 
 @model_rule(
@@ -69,7 +72,7 @@ class PerceptionSubsystem:
             )
             horizon = state.year - cognition.memory_years
             beliefs = {c: o for c, o in unit.beliefs.items() if o.year > horizon}
-            cells = [c for c in world.cells_within(unit.cell, radius) if not world.is_water[c]]
+            cells = world.land_cells_within(unit.cell, radius)
             noise = np.exp(cognition.observation_noise_sigma * rng.standard_normal(len(cells)))
             n_self = unit.population
             for cell, factor in zip(cells, noise, strict=True):
@@ -92,12 +95,12 @@ class SharedKnowledge:
     received: dict[int, Observation]
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Merge received observations that are fresher than the unit's own."""
-        beliefs = state.units[self.unit_id].beliefs
-        for cell, obs in self.received.items():
-            mine = beliefs.get(cell)
-            if mine is None or obs.year > mine.year:
-                beliefs[cell] = obs
+        """Adopt the received observations (each is fresher than the unit's own).
+
+        Sharing proposals were computed from pre-sharing beliefs and each one changes only
+        its own unit's map, so the freshness check made in ``evaluate`` still holds here.
+        """
+        state.units[self.unit_id].beliefs.update(self.received)
 
 
 @model_rule(
@@ -122,23 +125,64 @@ class KnowledgeSharingSubsystem:
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[SharedKnowledge]:
         """Collect what each unit learns from neighbors (based on pre-sharing beliefs)."""
-        rng = ctx.rng.stream(Streams.PERCEPTION)
+        rng = ctx.rng.stream(Streams.KNOWLEDGE_SHARING)
         by_cell = state.units_by_cell()
         world = state.world
+        years = _BeliefYears(world.n_cells)
         proposals: list[SharedKnowledge] = []
         for unit in state.units.values():
             probability = ctx.species(unit.species_id).social.knowledge_sharing_probability
-            received: dict[int, Observation] = {}
+            partners: list[PopulationUnit] = []
             for cell in world.cells_within(unit.cell, 1):
                 for other in by_cell.get(cell, []):
                     if other is unit or other.species_id != unit.species_id:
                         continue
-                    if rng.random() >= probability:
-                        continue
-                    for c, obs in other.beliefs.items():
-                        best = received.get(c) or unit.beliefs.get(c)
-                        if best is None or obs.year > best.year:
-                            received[c] = obs
-            if received:
-                proposals.append(SharedKnowledge(unit.id, received))
+                    if rng.random() < probability:
+                        partners.append(other)
+            if partners:
+                received = freshest_from_partners(unit, partners, years)
+                if received:
+                    proposals.append(SharedKnowledge(unit.id, received))
         return proposals
+
+
+class _BeliefYears:
+    """Per-step cache of each unit's belief years as a dense per-cell array."""
+
+    def __init__(self, n_cells: int) -> None:
+        self.n_cells = n_cells
+        self._years: dict[str, IntArray] = {}
+
+    def of(self, unit: PopulationUnit) -> IntArray:
+        """Observation year per cell (``_NEVER`` where the unit knows nothing)."""
+        years = self._years.get(unit.id)
+        if years is None:
+            years = np.full(self.n_cells, _NEVER, dtype=np.int64)
+            beliefs = unit.beliefs
+            if beliefs:
+                cells = np.fromiter(beliefs.keys(), dtype=np.int64, count=len(beliefs))
+                years[cells] = np.fromiter(
+                    (o.year for o in beliefs.values()), dtype=np.int64, count=len(beliefs)
+                )
+            self._years[unit.id] = years
+        return years
+
+
+def freshest_from_partners(
+    unit: PopulationUnit, partners: Sequence[PopulationUnit], years: _BeliefYears
+) -> dict[int, Observation]:
+    """Partner observations fresher than anything ``unit`` knows, per cell.
+
+    Partners are consulted in order and only a strictly fresher observation replaces the
+    best so far, so on equal years the first partner wins.
+    """
+    best = years.of(unit)
+    winner = np.full(best.shape, -1, dtype=np.int64)
+    for k, partner in enumerate(partners):
+        partner_years = years.of(partner)
+        fresher = partner_years > best
+        if fresher.any():
+            best = np.where(fresher, partner_years, best)
+            winner[fresher] = k
+    cells = np.flatnonzero(winner >= 0)
+    return {int(c): partners[int(winner[c])].beliefs[int(c)] for c in cells}

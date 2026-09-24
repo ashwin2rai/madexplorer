@@ -41,7 +41,13 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Statistical (multi-seed) model tests are slow; run them with `make test-stat`.
+addopts = "-ra -m 'not statistical'"
+markers = [
+    "regression: exact software regression (same code + config + seed replays exactly)",
+    "mechanism: local causal relationship or invariant of one submodel",
+    "statistical: distributional model property across many seeds (slow)",
+]
 
 [tool.mypy]
 python_version = "3.13"

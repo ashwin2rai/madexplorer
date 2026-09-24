@@ -16,7 +16,7 @@ import numpy as np
 from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray
-from madexplorer.population.groups import merge_into
+from madexplorer.population.composition import MergeMode, absorb
 
 
 @model_rule(
@@ -45,8 +45,7 @@ class Coalesce:
         """Merge the units and record the approximation."""
         source, target = state.units[self.source_id], state.units[self.target_id]
         merged = source.population
-        merge_into(target, source, combine_groups=True)
-        del state.units[self.source_id]
+        absorb(state.units, self.source_id, self.target_id, MergeMode.AGGREGATION)
         ctx.ledger.resolution_merges += 1
         ctx.events.emit(
             state.year,

@@ -2,7 +2,7 @@
 export UV_LINK_MODE ?= copy
 
 .DEFAULT_GOAL := help
-.PHONY: help install sync lint format typecheck test cov check run sim pre-commit clean
+.PHONY: help install sync lint format typecheck test test-stat golden cov check run sim pre-commit clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -24,8 +24,14 @@ format: ## Auto-fix lint issues and format code
 typecheck: ## Type-check with mypy
 	uv run mypy
 
-test: ## Run tests
+test: ## Run regression and mechanism tests (fast)
 	uv run pytest
+
+test-stat: ## Run statistical multi-seed model tests (slow)
+	uv run pytest -m statistical
+
+golden: ## Re-record exact regression fixtures after an intended behavior change
+	UPDATE_GOLDEN=1 uv run pytest tests/regression
 
 cov: ## Run tests with coverage report
 	uv run pytest --cov=madexplorer --cov-report=term-missing

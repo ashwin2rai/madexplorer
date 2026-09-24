@@ -37,6 +37,16 @@ metabolism:
   cold_cost_per_c: 0.015
   heat_cost_per_c: 0.01
 
+# Settlement crowding mortality: placeholders. With these values a fully settled group of
+# ~500 in contact adds about one adult baseline hazard (~0.013/yr); a mobile band of 25 adds
+# almost nothing. Children and elders bear 2x the adult crowding hazard.
+health:
+  crowding_mortality_per_log_contact: 0.005
+  crowding_reference_population: 50
+  sedentism_timescale_years: 5
+  contact_radius_km: 2.0
+  crowding_vulnerable_multiplier: 2.0
+
 movement:
   annual_relocation_range_km: 60
   can_swim: false

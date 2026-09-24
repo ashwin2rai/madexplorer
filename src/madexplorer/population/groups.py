@@ -15,6 +15,7 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import IntArray
+from madexplorer.population.composition import MergeMode, absorb, split_off
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import SocialBehavior
 
@@ -99,44 +100,6 @@ def split_cohorts(
     return females - leave_f, males - leave_m, leave_f, leave_m
 
 
-def merge_into(
-    target: PopulationUnit, source: PopulationUnit, combine_groups: bool = False
-) -> None:
-    """Absorb ``source`` into ``target``, conserving people, food, fields, and beliefs.
-
-    ``combine_groups`` keeps both social groups (resolution coarsening); otherwise
-    the source group is absorbed into the target's social structure (fusion).
-    """
-    n_target, n_source = target.population, source.population
-    total_reserve = target.total_reserve_kcal + source.total_reserve_kcal
-    if target.knowledge.size and n_target + n_source > 0:
-        target.knowledge = (target.knowledge * n_target + source.knowledge * n_source) / (
-            n_target + n_source
-        )
-    target.technologies = target.technologies | source.technologies
-    target.females = target.females + source.females
-    target.males = target.males + source.males
-    n = target.population
-    target.reserve_kcal_per_capita = total_reserve / n if n else 0.0
-    target.energy_debt_kcal += source.energy_debt_kcal
-    target.stores_kcal += source.stores_kcal
-    target.fields_ha += source.fields_ha
-    target.ever_cultivated = target.ever_cultivated or source.ever_cultivated
-    target.labor_debt_hours += source.labor_debt_hours
-    if combine_groups:
-        target.groups += source.groups
-    for partner, tie in source.trade_ties.items():
-        if partner != target.id:
-            target.trade_ties[partner] = max(tie, target.trade_ties.get(partner, 0.0))
-    target.trade_ties.pop(source.id, None)
-    for cell, obs in source.beliefs.items():
-        mine = target.beliefs.get(cell)
-        if mine is None or obs.year > mine.year:
-            target.beliefs[cell] = obs
-    for cell, value in source.familiarity.items():
-        target.familiarity[cell] = max(value, target.familiarity.get(cell, 0.0))
-
-
 @dataclass(frozen=True)
 class Fission:
     """Split a daughter group off a parent (the daughter starts in the same cell)."""
@@ -152,41 +115,14 @@ class Fission:
         A multi-group unit buds off exactly one of its social groups.
         """
         parent = state.units[self.parent_id]
-        rng = ctx.rng.stream(Streams.SOCIAL)
+        rng = ctx.rng.stream(Streams.FISSION)
         source_population = parent.population
         fraction = 1.0 / parent.groups if parent.groups > 1 else self.fraction
-        keep_f, keep_m, leave_f, leave_m = split_cohorts(
-            parent.females, parent.males, fraction, rng
-        )
+        _, _, leave_f, leave_m = split_cohorts(parent.females, parent.males, fraction, rng)
         moved = int(leave_f.sum() + leave_m.sum())
         if moved == 0 or moved == source_population:
             return
-        daughter = PopulationUnit(
-            id=ctx.ids.next("u"),
-            species_id=parent.species_id,
-            cell=parent.cell,
-            females=leave_f,
-            males=leave_m,
-            reserve_kcal_per_capita=parent.reserve_kcal_per_capita,
-            founded_year=state.year,
-            parent_id=parent.id,
-            food_ratio=parent.food_ratio,
-            energy_deficit=parent.energy_deficit,
-            beliefs=dict(parent.beliefs),
-            familiarity=dict(parent.familiarity),
-            knowledge=parent.knowledge.copy(),
-            technologies=parent.technologies,
-            stores_kcal=parent.stores_kcal * moved / source_population,
-            fields_ha=parent.fields_ha * moved / source_population,
-            ever_cultivated=parent.ever_cultivated,
-            residence_years=parent.residence_years,
-            forage_marginal_kcal_per_hour=parent.forage_marginal_kcal_per_hour,
-        )
-        parent.stores_kcal -= daughter.stores_kcal
-        parent.fields_ha -= daughter.fields_ha
-        if parent.groups > 1:
-            parent.groups -= 1
-        parent.females, parent.males = keep_f, keep_m
+        daughter = split_off(parent, leave_f, leave_m, ctx.ids.next("u"), state.year)
         state.units[daughter.id] = daughter
         ctx.ledger.fissions += 1
         ctx.events.emit(
@@ -216,8 +152,7 @@ class Fusion:
         """Absorb the source unit into the target."""
         source, target = state.units[self.source_id], state.units[self.target_id]
         merged = source.population
-        merge_into(target, source)
-        del state.units[self.source_id]
+        absorb(state.units, self.source_id, self.target_id, MergeMode.FUSION)
         ctx.ledger.fusions += 1
         ctx.events.emit(
             state.year,
@@ -269,7 +204,7 @@ class FissionSubsystem:
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Fission]:
         """Evaluate each group's fission hazard."""
-        rng = ctx.rng.stream(Streams.SOCIAL)
+        rng = ctx.rng.stream(Streams.FISSION)
         proposals: list[Fission] = []
         for unit in state.units.values():
             if unit.population < 2:
@@ -291,7 +226,7 @@ class FusionSubsystem:
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Fusion]:
         """The smallest group in each cell may join the largest other group there."""
-        rng = ctx.rng.stream(Streams.SOCIAL)
+        rng = ctx.rng.stream(Streams.FUSION)
         proposals: list[Fusion] = []
         for units in state.units_by_cell().values():
             by_species: dict[str, list[PopulationUnit]] = {}

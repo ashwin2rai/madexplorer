@@ -130,8 +130,29 @@ class WorldGrid:
         return NeighborGraph(self.neighbor_index, self.neighbor_distance_km)
 
     def cells_within(self, cell: int, radius_cells: int) -> list[int]:
-        """Cells within Chebyshev distance ``radius_cells`` of ``cell`` (including it)."""
-        x0, y0 = self.coords(cell)
-        xs = range(max(0, x0 - radius_cells), min(self.width, x0 + radius_cells + 1))
-        ys = range(max(0, y0 - radius_cells), min(self.height, y0 + radius_cells + 1))
-        return [y * self.width + x for y in ys for x in xs]
+        """Cells within Chebyshev distance ``radius_cells`` of ``cell`` (including it).
+
+        The topology is static, so neighborhoods are computed once and cached; callers
+        must not mutate the returned list.
+        """
+        cache: dict[tuple[int, int], list[int]] = self.__dict__.setdefault("_within", {})
+        key = (cell, radius_cells)
+        cells = cache.get(key)
+        if cells is None:
+            x0, y0 = self.coords(cell)
+            xs = range(max(0, x0 - radius_cells), min(self.width, x0 + radius_cells + 1))
+            ys = range(max(0, y0 - radius_cells), min(self.height, y0 + radius_cells + 1))
+            cells = [y * self.width + x for y in ys for x in xs]
+            cache[key] = cells
+        return cells
+
+    def land_cells_within(self, cell: int, radius_cells: int) -> list[int]:
+        """Land cells within Chebyshev distance ``radius_cells`` (cached like ``cells_within``)."""
+        cache: dict[tuple[int, int], list[int]] = self.__dict__.setdefault("_land_within", {})
+        key = (cell, radius_cells)
+        cells = cache.get(key)
+        if cells is None:
+            water = self.is_water
+            cells = [c for c in self.cells_within(cell, radius_cells) if not water[c]]
+            cache[key] = cells
+        return cells

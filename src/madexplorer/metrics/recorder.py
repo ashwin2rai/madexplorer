@@ -6,6 +6,7 @@ from madexplorer.config.loader import Scenario
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.economy.agriculture import arable_hectares
+from madexplorer.population.health import crowding_hazards
 from madexplorer.population.unit import PopulationUnit
 
 
@@ -159,6 +160,19 @@ class MetricsRecorder:
             }
         )
         row.update(self._farming_metrics(state, ctx, units, cell_pop))
+        crowding = (
+            crowding_hazards(
+                units,
+                {sid: p.health for sid, p in ctx.scenario.species.items()},
+                state.world.cell_area_km2,
+            )
+            if ctx.mechanisms.crowding_mortality
+            else {}
+        )
+        row["mean_crowding_hazard"] = weighted([crowding.get(u.id, 0.0) for u in units])
+        row["crowding_death_share"] = (
+            ledger.crowding_deaths_expected / ledger.deaths if ledger.deaths else 0.0
+        )
         for i, domain in enumerate(self.domains):
             row[f"knowledge_{domain}"] = weighted([float(u.knowledge[i]) for u in units])
         for tech in self.technologies:

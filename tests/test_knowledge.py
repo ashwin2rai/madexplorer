@@ -1,10 +1,14 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from madexplorer.config.loader import Scenario
+from madexplorer.core.simulation import Simulator
 from madexplorer.knowledge.diffusion import diffusion_gain
-from madexplorer.knowledge.innovation import innovation_hazard
+from madexplorer.knowledge.innovation import choose_invention, innovation_hazard
 from madexplorer.knowledge.learning import learn
 from madexplorer.knowledge.system import KnowledgeModel, KnowledgeSystem
 from tests.conftest import ROOT, mvp2_scenario_dict
@@ -88,3 +92,60 @@ def test_dependent_technologies_are_kept_while_supported(knowledge_model: Knowle
         "plant_cultivation",
         "seed_selection",
     )
+
+
+def test_competing_risk_choice_is_proportional_to_rates_and_order_free() -> None:
+    hazards = [0.05, 0.2, 0.1]
+    counts = [0, 0, 0]
+    rng = np.random.default_rng(3)
+    trials = 60_000
+    none = 0
+    for _ in range(trials):
+        chosen = choose_invention(hazards, rng)
+        if chosen is None:
+            none += 1
+        else:
+            counts[chosen] += 1
+    p_any = 1.0 - np.prod([1.0 - p for p in hazards])
+    assert (trials - none) / trials == pytest.approx(p_any, abs=0.01)
+    rates = -np.log1p(-np.array(hazards))
+    shares = np.array(counts) / sum(counts)
+    assert shares == pytest.approx(rates / rates.sum(), abs=0.01)
+
+
+def test_no_invention_without_hazard() -> None:
+    rng = np.random.default_rng(0)
+    assert all(choose_invention([0.0, 0.0], rng) is None for _ in range(100))
+    assert choose_invention([], rng) is None
+
+
+def test_technology_file_order_does_not_change_seeded_results(tmp_path: Path) -> None:
+    system = yaml.safe_load((ROOT / "technologies" / "neolithic.yaml").read_text())
+    system["innovation"]["baseline_logit"] = -3.0  # frequent inventions, many competing
+    runs = []
+    for name, technologies in (
+        ("given", system["technologies"]),
+        ("reversed", list(reversed(system["technologies"]))),
+    ):
+        path = tmp_path / f"{name}.yaml"
+        path.write_text(yaml.safe_dump(system | {"technologies": technologies}))
+        data = mvp2_scenario_dict(n_years=120, seed=2)
+        data["knowledge_system"] = str(path)
+        data["initial_populations"] = [
+            {
+                "species": "human",
+                "cell": [8, 8],
+                "population": 60,
+                "initial_knowledge": {"agriculture": 4.5, "storage": 1.2, "construction": 1.0},
+            }
+        ]
+        result = Simulator(Scenario.from_dict(data, base_dir=ROOT)).run()
+        runs.append(
+            [
+                (e.year, e.data["unit_id"], e.data["technology"])
+                for e in result.events
+                if e.kind == "invention"
+            ]
+        )
+    assert len({tech for _, _, tech in runs[0]}) >= 3
+    assert runs[0] == runs[1]

@@ -25,6 +25,20 @@ def deep_merge(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> dict[st
     return merged
 
 
+def _set_path(data: dict[str, Any], dotted: str, value: Any, full_path: str) -> None:
+    """Set ``data[a][b][c] = value`` for ``dotted == "a.b.c"``; every key must already exist."""
+    keys = dotted.split(".")
+    node = data
+    for key in keys[:-1]:
+        child = node.get(key)
+        if not isinstance(child, dict):
+            raise KeyError(f"{full_path}: no section {key!r}")
+        node = child
+    if keys[-1] not in node:
+        raise KeyError(f"{full_path}: no parameter {keys[-1]!r}")
+    node[keys[-1]] = value
+
+
 def _read_yaml(path: Path) -> dict[str, Any]:
     with path.open() as handle:
         data = yaml.safe_load(handle)
@@ -83,6 +97,36 @@ class Scenario:
         config = self.config.model_copy(update={"simulation": simulation})
         validated = ScenarioConfig.model_validate(config.model_dump())
         return Scenario(config=validated, species=self.species, knowledge=self.knowledge)
+
+    def with_settings(self, settings: Mapping[str, Any]) -> "Scenario":
+        """Return a copy with dotted-path parameters replaced, for sweeps and experiments.
+
+        ``"resolution.max_units_per_cell"`` sets a scenario field,
+        ``"species.human.cognition.observation_noise_sigma"`` a species parameter, and
+        ``"knowledge.innovation.baseline_logit"`` a knowledge-system parameter. Every result
+        is revalidated, so unknown paths and invalid values are errors.
+        """
+        config = self.config.model_dump()
+        profiles = {sid: p.model_dump() for sid, p in self.species.items()}
+        knowledge = self.knowledge.model_dump() if self.knowledge else None
+        for path, value in settings.items():
+            head, _, rest = path.partition(".")
+            if head == "species":
+                sid, _, rest = rest.partition(".")
+                if sid not in profiles:
+                    raise KeyError(f"{path}: unknown species {sid!r}")
+                _set_path(profiles[sid], rest, value, path)
+            elif head == "knowledge":
+                if knowledge is None:
+                    raise KeyError(f"{path}: the scenario has no knowledge system")
+                _set_path(knowledge, rest, value, path)
+            else:
+                _set_path(config, path, value, path)
+        return Scenario(
+            config=ScenarioConfig.model_validate(config),
+            species={sid: SpeciesProfile.model_validate(p) for sid, p in profiles.items()},
+            knowledge=KnowledgeSystem.model_validate(knowledge) if knowledge else None,
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Fully resolved scenario, with species profiles embedded."""
