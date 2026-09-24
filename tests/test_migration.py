@@ -12,7 +12,7 @@ from madexplorer.mobility.migration import (
     destination_components,
     destination_score,
 )
-from madexplorer.population.unit import Observation, PopulationUnit
+from madexplorer.population.unit import BeliefMap, Observation, PopulationUnit
 from tests.conftest import ROOT, small_scenario_dict, step_context
 
 
@@ -45,7 +45,7 @@ def _neighbors_by_cost(sim: Simulator, unit: PopulationUnit) -> list[int]:
 
 def _hazard(sim: Simulator, beliefs: dict[int, Observation]) -> float:
     unit = _only_unit(sim)
-    unit.beliefs = beliefs
+    unit.beliefs = BeliefMap.from_observations(sim.world.n_cells, beliefs)
     decision = MigrationSubsystem().decide(
         unit, sim.state, step_context(sim), np.random.default_rng(0)
     )
@@ -92,9 +92,10 @@ def test_moves_are_stochastic_with_frequency_matching_the_hazard(k: int) -> None
     sim = _simulator()
     unit = _only_unit(sim)
     options = _neighbors_by_cost(sim, unit)[:k]
-    unit.beliefs = {unit.cell: _observation(sim, 2e6)} | {
-        c: _observation(sim, 4e6) for c in options
-    }
+    unit.beliefs = BeliefMap.from_observations(
+        sim.world.n_cells,
+        {unit.cell: _observation(sim, 2e6)} | {c: _observation(sim, 4e6) for c in options},
+    )
     subsystem, ctx = MigrationSubsystem(), step_context(sim)
     decision = subsystem.decide(unit, sim.state, ctx, np.random.default_rng(0))
     assert decision is not None and 0.1 < decision.hazard < 0.9
@@ -119,7 +120,7 @@ def test_fast_score_equals_sum_of_traced_components() -> None:
     unit.fields_ha, unit.crop_yield_kcal_per_ha, unit.stores_kcal = 3.0, 1e6, 5e6
     rng = np.random.default_rng(5)
     cells = [unit.cell, *_neighbors_by_cost(sim, unit)[:10]]
-    unit.beliefs = {
+    observations = {
         c: Observation(
             year=sim.state.year - int(rng.integers(0, 15)),
             food_kcal=float(rng.uniform(1e5, 1e7)),
@@ -128,6 +129,7 @@ def test_fast_score_equals_sum_of_traced_components() -> None:
         )
         for c in cells
     }
+    unit.beliefs = BeliefMap.from_observations(sim.world.n_cells, observations)
     reachable = sim.movement[unit.species_id].reachable(unit.cell)
     costs = MoveCosts(reachable, 4e5, 0.7, 1.3, 3e6)
     behavior = sim.scenario.species["human"].migration

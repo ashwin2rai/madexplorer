@@ -9,7 +9,7 @@ import math
 import numpy as np
 
 from madexplorer.core.governance import model_rule
-from madexplorer.core.types import FloatArray
+from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.species.profile import Movement
 from madexplorer.world.grid import NeighborGraph, WorldGrid
 
@@ -59,6 +59,7 @@ class MovementModel:
         self._friction_list: list[float] = self.friction.tolist()
         self._graph: NeighborGraph = world.graph()
         self._reachable: dict[int, dict[int, float]] = {}
+        self._reachable_arrays: dict[int, tuple[IntArray, FloatArray]] = {}
 
     def reachable(self, origin: int) -> dict[int, float]:
         """Cells reachable in one annual relocation, with effective path cost in km.
@@ -72,3 +73,16 @@ class MovementModel:
             )
             self._reachable[origin] = costs
         return costs
+
+    def reachable_arrays(self, origin: int) -> tuple[IntArray, FloatArray]:
+        """``reachable(origin)`` as ascending cell ids and aligned path costs (cached)."""
+        arrays = self._reachable_arrays.get(origin)
+        if arrays is None:
+            costs = self.reachable(origin)
+            cells = sorted(costs)
+            arrays = (
+                np.array(cells, dtype=np.int64),
+                np.array([costs[c] for c in cells], dtype=np.float64),
+            )
+            self._reachable_arrays[origin] = arrays
+        return arrays

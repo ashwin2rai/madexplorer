@@ -20,7 +20,7 @@ from enum import Enum
 import numpy as np
 
 from madexplorer.core.types import IntArray
-from madexplorer.population.unit import Observation, PopulationUnit
+from madexplorer.population.unit import PopulationUnit
 
 
 class MergeMode(Enum):
@@ -130,16 +130,9 @@ def merge_state(target: PopulationUnit, source: PopulationUnit, mode: MergeMode)
     target.males = target.males + source.males
     n = target.population
     target.reserve_kcal_per_capita = total_reserve / n if n else 0.0
-    _merge_beliefs(target.beliefs, source.beliefs)
+    target.beliefs = target.beliefs.merged_with(source.beliefs)
     for cell, value in source.familiarity.items():
         target.familiarity[cell] = max(value, target.familiarity.get(cell, 0.0))
-
-
-def _merge_beliefs(target: dict[int, Observation], source: dict[int, Observation]) -> None:
-    for cell, obs in source.items():
-        mine = target.get(cell)
-        if mine is None or obs.year > mine.year:
-            target[cell] = obs
 
 
 def rewire_ties(units: MutableMapping[str, PopulationUnit], source_id: str, target_id: str) -> None:
@@ -196,7 +189,7 @@ def split_off(
         parent_id=parent.id,
         food_ratio=parent.food_ratio,
         energy_deficit=parent.energy_deficit,
-        beliefs=dict(parent.beliefs),
+        beliefs=parent.beliefs,  # immutable map, safe to share
         familiarity=dict(parent.familiarity),
         knowledge=parent.knowledge.copy(),
         technologies=parent.technologies,

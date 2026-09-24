@@ -14,12 +14,9 @@ import numpy as np
 from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
-from madexplorer.core.types import IntArray
 from madexplorer.economy.foraging import accessible_food_kcal
-from madexplorer.population.unit import Observation, PopulationUnit
+from madexplorer.population.unit import NEVER_OBSERVED, BeliefMap, PopulationUnit
 from madexplorer.species.profile import Cognition
-
-_NEVER = -(2**62)  # older than any observation year
 
 
 @model_rule(
@@ -42,7 +39,7 @@ class BeliefUpdate:
     """Replace a unit's spatial belief map."""
 
     unit_id: str
-    beliefs: dict[int, Observation]
+    beliefs: BeliefMap
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Commit the new belief map."""
@@ -71,18 +68,16 @@ class PerceptionSubsystem:
                 cognition, float(world.vegetation_density[unit.cell]), world.cell_size_km
             )
             horizon = state.year - cognition.memory_years
-            beliefs = {c: o for c, o in unit.beliefs.items() if o.year > horizon}
-            cells = world.land_cells_within(unit.cell, radius)
-            noise = np.exp(cognition.observation_noise_sigma * rng.standard_normal(len(cells)))
-            n_self = unit.population
-            for cell, factor in zip(cells, noise, strict=True):
-                others = int(cell_population[cell]) - (n_self if cell == unit.cell else 0)
-                beliefs[cell] = Observation(
-                    year=state.year,
-                    food_kcal=float(food[cell] * factor),
-                    water_access=float(world.water_access[cell]),
-                    population=others,
-                )
+            year, food_kcal, water, population = unit.beliefs.sized(world.n_cells).arrays()
+            year[year <= horizon] = NEVER_OBSERVED  # forget stale observations
+            cells = world.land_cell_ids_within(unit.cell, radius)
+            noise = np.exp(cognition.observation_noise_sigma * rng.standard_normal(cells.size))
+            year[cells] = state.year
+            food_kcal[cells] = food[cells] * noise
+            water[cells] = world.water_access[cells]
+            others = cell_population[cells]
+            population[cells] = np.where(cells == unit.cell, others - unit.population, others)
+            beliefs = BeliefMap(year, food_kcal, water, population)
             updates.append(BeliefUpdate(unit.id, beliefs))
         return updates
 
@@ -92,15 +87,15 @@ class SharedKnowledge:
     """Observations one unit receives from its neighbors."""
 
     unit_id: str
-    received: dict[int, Observation]
+    beliefs: BeliefMap  # the unit's map after adopting fresher partner observations
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Adopt the received observations (each is fresher than the unit's own).
+        """Adopt the merged map.
 
-        Sharing proposals were computed from pre-sharing beliefs and each one changes only
-        its own unit's map, so the freshness check made in ``evaluate`` still holds here.
+        It was computed from pre-sharing beliefs, and each proposal changes only its own
+        unit's map, so applying proposals in any order gives the same result.
         """
-        state.units[self.unit_id].beliefs.update(self.received)
+        state.units[self.unit_id].beliefs = self.beliefs
 
 
 @model_rule(
@@ -128,7 +123,6 @@ class KnowledgeSharingSubsystem:
         rng = ctx.rng.stream(Streams.KNOWLEDGE_SHARING)
         by_cell = state.units_by_cell()
         world = state.world
-        years = _BeliefYears(world.n_cells)
         proposals: list[SharedKnowledge] = []
         for unit in state.units.values():
             probability = ctx.species(unit.species_id).social.knowledge_sharing_probability
@@ -140,50 +134,37 @@ class KnowledgeSharingSubsystem:
                     if rng.random() < probability:
                         partners.append(other)
             if partners:
-                received = freshest_from_partners(unit, partners, years)
-                if received:
-                    proposals.append(SharedKnowledge(unit.id, received))
+                merged = freshest_from_partners(unit.beliefs, [p.beliefs for p in partners])
+                if merged is not None:
+                    proposals.append(SharedKnowledge(unit.id, merged))
         return proposals
 
 
-class _BeliefYears:
-    """Per-step cache of each unit's belief years as a dense per-cell array."""
-
-    def __init__(self, n_cells: int) -> None:
-        self.n_cells = n_cells
-        self._years: dict[str, IntArray] = {}
-
-    def of(self, unit: PopulationUnit) -> IntArray:
-        """Observation year per cell (``_NEVER`` where the unit knows nothing)."""
-        years = self._years.get(unit.id)
-        if years is None:
-            years = np.full(self.n_cells, _NEVER, dtype=np.int64)
-            beliefs = unit.beliefs
-            if beliefs:
-                cells = np.fromiter(beliefs.keys(), dtype=np.int64, count=len(beliefs))
-                years[cells] = np.fromiter(
-                    (o.year for o in beliefs.values()), dtype=np.int64, count=len(beliefs)
-                )
-            self._years[unit.id] = years
-        return years
-
-
-def freshest_from_partners(
-    unit: PopulationUnit, partners: Sequence[PopulationUnit], years: _BeliefYears
-) -> dict[int, Observation]:
-    """Partner observations fresher than anything ``unit`` knows, per cell.
+def freshest_from_partners(own: BeliefMap, partners: Sequence[BeliefMap]) -> BeliefMap | None:
+    """``own`` updated with every partner observation fresher than anything known so far.
 
     Partners are consulted in order and only a strictly fresher observation replaces the
-    best so far, so on equal years the first partner wins.
+    best so far, so on equal years the first partner wins. ``None`` if nothing is fresher.
     """
-    best = years.of(unit)
-    winner = np.full(best.shape, -1, dtype=np.int64)
+    n = max([own.n_cells, *(p.n_cells for p in partners)])
+    own = own.sized(n)
+    best = own.year
+    winner = np.full(n, -1, dtype=np.int64)
     for k, partner in enumerate(partners):
-        partner_years = years.of(partner)
+        partner_years = partner.sized(n).year
         fresher = partner_years > best
         if fresher.any():
             best = np.where(fresher, partner_years, best)
             winner[fresher] = k
-    cells = np.flatnonzero(winner >= 0)
-    maps = [partner.beliefs for partner in partners]
-    return {c: maps[k][c] for c, k in zip(cells.tolist(), winner[cells].tolist(), strict=True)}
+    if not (winner >= 0).any():
+        return None
+    year, food_kcal, water, population = own.arrays()
+    for k, partner in enumerate(partners):
+        take = winner == k
+        if take.any():
+            source = partner.sized(n)
+            year[take] = source.year[take]
+            food_kcal[take] = source.food_kcal[take]
+            water[take] = source.water_access[take]
+            population[take] = source.population[take]
+    return BeliefMap(year, food_kcal, water, population)

@@ -4,7 +4,7 @@
 **Code at time of writing:** `adc1a09` plus uncommitted MVP 2 cleanup changes (the baseline
 manifest records `source_tree_sha256`, which identifies the exact sources).
 **Current phase:** MVP 2 cleanup (stabilize and validate before MVP 3). Items 1-11 of the
-cleanup plan are done; the frozen MVP 2 baseline (item 12) is in Section 9.
+cleanup plan are done; the frozen MVP 2 baseline (item 12) has not been recorded yet (Section 9).
 
 This file records what exists, what was learned while building it, what is broken or
 unfinished, and what to do next. The specification is `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`;
@@ -184,14 +184,26 @@ assumptions, the tests, whether seeded results change, and the kind of change.
     objects only for changed cells. `SharedKnowledge.apply` is a `dict.update` (the freshness
     check made in `evaluate` still holds because each proposal changes only its own unit).
     A Hypothesis test checks equality with the original dictionary merge.
+  - **Beliefs are dense per-unit arrays** (`population/unit.py` `BeliefMap`: observation year,
+    food, water, population per cell; `NEVER_OBSERVED` marks unknown cells). Maps are never
+    modified after construction: perception, sharing and merging build new ones, so staged
+    evaluation stays valid and maps can be shared on fission. Perception forgets and writes
+    cells with array operations; sharing compares year arrays directly; migration reads only
+    the reachable candidates (cached as arrays per origin). Memory: 32 bytes × cells per unit
+    (~51 kB on 40×40; ~60 MB at 1,200 units), which grows with cells × units.
   - `PopulationUnit` uses a descriptor on `females`/`males` instead of a `__setattr__` hook
     (11.6M hook calls per run), and caches cohort-weighted sums (`weighted_count`, used for
     need and labor) until a cohort array is replaced.
-- **Measured.** Same seed, same outputs: 1,000-year MVP 2 run (aggregation 3) 400 s → 326 s
-  (−19%); a late step with 920 units 1.13 s → 0.76 s (sharing 544 → 293 ms, migration 100 → 40 ms).
+- **Measured.** Same seed, same outputs throughout (golden fixtures and per-seed ensemble rows
+  identical):
+  - first round (caches, migration fast path, sharing arrays, cohort descriptor): 1,000-year run
+    (aggregation 3) 400 s → 326 s; late step (920 units) 1.13 s → 0.76 s;
+  - dense belief maps: late step 0.76 s → 0.40 s (sharing 293 → 98 ms, perception 175 → 44 ms);
+    4 seeds × 600 years in reference mode 250 s → 175 s (−30%); 1,000-year seed 0 in reference
+    mode 421 s → 212 s (−50%).
 - **Not done, deliberately.** A cached `units_by_cell` / `cell_population` index with
   invalidation: measured at 0.26 ms and 0.58 ms per call with 920 units (~4 ms per step, 0.5%),
-  not worth the stale-cache risk. Belief pruning: a model change (Section 10).
+  not worth the stale-cache risk. Belief pruning: a model change, not done.
 
 ### Item 4. Ensemble tooling (implementation)
 
@@ -303,12 +315,14 @@ aggregation off. `max_units_per_cell: 1` nearly stops colonization.
 |---|---|
 | MVP 1, 64×64, 450 years | ~8-20 s |
 | MVP 2, 40×40, 600 years, aggregation off (16-seed ensemble, `--jobs 2`) | median ~45 s per run, ~7 min per ensemble |
-| MVP 2, 40×40, 1,000 years, aggregation off, seed 0 | 421 s (~30k people, ~1,170 units) |
+| MVP 2, 40×40, 600 years, reference mode, 4-seed ensemble (`--jobs 2`) | 25-67 s per run, 1.5 min wall |
+| MVP 2, 40×40, 1,000 years, reference mode, seed 0 (one of the slowest seeds) | 212 s |
+| Estimated baseline, 1,000 years, `--jobs 2`: 8 / 16 / 32 seeds | ~7 / ~15 / ~29 min (range 6-10 / 11-20 / 23-39) |
 
-Remaining hotspot: **belief maps**. Belief sharing relays observations group to group, so every
-unit ends up knowing most of the map (median 786 cells, max 1,055 at year 850), and nearly
-every entry is refreshed every year. Sharing plus perception is ~60% of a late step. Exact
-options and model options are in Section 10.
+A late step (920 units) is now ~0.40 s: sharing 98 ms, diffusion 68, migration 55, perception
+44, foraging 32. Belief sharing still relays observations until every unit knows most of the
+map (median 786 cells at year 850); a spatial memory limit would cut this further but is a
+model change.
 
 ---
 
@@ -394,7 +408,8 @@ aggregation stays within tolerance of the reference.
    observations, so mobility depends on observation noise and on how many cells a group knows.
    A proper fix is belief-level uncertainty (e.g. shrinking observations toward a prior, or
    discounting by known noise).
-3. **Map-wide belief maps** (performance and realism; Section 6).
+3. **Map-wide belief maps**: units learn most of the map through relayed gossip; memory now
+   scales with cells × units (Section 6).
 4. **Aggregation is not sociologically neutral** (Section 7.1).
 5. Modelling simplifications carried over: static vegetation, no seasons, species in one cell
    forage in id order, equal food sharing inside groups, whole-group migration only, one-good
@@ -406,21 +421,28 @@ aggregation stays within tolerance of the reference.
 
 ## 9. MVP 2 baseline (item 12)
 
-_Pending: being recorded now (canonical scenario `scenarios/mvp2_neolithic.yaml`, reference
-mode, 1,000 years, seeds 0-31)._
+**Not yet recorded.** Canonical `scenarios/mvp2_neolithic.yaml`, reference mode, 1,000 years.
+After the dense-belief speed-up, the estimated wall time on the 2-core codespace is ~15 min for
+seeds 0-15 and ~29 min for seeds 0-31 (the earlier "2 hours" assumed every seed was as slow as
+seed 0 before the speed-up). Command, once approved:
+
+```bash
+uv run madexplorer ensemble scenarios/mvp2_neolithic.yaml --seeds 0:31 --jobs 2 --out baselines/mvp2
+```
+
+The manifest records `source_tree_sha256`, so commit (or at
+least freeze) the code before recording.
 
 ---
 
 ## 10. Recommended next steps (in order)
 
-1. **Decide on belief maps** before MVP 3 multiplies state size:
-   - *exact*: store beliefs as dense per-unit arrays (year, food, water, population per cell),
-     making perception and sharing vectorized (~2× on late steps; ~50 MB at 1,000 units on 40×40,
-     but it scales with cells × units);
-   - *model change*: forget observations beyond a spatial memory range (e.g. a few relocation
-     ranges); faster and arguably more realistic, but must be evaluated with paired ensembles.
-2. **Investigate issue 1** (farming transition) with paired ensembles and `--set` sweeps.
-3. **MVP 3: distributional society** (§33), built on the composition rules:
+1. **Record the MVP 2 baseline** (Section 9).
+2. **Belief memory range** (optional model change): forgetting observations beyond a few
+   relocation ranges would bound memory (dense maps scale with cells × units) and cut sharing
+   cost further; evaluate with paired ensembles before adopting.
+3. **Investigate issue 1** (farming transition) with paired ensembles and `--set` sweeps.
+4. **MVP 3: distributional society** (§33), built on the composition rules:
    - each large `PopulationUnit` holds ~8-16 weighted strata sharing wealth, health, risk
      tolerance, autonomy, occupation and status, extending cohorts to `N[sex, age, stratum]`;
      strata keep correlations that separate marginals would lose (§7.3);
@@ -431,7 +453,7 @@ mode, 1,000 years, seeds 0-31)._
      building on `population/health.py`;
    - every new field must be added to `FIELD_RULES`;
    - switch subsystems to `RngManager.keyed` where split/merge would reorder draws.
-4. Afterwards, MVP 4 (factions, appropriation, state capacity) and MVP 5 (fantasy and
+5. Afterwards, MVP 4 (factions, appropriation, state capacity) and MVP 5 (fantasy and
    multi-species worlds).
 
 ---
@@ -460,7 +482,7 @@ scenarios/       mvp1_sandbox.yaml, mvp2_neolithic.yaml
 species/         human.yaml
 technologies/    neolithic.yaml
 tests/           mechanism tests; regression/ (golden fixtures); statistical/ (make test-stat)
-baselines/       mvp2/ (frozen MVP 2 ensemble: runs, summary, manifest)
+baselines/       mvp2/ (planned: frozen MVP 2 ensemble; not recorded yet)
 ```
 
 ### Conventions to keep

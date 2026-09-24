@@ -27,6 +27,105 @@ class Observation:
     population: int  # other people perceived in the cell (excluding the observer)
 
 
+NEVER_OBSERVED = -(2**62)  # observation year of a cell the unit knows nothing about
+
+
+@dataclass(frozen=True, eq=False)
+class BeliefMap:
+    """A unit's beliefs about every cell, as dense per-cell arrays.
+
+    ``year[c] == NEVER_OBSERVED`` means the cell is unknown (the other entries are then
+    meaningless). The arrays are never modified after the map is built: perception, sharing
+    and merging all construct new maps, so proposals evaluated against one year's beliefs
+    stay valid until applied, and maps can be shared between units safely.
+    """
+
+    year: IntArray
+    food_kcal: FloatArray  # perceived accessible wild food stock
+    water_access: FloatArray
+    population: IntArray  # other people perceived in the cell (excluding the observer)
+
+    @classmethod
+    def empty(cls, n_cells: int) -> "BeliefMap":
+        """A map in which nothing is known."""
+        return cls(
+            np.full(n_cells, NEVER_OBSERVED, dtype=np.int64),
+            np.zeros(n_cells),
+            np.zeros(n_cells),
+            np.zeros(n_cells, dtype=np.int64),
+        )
+
+    @classmethod
+    def from_observations(cls, n_cells: int, observations: dict[int, Observation]) -> "BeliefMap":
+        """Build a map from ``{cell: Observation}`` (tests and conversions)."""
+        year, food, water, population = cls.empty(n_cells).arrays()
+        for cell, obs in observations.items():
+            year[cell], food[cell] = obs.year, obs.food_kcal
+            water[cell], population[cell] = obs.water_access, obs.population
+        return cls(year, food, water, population)
+
+    @property
+    def n_cells(self) -> int:
+        """Number of cells the map covers (0 for a unit that has never perceived)."""
+        return int(self.year.size)
+
+    def arrays(self) -> tuple[IntArray, FloatArray, FloatArray, IntArray]:
+        """Fresh copies of the four arrays, for building a new map."""
+        return (
+            self.year.copy(),
+            self.food_kcal.copy(),
+            self.water_access.copy(),
+            self.population.copy(),
+        )
+
+    def sized(self, n_cells: int) -> "BeliefMap":
+        """This map, or an empty one of the right size if it covers no cells yet."""
+        if self.n_cells == n_cells:
+            return self
+        if self.n_cells == 0:
+            return BeliefMap.empty(n_cells)
+        raise ValueError(f"belief map covers {self.n_cells} cells, expected {n_cells}")
+
+    def __contains__(self, cell: int) -> bool:
+        return 0 <= cell < self.n_cells and int(self.year[cell]) != NEVER_OBSERVED
+
+    def __len__(self) -> int:
+        return int((self.year != NEVER_OBSERVED).sum())
+
+    def __getitem__(self, cell: int) -> Observation:
+        if cell not in self:
+            raise KeyError(cell)
+        return Observation(
+            int(self.year[cell]),
+            float(self.food_kcal[cell]),
+            float(self.water_access[cell]),
+            int(self.population[cell]),
+        )
+
+    def known_cells(self) -> IntArray:
+        """Ids of cells with an observation, ascending."""
+        cells: IntArray = np.flatnonzero(self.year != NEVER_OBSERVED)
+        return cells
+
+    def to_dict(self) -> dict[int, Observation]:
+        """``{cell: Observation}`` for every known cell."""
+        return {int(c): self[int(c)] for c in self.known_cells()}
+
+    def merged_with(self, other: "BeliefMap") -> "BeliefMap":
+        """Per cell, ``other``'s observation where it is strictly fresher than this map's."""
+        n = max(self.n_cells, other.n_cells)
+        mine, theirs = self.sized(n), other.sized(n)
+        fresher = theirs.year > mine.year
+        if not fresher.any():
+            return mine
+        return BeliefMap(
+            np.where(fresher, theirs.year, mine.year),
+            np.where(fresher, theirs.food_kcal, mine.food_kcal),
+            np.where(fresher, theirs.water_access, mine.water_access),
+            np.where(fresher, theirs.population, mine.population),
+        )
+
+
 class _Cohort:
     """Descriptor for a cohort vector: assignment clears the unit's derived head counts.
 
@@ -67,7 +166,7 @@ class PopulationUnit:
     harvest_kcal: float = 0.0  # food acquired this year
     food_ratio: float = 1.0  # acquired / required, last year
     energy_deficit: float = 0.0  # unmet fraction of requirement after reserves, last year
-    beliefs: dict[int, Observation] = field(default_factory=dict)  # spatial beliefs by cell
+    beliefs: BeliefMap = field(default_factory=lambda: BeliefMap.empty(0))  # spatial beliefs
     familiarity: dict[int, float] = field(default_factory=dict)
     groups: int = 1  # social groups represented by this unit
     # Knowledge and technology (MVP 2).

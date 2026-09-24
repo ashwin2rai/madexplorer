@@ -22,7 +22,7 @@ from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.population.energetics import annual_need_kcal
 from madexplorer.population.groups import sigmoid
-from madexplorer.population.unit import Observation, PopulationUnit
+from madexplorer.population.unit import NEVER_OBSERVED, Observation, PopulationUnit
 from madexplorer.species.profile import MigrationBehavior
 
 
@@ -151,6 +151,38 @@ def destination_components(
     return components
 
 
+def _utility(
+    food_kcal: float,
+    water_access: float,
+    others: int,
+    observed_year: int,
+    path_cost_km: float,
+    staying: bool,
+    population: int,
+    costs: MoveCosts,
+    year: int,
+    memory_years: int,
+    behavior: MigrationBehavior,
+) -> float:
+    """Total utility from plain values; the arithmetic of :func:`destination_components`."""
+    if staying and costs.farm_kcal > 0:
+        food_kcal = food_kcal + costs.farm_kcal
+    per_head = population + others
+    ratio = food_kcal / max(costs.need_kcal * per_head / max(population, 1), 1.0)
+    ratio = min(max(ratio, 0.05), behavior.food_ratio_cap)
+    # sum() (compensated for floats since Python 3.12) over the same terms, in the same order.
+    return sum(
+        (
+            behavior.food_weight * math.log(ratio),
+            behavior.water_weight * water_access,
+            -behavior.movement_cost_weight * path_cost_km / behavior.movement_reference_km,
+            -behavior.uncertainty_weight * (year - observed_year) / memory_years,
+            0.0 if staying else -costs.stores_cost,
+            0.0 if staying else -costs.fields_cost,
+        )
+    )
+
+
 def destination_score(
     unit: PopulationUnit,
     cell: int,
@@ -165,24 +197,18 @@ def destination_score(
     without building a dict per candidate; the components are only needed for tracing.
     """
     obs = unit.beliefs[cell]
-    staying = cell == unit.cell
-    food_kcal = (
-        obs.food_kcal + costs.farm_kcal if staying and costs.farm_kcal > 0 else obs.food_kcal
-    )
-    population = unit.population
-    per_head = population + obs.population
-    ratio = food_kcal / max(costs.need_kcal * per_head / max(population, 1), 1.0)
-    ratio = min(max(ratio, 0.05), behavior.food_ratio_cap)
-    # sum() (compensated for floats since Python 3.12) over the same terms, in the same order.
-    return sum(
-        (
-            behavior.food_weight * math.log(ratio),
-            behavior.water_weight * obs.water_access,
-            -behavior.movement_cost_weight * costs.reachable[cell] / behavior.movement_reference_km,
-            -behavior.uncertainty_weight * (year - obs.year) / memory_years,
-            0.0 if staying else -costs.stores_cost,
-            0.0 if staying else -costs.fields_cost,
-        )
+    return _utility(
+        obs.food_kcal,
+        obs.water_access,
+        obs.population,
+        obs.year,
+        costs.reachable[cell],
+        cell == unit.cell,
+        unit.population,
+        costs,
+        year,
+        memory_years,
+        behavior,
     )
 
 
@@ -255,9 +281,15 @@ class MigrationSubsystem:
             annual_need_kcal(unit, profile, ctx.tables[unit.species_id], temperature)
             - unit.energy_debt_kcal
         )
-        reachable = ctx.movement[unit.species_id].reachable(unit.cell)
+        movement = ctx.movement[unit.species_id]
+        reachable = movement.reachable(unit.cell)
         beliefs = unit.beliefs
-        candidates = sorted(c for c in reachable if c in beliefs)
+        if beliefs.n_cells == 0:
+            return None
+        cells, path_costs = movement.reachable_arrays(unit.cell)
+        known = beliefs.year[cells] != NEVER_OBSERVED
+        candidate_ids = cells[known]
+        candidates: list[int] = candidate_ids.tolist()
         if unit.cell not in candidates:
             return None  # cannot evaluate staying without a current observation
         farm_kcal = unit.fields_ha * unit.crop_yield_kcal_per_ha
@@ -275,7 +307,16 @@ class MigrationSubsystem:
             behavior=behavior,
         )
         scores = [
-            destination_score(unit, c, costs, state.year, memory, behavior) for c in candidates
+            _utility(f, w, p, y, d, c == unit.cell, n, costs, state.year, memory, behavior)
+            for c, f, w, p, y, d in zip(
+                candidates,
+                beliefs.food_kcal[candidate_ids].tolist(),
+                beliefs.water_access[candidate_ids].tolist(),
+                beliefs.population[candidate_ids].tolist(),
+                beliefs.year[candidate_ids].tolist(),
+                path_costs[known].tolist(),
+                strict=True,
+            )
         ]
         best = choose_destination(candidates, scores, unit.cell, rng)
         if best is None:
