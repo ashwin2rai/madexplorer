@@ -9,6 +9,7 @@ madexplorer rules
 """
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -233,6 +234,41 @@ def cmd_rules(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_bench(args: argparse.Namespace) -> int:
+    """Synthetic per-unit benchmark or timed reference runs; writes a JSON report."""
+    from madexplorer.experiments.benchmark import synthetic_benchmark, timed_runs
+
+    scenario = Scenario.from_yaml(args.scenario)
+    if args.set:
+        scenario = scenario.with_settings(_parse_settings(args.set))
+    if args.mode == "synthetic":
+        units = [int(n) for n in args.units.split(",")]
+        report = synthetic_benchmark(scenario, units, args.ticks, args.warmup, args.farming)
+        for case in report["cases"]:
+            top = ", ".join(f"{k} {v}" for k, v in list(case["subsystem_ms_per_tick"].items())[:5])
+            print(
+                f"units={case['n_units']:>5} mean={case['mean_units']:>7} "
+                f"known={case['known_cells_after_warmup']:>6} "
+                f"ms/tick={case['ms_per_tick']:>8} ms/unit/tick={case['ms_per_unit_tick']:.4f} "
+                f"rss={case['peak_rss_mb']}MB | {top}"
+            )
+    else:
+        report = timed_runs(scenario, _parse_seeds(args.seeds), args.years)
+        for run in report["runs"]:
+            top = ", ".join(f"{k} {v}" for k, v in list(run["subsystem_seconds"].items())[:5])
+            print(
+                f"seed={run['seed']} years={run['years']} runtime={run['runtime_seconds']}s "
+                f"units={run['final_units']} ms/unit-year={run['ms_per_unit_year']} "
+                f"rss={run['peak_rss_mb']}MB | {top}"
+            )
+    if args.out:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2) + "\n")
+        print(f"report -> {out}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Argument parser for all subcommands."""
     parser = argparse.ArgumentParser(
@@ -288,6 +324,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("run_dir")
     p.add_argument("--map", action="store_true", help="print an ASCII population map")
     p.set_defaults(func=cmd_inspect)
+
+    p = sub.add_parser("bench", help="performance benchmarks (synthetic units or timed runs)")
+    p.add_argument("mode", choices=["synthetic", "runs"])
+    p.add_argument("scenario")
+    p.add_argument("--units", default="100,500,1000,2000", help="synthetic unit counts")
+    p.add_argument("--ticks", type=int, default=30, help="timed ticks per synthetic case")
+    p.add_argument("--warmup", type=int, default=20, help="belief warm-up years (synthetic)")
+    p.add_argument("--farming", action="store_true", help="synthetic groups hold all technologies")
+    p.add_argument("--seeds", default="0", help="seeds for timed runs")
+    p.add_argument("--years", type=int, help="override simulation.n_years (timed runs)")
+    p.add_argument("--set", action="append", metavar="PATH=VALUE", help="parameter override")
+    p.add_argument("--out", help="write the JSON report here")
+    p.set_defaults(func=cmd_bench)
 
     p = sub.add_parser("rules", help="list model rules and their provenance")
     p.add_argument("-v", "--verbose", action="store_true")

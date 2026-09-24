@@ -112,6 +112,8 @@ class Simulator:
         self.ids = IdAllocator()
         self.events = EventLog()
         self.trace_units = frozenset(config.output.trace_units) | frozenset(trace_units)
+        # Cumulative seconds per subsystem (evaluate + apply) when set to a dict; benchmarks only.
+        self.timings: dict[str, float] | None = None
         self.world = generate_world(config.world, config.ecology)
         self.tables = {sid: LifeTables.build(p) for sid, p in scenario.species.items()}
         self.movement = {
@@ -157,12 +159,10 @@ class Simulator:
                 reason="initial_population",
             )
 
-    def step(self) -> StepContext:
-        """Advance the simulation by one year."""
-        state = self.state
-        state.year += 1
-        ctx = StepContext(
-            year=state.year,
+    def context(self) -> StepContext:
+        """A fresh step context for the current year (dependencies and an empty ledger)."""
+        return StepContext(
+            year=self.state.year,
             scenario=self.scenario,
             rng=self.rng,
             ids=self.ids,
@@ -172,10 +172,22 @@ class Simulator:
             trace_units=self.trace_units,
             knowledge=self.knowledge,
         )
+
+    def step(self) -> StepContext:
+        """Advance the simulation by one year."""
+        state = self.state
+        state.year += 1
+        ctx = self.context()
         before = state.total_population()
+        timings = self.timings
         for subsystem in self.pipeline:
+            started = time.perf_counter() if timings is not None else 0.0
             for proposal in subsystem.evaluate(state, ctx):
                 proposal.apply(state, ctx)
+            if timings is not None:
+                elapsed = time.perf_counter() - started
+                timings[subsystem.name] = timings.get(subsystem.name, 0.0) + elapsed
+        started = time.perf_counter() if timings is not None else 0.0
         if self.scenario.config.debug.check_invariants:
             check_population_accounting(
                 before, ctx.ledger.births, ctx.ledger.deaths, state.total_population(), state.year
@@ -183,6 +195,8 @@ class Simulator:
             check_units(state.units.values(), self.world.n_cells, state.year)
             check_nonnegative("plant_stock_kcal", state.ecology.plant_stock_kcal, state.year)
             check_nonnegative("game_stock_kcal", state.ecology.game_stock_kcal, state.year)
+        if timings is not None:
+            timings["invariants"] = timings.get("invariants", 0.0) + time.perf_counter() - started
         return ctx
 
     def run(

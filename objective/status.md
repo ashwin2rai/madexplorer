@@ -3,12 +3,108 @@
 **Last updated:** 2026-09-24
 **Code at time of writing:** `adc1a09` plus uncommitted MVP 2 cleanup changes (the baseline
 manifest records `source_tree_sha256`, which identifies the exact sources).
-**Current phase:** MVP 2 cleanup (stabilize and validate before MVP 3). Items 1-11 of the
-cleanup plan are done; the frozen MVP 2 baseline (item 12) has not been recorded yet (Section 9).
+**Current phase:** MVP 2 final stabilization pass (Section 0). The earlier cleanup items 1-11
+are done (Section 4); the frozen MVP 2 baseline has not been recorded (Section 9) and is now
+the last step of the stabilization pass.
 
 This file records what exists, what was learned while building it, what is broken or
 unfinished, and what to do next. The specification is `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`;
 section numbers below (§) refer to it.
+
+---
+
+## 0. MVP 2 final stabilization pass: plan and progress
+
+Goal: make MVP 2 faster, less prone to representation artifacts, and validated well enough
+to freeze, without starting MVP 3. Work proceeds phase by phase. **Each phase ends at a
+checkpoint where work pauses for review and the user decides whether to commit.** Every phase
+keeps `make check` green; behavior changes are labelled as model changes and re-record the
+golden fixtures in that phase only.
+
+Rules for the whole pass: no tuning coefficients toward a desired trajectory; prefer
+reformulations that are both more plausible and cheaper; keep aggregation off in reference
+runs; keep the MVP 3 split (shared group-level state: beliefs, technologies, location,
+network; distributional state: later strata) in every new data structure.
+
+### Findings from the code audit (before any change)
+
+- `BeliefMap` is four dense cell-length arrays per unit, rebuilt every year by perception
+  (full copy, full expiry scan) and by sharing (full copy per unit with partners). Sharing
+  transmits every fresher cell of every partner: effectively lossless map synchronization.
+- `water_access` in beliefs is a copy of a static, noise-free world field.
+- Migration scores every believed reachable cell (hundreds late in a run).
+- Field planning amortizes clearing over `min(max(residence_years, 1), horizon)`: past, not
+  expected future, tenure. A newly arrived group amortizes over 1 year.
+- Initial crop yield = potential × `crop_yield` 0.5 × agricultural efficiency `K/(K+2)` with K
+  near the 0.5 adoption bonus (≈0.2), i.e. ≈10% of potential: a likely double penalty.
+- Foraging allocation bisects 40 times (`economy/foraging.py`).
+- `StepContext.capabilities()` copies the cached capability dict on every call.
+- Crop potential and arable area are recomputed by both farming and field planning each year.
+- The ensemble uses a default `ProcessPoolExecutor` (no explicit start method, no thread
+  limits, scenario and world rebuilt per seed).
+
+### Phases (checkpoint after each)
+
+| Phase | Content (brief items) | Kind of change | Status |
+|---|---|---|---|
+| P0 | Benchmarks first (18): synthetic performance scenario with 100/500/1000/2000 units for 25-50 ticks (ms/tick, ms/unit/tick, per-subsystem time, peak RSS); benchmark tiers smoke / dev / release / baseline as make targets; record **pre-reform reference timings** (incl. 1,000-year seed 0) for target 19 | tooling | **done** |
+| P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation; float32 is a rounding-level change (golden re-recorded, documented) | planned |
+| P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** | planned |
+| P3 | Bounded migration attention (9-10): `migration.max_considered_destinations` (default ~12) drawn by proximity, recency, direct knowledge and a random exploratory slot, **independent of utility**; then argmax + one move draw as now. Rerun perception-noise experiment | **model change** + experiment | planned |
+| P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | planned |
+| P5 | Agriculture (20-25): expected future tenure `p(1-p^H)/(1-p)` from the unit's current stay probability; review tech × knowledge (candidate: knowledge sets distance to the technology frontier, `e_min + (1-e_min)K/(K+K_half)`, with `e_min` justified behaviorally, not fitted); small experimental cultivation share (2-5% labor) when crop returns are within a band of foraging, as generic subsistence exploration; scenarios A (abundant frontier) and B (intensification pressure); paired cultivation on/off ablation on B as a statistical test replacing the strict xfail | **model changes** + validation | planned |
+| P6 | Aggregation rerun (26): off / moderate / aggressive, paired seeds, documented approximation errors | experiment | planned |
+| P7 | Freeze (31): canonical scenarios, 32-seed × 1,000-year baseline under `baselines/mvp2`, final status, accepted limitations, git tag `mvp2` (tag only on the user's approval) | release | planned |
+
+Open design choices to confirm during review (defaults proposed, not fixed):
+
+- Prior for shrinking uncertain food beliefs (P2): proposal is the unit's own experience,
+  the mean of its *direct* observations in its memory window. It needs no hidden world
+  knowledge; an alternative is a vegetation-class expectation.
+- Transmission decay default ≈0.7 per hop, with reports older than the memory horizon never
+  sent.
+- Where a phase's result contradicts the plan (e.g. a reform does not speed things up, or
+  agriculture still cannot emerge under pressure), the finding is documented rather than
+  forced.
+
+### Progress log
+
+(Entries are added per phase: issue, old behavior, new behavior, assumptions, performance,
+validation, remaining concerns.)
+
+#### P0. Benchmarks and pre-reform reference (tooling; no behavior change)
+
+- **Added.** `experiments/benchmark.py` and `madexplorer bench {synthetic,runs}`:
+  - *synthetic*: the MVP 2 world with `n` groups of 30 placed on random land cells (own
+    placement generator, not a model stream), 20 years of perception + belief sharing only
+    (so belief maps reach a late-run state), then 30 timed full ticks. `--farming` gives
+    every group all technologies. Reports ms/tick, ms/unit/tick, per-subsystem ms/tick,
+    known cells per unit, peak RSS. Each case runs in a fresh `spawn` process.
+  - *runs*: ordinary seeded runs with a per-subsystem breakdown.
+  - `Simulator.timings` (off by default) accumulates evaluate+apply time per subsystem;
+    `Simulator.context()` factored out of `step()`. `numeric_platform()` moved to
+    `core/provenance.py` (used by golden tests and benchmark reports).
+  - Make targets: `bench-perf` (synthetic), `bench-smoke` (2 seeds × 250 y), `bench-dev`
+    (8 × 600 y), `bench-rc` (16 × 1,000 y), `baseline` (32 × 1,000 y → `baselines/mvp2`).
+  - `tests/test_benchmark.py`. Golden fixtures unchanged; 120 fast tests pass.
+- **Pre-reform reference** (2-core codespace; reports in `benchmarks/perf/p0_pre_reform_*.json`):
+
+  | Synthetic units (mean over ticks) | Known cells / unit | ms/tick | ms/unit/tick | sharing | migration | perception | diffusion | RSS |
+  |---|---|---|---|---|---|---|---|---|
+  | 100 (116) | 26 | 37 | 0.32 | 3 | 7 | 4 | 2 | 71 MB |
+  | 500 (577) | 106 | 171 | 0.30 | 41 | 25 | 18 | 12 | 127 MB |
+  | 1000 (1059) | 475 | 362 | 0.34 | 112 | 48 | 38 | 28 | 178 MB |
+  | 2000 (1792) | 796 | 677 | 0.38 | 255 | 82 | 60 | 60 | 293 MB |
+
+  Farming variant: same pattern (2000 units: 639 ms/tick, field planning 32 ms).
+  **1,000-year seed 0, reference mode: 167.9 s** (final 29,794 people, 1,165 units; peak
+  RSS 256 MB). Time by subsystem: sharing 47.5 s (28%), migration 19.0, foraging 15.6,
+  perception 15.2, diffusion 14.5, demography 11.2, field planning 8.1, learning 7.3,
+  fusion 6.1. **Target 19: ≤ ~84 s (2×) on this machine.**
+- **What it shows.** Per-unit cost rises with unit count (0.30 → 0.38 ms/unit/tick) because
+  belief sharing scales with units × known cells (41 → 255 ms, 6× for 3.5× units) as maps
+  saturate (106 → 796 known cells). Fusion (3 → 24 ms) and diffusion also grow faster than
+  linearly; to be checked in P4. P1-P3 target sharing, perception and migration directly.
 
 ---
 
@@ -25,6 +121,8 @@ uv run madexplorer ensemble scenarios/mvp2_neolithic.yaml --seeds 0:15 --jobs 2 
 uv run madexplorer compare ensembles/<a> ensembles/<b>        # paired, same seeds
 uv run madexplorer ensemble ... --set resolution.max_units_per_cell=8 --set mechanisms.aggregation=true
 uv run madexplorer rules -v          # every model rule with rationale (43 rules)
+make bench-perf BENCH_LABEL=<name>   # synthetic per-unit benchmark -> benchmarks/perf/
+make bench-smoke | bench-dev | bench-rc   # ensemble tiers (2x250, 8x600, 16x1000 years)
 ```
 
 Exact seeded regressions now live in `tests/regression/golden/*.json` (five fixed cases),
@@ -509,7 +607,7 @@ src/madexplorer/
   mobility/      movement.py, exploration.py (perception, belief sharing), migration.py
   knowledge/     system.py, learning.py, diffusion.py, innovation.py
   resolution/    coarsening.py
-  experiments/   ensemble.py (ensembles, summaries, paired comparisons)
+  experiments/   ensemble.py (ensembles, summaries, paired comparisons), benchmark.py
   metrics/       recorder.py
   persistence/   output.py
   cli/           main.py
@@ -517,6 +615,7 @@ scenarios/       mvp1_sandbox.yaml, mvp2_neolithic.yaml
 species/         human.yaml
 technologies/    neolithic.yaml
 tests/           mechanism tests; regression/ (golden fixtures); statistical/ (make test-stat)
+benchmarks/perf/ benchmark reports (JSON), p0_pre_reform_* = pre-stabilization reference
 baselines/       mvp2/ (planned: frozen MVP 2 ensemble; not recorded yet)
 ```
 

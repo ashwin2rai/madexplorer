@@ -9,14 +9,13 @@ says so in the commit message.
 import hashlib
 import json
 import os
-import platform
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import pytest
 
 from madexplorer.config.loader import Scenario
+from madexplorer.core.provenance import numeric_platform
 from madexplorer.core.simulation import SimulationResult, Simulator
 from tests.conftest import ROOT, mvp2_scenario_dict, replay_key, small_scenario_dict
 
@@ -52,22 +51,6 @@ CASES = {
     ),
     "small_farmers_150y_seed4": _farming_small,
 }
-
-
-def numeric_platform() -> str:
-    """numpy version, machine and the SIMD targets numpy dispatches to on this CPU."""
-    try:
-        from numpy._core._multiarray_umath import (  # type: ignore[import-not-found]
-            __cpu_baseline__,
-            __cpu_dispatch__,
-            __cpu_features__,
-        )
-
-        active = [t for t in __cpu_dispatch__ if __cpu_features__.get(t)]
-        simd = f"baseline={','.join(__cpu_baseline__)} dispatch={','.join(active)}"
-    except ImportError:  # pragma: no cover - numpy internals moved
-        simd = "simd=unknown"
-    return f"numpy={np.__version__} machine={platform.machine()} {simd}"
 
 
 def _digest(value: Any) -> str:

@@ -51,6 +51,22 @@ def source_tree_hash() -> str:
     return digest.hexdigest()
 
 
+def numeric_platform() -> str:
+    """numpy version, machine and the SIMD targets numpy dispatches to on this CPU."""
+    try:
+        from numpy._core._multiarray_umath import (  # type: ignore[import-not-found]
+            __cpu_baseline__,
+            __cpu_dispatch__,
+            __cpu_features__,
+        )
+
+        active = [t for t in __cpu_dispatch__ if __cpu_features__.get(t)]
+        simd = f"baseline={','.join(__cpu_baseline__)} dispatch={','.join(active)}"
+    except ImportError:  # pragma: no cover - numpy internals moved
+        simd = "simd=unknown"
+    return f"numpy={np.__version__} machine={platform.machine()} {simd}"
+
+
 def run_manifest(scenario: Scenario, **extra: Any) -> dict[str, Any]:
     """Metadata sufficient to reproduce and audit a run."""
     status = _git("status", "--porcelain")
