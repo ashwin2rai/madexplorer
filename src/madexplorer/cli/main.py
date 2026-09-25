@@ -263,6 +263,12 @@ def cmd_bench(args: argparse.Namespace) -> int:
                 f"units={run['final_units']} ms/unit-year={run['ms_per_unit_year']} "
                 f"rss={run['peak_rss_mb']}MB | {top}"
             )
+            for label, w in run["windows"].items():
+                print(
+                    f"  {label:>6} years {w['years'][0]}-{w['years'][1]}: "
+                    f"{w['ms_per_tick']} ms/tick, {w['mean_units']} units, "
+                    f"{w['ms_per_unit_tick']} ms/unit/tick"
+                )
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)

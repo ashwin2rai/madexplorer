@@ -1,5 +1,6 @@
 import numpy as np
-from hypothesis import given
+import pytest
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from madexplorer.economy.foraging import cell_harvest
@@ -84,3 +85,29 @@ def test_marginal_return_falls_with_effort() -> None:
     low = cell_harvest(accessible, rates, np.array([1e3]), np.ones(1), 1e12)
     high = cell_harvest(accessible, rates, np.array([1e5]), np.ones(1), 1e12)
     assert 0 < high.marginal_kcal_per_effective_hour < low.marginal_kcal_per_effective_hour <= 2500
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    plant=st.floats(1e3, 1e10),
+    game=st.floats(0, 1e10),
+    plant_rate=st.floats(100, 3000),
+    game_rate=st.floats(100, 3000),
+    capacity=st.floats(1e3, 1e6),
+    share=st.floats(0.01, 0.99),
+)
+def test_newton_effort_fraction_matches_a_fine_bisection(
+    plant: float, game: float, plant_rate: float, game_rate: float, capacity: float, share: float
+) -> None:
+    from madexplorer.economy.foraging import _effort_fraction, _harvest
+
+    stock, rates = (plant, game), (plant_rate, game_rate)
+    target = share * sum(_harvest(stock, rates, capacity))
+    lo, hi = 0.0, 1.0
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        lo, hi = (lo, mid) if sum(_harvest(stock, rates, capacity * mid)) >= target else (mid, hi)
+    fraction = _effort_fraction(stock, rates, capacity, target)
+    assert 0.0 <= fraction <= 1.0
+    assert fraction == pytest.approx(hi, rel=1e-9, abs=1e-12)
+    assert sum(_harvest(stock, rates, capacity * fraction)) == pytest.approx(target, rel=1e-10)

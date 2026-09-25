@@ -234,9 +234,7 @@ class FarmingSubsystem:
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[FarmHarvest]:
         """Compute crop harvests for every unit."""
         config = ctx.scenario.config.agriculture
-        potential = crop_potential_kcal_per_ha(
-            state.world, state.climate, state.ecology.soil_nutrients, config
-        )
+        potential = ctx.crop_potential(state)
         proposals: list[FarmHarvest] = []
         for unit in state.units.values():
             yield_per_ha = unit_crop_yield(unit, potential, ctx)
@@ -303,10 +301,8 @@ class FieldPlanningSubsystem:
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[FieldPlan]:
         """Compare farming and foraging returns; share limited arable land within cells."""
         config = ctx.scenario.config.agriculture
-        potential = crop_potential_kcal_per_ha(
-            state.world, state.climate, state.ecology.soil_nutrients, config
-        )
-        arable = arable_hectares(state.world, config)
+        potential = ctx.crop_potential(state)
+        arable = ctx.arable_ha
         desired: dict[str, tuple[float, float, float, float]] = {}
         for unit in state.units.values():
             behavior = ctx.species(unit.species_id).subsistence

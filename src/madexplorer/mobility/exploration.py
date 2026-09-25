@@ -36,7 +36,6 @@ from madexplorer.population.unit import (
     YearArray,
 )
 from madexplorer.species.profile import Cognition, SocialInformation
-from madexplorer.world.grid import WorldGrid
 
 
 @model_rule(
@@ -54,14 +53,6 @@ def perception_radius_cells(cognition: Cognition, vegetation: float, cell_size_k
     return max(1, round(km / cell_size_km))
 
 
-def perceived_cells(unit: PopulationUnit, cognition: Cognition, world: WorldGrid) -> IntArray:
-    """Land cells the unit observes this year (ascending)."""
-    radius = perception_radius_cells(
-        cognition, float(world.vegetation_density[unit.cell]), world.cell_size_km
-    )
-    return world.land_cells_within(unit.cell, radius)
-
-
 class PerceptionSubsystem:
     """Each unit observes nearby land cells and forms its food prior from them."""
 
@@ -72,34 +63,56 @@ class PerceptionSubsystem:
 
         Old observations are not scanned or erased here: expiry is lazy (see
         :class:`BeliefMap`), so the cost is proportional to the cells perceived. This year's
-        food observations also set the unit's prior (:func:`food_prior`).
+        food observations also set the unit's prior (:func:`food_prior`). All units are
+        processed in one pass; the noise draws are the same sequence as drawing unit by unit.
         """
+        units = list(state.units.values())
+        if not units:
+            return []
         rng = ctx.rng.stream(Streams.PERCEPTION)
-        world = state.world
         cell_population = state.cell_population()
         food_by_species = {
-            sid: accessible_food_kcal(state, profile.foraging)
-            for sid, profile in ctx.scenario.species.items()
+            sid: accessible_food_kcal(state, access) for sid, access in ctx.forage.items()
         }
-        year = np.int32(state.year)
+        cognition = {sid: ctx.species(sid).cognition for sid in ctx.scenario.species}
+        per_unit = [
+            ctx.static.perceived_cells(u.species_id, u.cell, cognition[u.species_id]) for u in units
+        ]
+        sizes = np.array([c.size for c in per_unit], dtype=np.int64)
+        starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
+        owner = np.repeat(np.arange(len(units)), sizes)
+        cells = np.concatenate(per_unit)
+        sigma = np.array([cognition[u.species_id].observation_noise_sigma for u in units])
+        noise = np.exp(sigma[owner] * rng.standard_normal(cells.size))
+        species = [u.species_id for u in units]
+        if len(set(species)) == 1:
+            food = food_by_species[species[0]][cells] * noise
+        else:
+            food = np.empty(cells.size)
+            unit_species = np.array(species)[owner]
+            for sid, stock in food_by_species.items():
+                rows = unit_species == sid
+                food[rows] = stock[cells[rows]] * noise[rows]
+        log_prior, signal_var = food_prior_batch(food, starts, sizes, sigma)
+        others = cell_population[cells]
+        own_cell = np.array([u.cell for u in units])[owner]
+        own_population = np.array([u.population for u in units])[owner]
+        population = np.where(cells == own_cell, others - own_population, others)
+        year = np.full(cells.size, state.year, dtype=YEAR_DTYPE)
+        hops = np.zeros(cells.size, dtype=HOPS_DTYPE)
         updates: list[BeliefPatch] = []
-        for unit in state.units.values():
-            cognition = ctx.species(unit.species_id).cognition
-            cells = perceived_cells(unit, cognition, world)
-            noise = np.exp(cognition.observation_noise_sigma * rng.standard_normal(cells.size))
-            food = food_by_species[unit.species_id][cells] * noise
-            log_prior, signal_var = food_prior(food, cognition.observation_noise_sigma)
-            others = cell_population[cells]
+        for k, unit in enumerate(units):
+            rows = slice(int(starts[k]), int(starts[k] + sizes[k]))
             updates.append(
                 BeliefPatch(
                     unit.id,
-                    cells,
-                    np.full(cells.size, year, dtype=YEAR_DTYPE),
-                    food,
-                    np.where(cells == unit.cell, others - unit.population, others),
-                    np.zeros(cells.size, dtype=HOPS_DTYPE),
-                    food_log_prior=log_prior,
-                    food_log_signal_var=signal_var,
+                    cells[rows],
+                    year[rows],
+                    food[rows],
+                    population[rows],
+                    hops[rows],
+                    food_log_prior=float(log_prior[k]),
+                    food_log_signal_var=float(signal_var[k]),
                     resident_cell=unit.cell,
                 )
             )
@@ -126,9 +139,26 @@ class PerceptionSubsystem:
 )
 def food_prior(food_kcal: FloatArray, noise_sigma: float) -> tuple[float, float]:
     """``(mean log food, estimated signal variance tau^2)`` of direct observations."""
+    log_prior, signal_var = food_prior_batch(
+        np.asarray(food_kcal, dtype=np.float64),
+        np.array([0]),
+        np.array([np.asarray(food_kcal).size]),
+        np.array([noise_sigma]),
+    )
+    return float(log_prior[0]), float(signal_var[0])
+
+
+def food_prior_batch(
+    food_kcal: FloatArray, starts: IntArray, sizes: IntArray, noise_sigma: FloatArray
+) -> tuple[FloatArray, FloatArray]:
+    """:func:`food_prior` for consecutive segments of ``food_kcal`` (one per unit)."""
     logs = np.log(np.maximum(food_kcal, 1.0))
-    observed_var = float(logs.var(ddof=1)) if logs.size > 1 else 0.0
-    return float(logs.mean()), max(observed_var - noise_sigma**2, 0.0)
+    mean = np.add.reduceat(logs, starts) / sizes
+    deviation = logs - np.repeat(mean, sizes)
+    squares = np.add.reduceat(deviation * deviation, starts)
+    observed_var = np.where(sizes > 1, squares / np.maximum(sizes - 1, 1), 0.0)
+    signal_var: FloatArray = np.maximum(observed_var - noise_sigma**2, 0.0)
+    return mean, signal_var
 
 
 @model_rule(
@@ -329,7 +359,7 @@ def select_reports(
     return select_reports_batch([SenderInputs(unit, pool, memory_years, info)], year, n_cells).of(0)
 
 
-def report_pool(unit: PopulationUnit, cognition: Cognition, world: WorldGrid) -> IntArray:
+def report_pool(unit: PopulationUnit, perceived: IntArray) -> IntArray:
     """Cells a group could mention: seen this year, lived in recently, or recently heard about.
 
     "Lived in" is the group's own residence within its memory horizon (at most one cell per
@@ -337,7 +367,7 @@ def report_pool(unit: PopulationUnit, cognition: Cognition, world: WorldGrid) ->
     lineage has been exploring.
     """
     lived = np.fromiter(unit.recent_residence, dtype=np.int64, count=len(unit.recent_residence))
-    return np.concatenate([perceived_cells(unit, cognition, world), lived, unit.report_cells])
+    return np.concatenate([perceived, lived, unit.report_cells])
 
 
 def receive_reports_batch(
@@ -408,6 +438,40 @@ def receive_reports(
     return patches[0] if patches else None
 
 
+def candidate_encounters(
+    units: Sequence[PopulationUnit], neighborhoods: IntArray
+) -> tuple[IntArray, IntArray]:
+    """All ``(receiver, partner)`` index pairs that may meet this year, in draw order.
+
+    Order: receivers in unit order; for each, the cells of its neighborhood in ascending id
+    order; within a cell, partners in unit order. A unit is never its own partner and only
+    same-species groups meet. This is the order of the nested loop over receivers, cells and
+    co-resident units, so drawing one uniform per pair reproduces its draws exactly.
+    """
+    n = len(units)
+    if n == 0:
+        empty = np.zeros(0, dtype=np.int64)
+        return empty, empty
+    cell = np.array([u.cell for u in units], dtype=np.int64)
+    species = {sid: k for k, sid in enumerate(sorted({u.species_id for u in units}))}
+    code = np.array([species[u.species_id] for u in units])
+    by_cell = np.argsort(cell, kind="stable")  # unit order within each cell
+    sorted_cells = cell[by_cell]
+    n_cells = neighborhoods.shape[0]
+    first = np.searchsorted(sorted_cells, np.arange(n_cells), side="left")
+    count = np.searchsorted(sorted_cells, np.arange(n_cells), side="right") - first
+    slots = neighborhoods[cell]  # (units, neighborhood size), -1 = padding
+    valid = slots >= 0
+    slot_cells = np.where(valid, slots, 0)
+    lengths = np.where(valid, count[slot_cells], 0).ravel()
+    offsets = first[slot_cells].ravel()
+    receiver = np.repeat(np.repeat(np.arange(n), slots.shape[1]), lengths)
+    within = np.arange(receiver.size) - np.repeat(np.cumsum(lengths) - lengths, lengths)
+    partner = by_cell[np.repeat(offsets, lengths) + within]
+    keep = (partner != receiver) & (code[partner] == code[receiver])
+    return receiver[keep], partner[keep]
+
+
 @model_rule(
     name="neighbor_knowledge_sharing",
     version="2.0",
@@ -433,51 +497,47 @@ class KnowledgeSharingSubsystem:
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[BeliefPatch]:
         """Collect what each unit learns from neighbors (based on pre-sharing beliefs).
 
-        Encounters are drawn unit by unit in a fixed order (one draw per candidate pair);
-        report selection and receipt then run once for all units.
+        Each candidate pair (receiver, a same-species group in the same or an adjacent cell)
+        meets with the receiver's sharing probability, one independent draw per pair, in the
+        order of :func:`candidate_encounters`; report selection and receipt run once for
+        all units.
         """
         rng = ctx.rng.stream(Streams.KNOWLEDGE_SHARING)
-        by_cell = state.units_by_cell()
         world = state.world
-        sender_index: dict[str, int] = {}
-        senders: list[PopulationUnit] = []
-        receivers: list[tuple[str, BeliefMap]] = []
-        pair_receiver: list[int] = []
-        pair_sender: list[int] = []
-        for unit in state.units.values():
-            probability = ctx.species(unit.species_id).social.knowledge_sharing_probability
-            receiver = len(receivers)
-            for cell in world.cells_within(unit.cell, 1):
-                for other in by_cell.get(cell, []):
-                    if other is unit or other.species_id != unit.species_id:
-                        continue
-                    if rng.random() < probability:
-                        index = sender_index.get(other.id)
-                        if index is None:
-                            index = sender_index[other.id] = len(senders)
-                            senders.append(other)
-                        pair_receiver.append(receiver)
-                        pair_sender.append(index)
-            if pair_receiver and pair_receiver[-1] == receiver:
-                receivers.append((unit.id, unit.beliefs))
-        if not pair_receiver:
+        units = list(state.units.values())
+        receiver, sender = candidate_encounters(units, ctx.static.neighborhood_table(1))
+        if receiver.size == 0:
             return []
+        probability = np.array(
+            [ctx.species(u.species_id).social.knowledge_sharing_probability for u in units]
+        )
+        met = rng.random(receiver.size) < probability[receiver]
+        receiver, sender = receiver[met], sender[met]
+        if receiver.size == 0:
+            return []
+        receiver_ids, pair_receiver = np.unique(receiver, return_inverse=True)
+        first_seen = np.unique(sender, return_index=True)[1]
+        sender_ids = sender[np.sort(first_seen)]  # in order of first encounter
+        position = np.empty(len(units), dtype=np.int64)
+        position[sender_ids] = np.arange(sender_ids.size)
+        pair_sender = position[sender]
+        senders = [units[i] for i in sender_ids.tolist()]
+        receivers = [(units[i].id, units[i].beliefs) for i in receiver_ids.tolist()]
         inputs = []
         for sender in senders:
             profile = ctx.species(sender.species_id)
             inputs.append(
                 SenderInputs(
                     sender,
-                    report_pool(sender, profile.cognition, world),
+                    report_pool(
+                        sender,
+                        ctx.static.perceived_cells(
+                            sender.species_id, sender.cell, profile.cognition
+                        ),
+                    ),
                     profile.cognition.memory_years,
                     profile.social_information,
                 )
             )
         table = select_reports_batch(inputs, state.year, world.n_cells)
-        return receive_reports_batch(
-            receivers,
-            np.asarray(pair_receiver, dtype=np.int64),
-            np.asarray(pair_sender, dtype=np.int64),
-            table,
-            world.n_cells,
-        )
+        return receive_reports_batch(receivers, pair_receiver, pair_sender, table, world.n_cells)

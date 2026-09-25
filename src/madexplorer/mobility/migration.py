@@ -525,36 +525,44 @@ class MigrationSubsystem:
         best = choose_destination(prepared.candidates, scores, unit.cell, rng)
         if best is None:
             return None
-        position = {int(c): i for i, c in enumerate(prepared.candidates.tolist())}
-        gain = float(scores[position[best]] - scores[position[unit.cell]])
+        candidates = prepared.candidates
+        gain = float(scores[candidates == best][0] - scores[candidates == unit.cell][0])
         hazard = migration_probability(gain, prepared.behavior)
         if unit.id in ctx.trace_units:
-
-            def components(cell: int) -> dict[str, float]:
-                return destination_components(
-                    unit,
-                    cell,
-                    prepared.costs,
-                    state.year,
-                    prepared.memory_years,
-                    prepared.behavior,
-                    float(state.world.water_access[cell]),
-                    prepared.confidence_decay,
-                    prepared.direct_confidence,
-                )
-
-            ctx.events.emit(
-                state.year,
-                "trace_migration",
-                unit_id=unit.id,
-                current_cell=list(state.world.coords(unit.cell)),
-                best_cell=list(state.world.coords(best)),
-                candidates=int(prepared.candidates.size),
-                current={k: round(v, 3) for k, v in components(unit.cell).items()},
-                best={k: round(v, 3) for k, v in components(best).items()},
-                final_hazard=round(hazard, 4),
-            )
+            self._trace(prepared, best, hazard, state, ctx)
         return MigrationDecision(best, hazard, int(prepared.candidates.size), prepared.carry_kcal)
+
+    @staticmethod
+    def _trace(
+        prepared: _Prepared, best: int, hazard: float, state: SimulationState, ctx: StepContext
+    ) -> None:
+        """Emit the utility components behind one unit's decision (traced units only)."""
+        unit = prepared.unit
+
+        def components(cell: int) -> dict[str, float]:
+            return destination_components(
+                unit,
+                cell,
+                prepared.costs,
+                state.year,
+                prepared.memory_years,
+                prepared.behavior,
+                float(state.world.water_access[cell]),
+                prepared.confidence_decay,
+                prepared.direct_confidence,
+            )
+
+        ctx.events.emit(
+            state.year,
+            "trace_migration",
+            unit_id=unit.id,
+            current_cell=list(state.world.coords(unit.cell)),
+            best_cell=list(state.world.coords(best)),
+            candidates=int(prepared.candidates.size),
+            current={k: round(v, 3) for k, v in components(unit.cell).items()},
+            best={k: round(v, 3) for k, v in components(best).items()},
+            final_hazard=round(hazard, 4),
+        )
 
     def decide(
         self,
@@ -571,41 +579,96 @@ class MigrationSubsystem:
         return self._finish(prepared, scores, state, ctx, rng)
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Relocation]:
-        """Decide which units move where this year (scores for all units computed at once)."""
+        """Decide which units move where this year (all units scored and chosen at once).
+
+        Equivalent to deciding unit by unit in order: the best destination is the first
+        maximum excluding the current cell, the hazard is :func:`migration_probability`, and
+        each unit with a decision consumes one uniform draw in unit order. An exact tie (which
+        needs a random tie-break draw before that unit's move draw) sends the year through
+        the sequential path, so the draw order is always the same.
+        """
         rng = ctx.rng.stream(Streams.MIGRATION)
         prepared = [p for u in state.units.values() if (p := self._prepare(u, state, ctx))]
+        if not prepared:
+            return []
+        blocks = self._scores(prepared, state.year, state.world.water_access)
+        counts = np.array([p.candidates.size for p in prepared])
+        starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
+        owner = np.repeat(np.arange(len(prepared)), counts)
+        cells = np.concatenate([p.candidates for p in prepared])
+        scores = np.concatenate([b[0] for b in blocks])
+        ratios = np.concatenate([b[1] for b in blocks])
+        staying = cells == np.array([p.unit.cell for p in prepared])[owner]
+        values = np.where(staying, -np.inf, scores)
+        best_value = np.maximum.reduceat(values, starts)
+        decided = np.isfinite(best_value)
+        is_best = (values == best_value[owner]) & decided[owner]
+        if (np.add.reduceat(is_best, starts)[decided] > 1).any():
+            return self._evaluate_sequentially(prepared, blocks, state, ctx, rng)
+        best_rows = np.flatnonzero(is_best)  # one per decided unit, in unit order
+        home_rows = np.flatnonzero(staying)  # one per unit
+        chosen = np.flatnonzero(decided)
+        gains = scores[best_rows] - scores[home_rows[chosen]]
+        draws = rng.random(chosen.size)
         proposals: list[Relocation] = []
-        home_ratios: dict[int, list[float]] = {}
-        behaviors: dict[int, MigrationBehavior] = {}
-        for item, (scores, ratios) in zip(
-            prepared, self._scores(prepared, state.year, state.world.water_access), strict=True
-        ):
-            unit = item.unit
-            decision = self._finish(item, scores, state, ctx, rng)
-            if decision is not None:
-                key = id(item.behavior)
-                behaviors[key] = item.behavior
-                home_ratios.setdefault(key, []).append(
-                    float(ratios[item.candidates == unit.cell][0])
-                )
-            if decision is None or rng.random() >= decision.hazard:
-                continue
-            cost = item.costs.reachable[decision.destination]
-            travel = unit.population * ctx.species(unit.species_id).movement.travel_kcal_per_km
-            proposals.append(
-                Relocation(
-                    unit.id,
-                    unit.cell,
-                    decision.destination,
-                    cost,
-                    travel * cost,
-                    decision.hazard,
-                    decision.carry_kcal,
-                )
-            )
-        for key, values in home_ratios.items():
-            ratio = np.asarray(values)
-            flat = (food_utility_slope(ratio, behaviors[key]) < SATURATED_SLOPE) & (ratio > 1.0)
-            ctx.ledger.migration_decisions += ratio.size
-            ctx.ledger.food_saturated_decisions += int(flat.sum())
+        for k, index in enumerate(chosen.tolist()):
+            item = prepared[index]
+            destination = int(cells[best_rows[k]])
+            hazard = migration_probability(float(gains[k]), item.behavior)
+            if item.unit.id in ctx.trace_units:
+                self._trace(item, destination, hazard, state, ctx)
+            if draws[k] < hazard:
+                proposals.append(self._relocation(item, destination, hazard, ctx))
+        self._record_saturation(prepared, chosen, ratios[home_rows[chosen]], ctx)
         return proposals
+
+    def _evaluate_sequentially(
+        self,
+        prepared: Sequence[_Prepared],
+        blocks: Sequence[tuple[FloatArray, FloatArray]],
+        state: SimulationState,
+        ctx: StepContext,
+        rng: np.random.Generator,
+    ) -> list[Relocation]:
+        """Unit-by-unit decisions (used when a tie-break draw is needed)."""
+        proposals: list[Relocation] = []
+        chosen: list[int] = []
+        home_ratios: list[float] = []
+        for index, (item, (scores, ratios)) in enumerate(zip(prepared, blocks, strict=True)):
+            decision = self._finish(item, scores, state, ctx, rng)
+            if decision is None:
+                continue
+            chosen.append(index)
+            home_ratios.append(float(ratios[item.candidates == item.unit.cell][0]))
+            if rng.random() < decision.hazard:
+                proposals.append(self._relocation(item, decision.destination, decision.hazard, ctx))
+        self._record_saturation(
+            prepared, np.array(chosen, dtype=np.int64), np.array(home_ratios), ctx
+        )
+        return proposals
+
+    @staticmethod
+    def _relocation(
+        item: _Prepared, destination: int, hazard: float, ctx: StepContext
+    ) -> Relocation:
+        unit = item.unit
+        cost = item.costs.reachable[destination]
+        travel = unit.population * ctx.species(unit.species_id).movement.travel_kcal_per_km
+        return Relocation(
+            unit.id, unit.cell, destination, cost, travel * cost, hazard, item.carry_kcal
+        )
+
+    @staticmethod
+    def _record_saturation(
+        prepared: Sequence[_Prepared], chosen: IntArray, home_ratio: FloatArray, ctx: StepContext
+    ) -> None:
+        """Count decisions whose food utility is flat at home (diagnostic)."""
+        if chosen.size == 0:
+            return
+        behaviors = [prepared[i].behavior for i in chosen.tolist()]
+        for behavior in {id(b): b for b in behaviors}.values():
+            rows = np.array([b is behavior for b in behaviors])
+            ratio = home_ratio[rows]
+            flat = (food_utility_slope(ratio, behavior) < SATURATED_SLOPE) & (ratio > 1.0)
+            ctx.ledger.migration_decisions += int(ratio.size)
+            ctx.ledger.food_saturated_decisions += int(flat.sum())

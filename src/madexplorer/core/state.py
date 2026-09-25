@@ -2,6 +2,8 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -19,6 +21,12 @@ from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import SpeciesProfile
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
+
+if TYPE_CHECKING:
+    from madexplorer.core.static import StaticContext
+    from madexplorer.economy.foraging import ForageAccess
+
+CapabilityMap = Mapping[Capability, float]
 
 
 @dataclass(eq=False)
@@ -92,11 +100,50 @@ class StepContext:
     rng: RngManager
     ids: IdAllocator
     events: EventLog
-    tables: Mapping[str, LifeTables]
-    movement: Mapping[str, MovementModel]
+    static: "StaticContext"
     trace_units: frozenset[str]
     knowledge: KnowledgeModel | None = None
     ledger: TickLedger = field(default_factory=TickLedger)
+    # Immutable capability maps per technology set, shared across steps of a run.
+    capability_cache: dict[frozenset[str], CapabilityMap] = field(default_factory=dict)
+    _crop_potential: FloatArray | None = None
+
+    @property
+    def tables(self) -> Mapping[str, LifeTables]:
+        """Life tables per species (static)."""
+        return self.static.tables
+
+    @property
+    def movement(self) -> Mapping[str, MovementModel]:
+        """Movement models per species (static; reachability cached lazily)."""
+        return self.static.movement
+
+    @property
+    def forage(self) -> Mapping[str, "ForageAccess"]:
+        """Static foraging access and return rates per species."""
+        return self.static.forage
+
+    @property
+    def arable_ha(self) -> FloatArray:
+        """Cultivable hectares per cell (static)."""
+        return self.static.arable_ha
+
+    def crop_potential(self, state: "SimulationState") -> FloatArray:
+        """This year's potential crop yield per hectare, computed once per step.
+
+        Soil and climate change only in the environment subsystems at the start of a step,
+        so farming and field planning see the same values.
+        """
+        if self._crop_potential is None:
+            from madexplorer.economy.agriculture import crop_potential_kcal_per_ha
+
+            self._crop_potential = crop_potential_kcal_per_ha(
+                state.world,
+                state.climate,
+                state.ecology.soil_nutrients,
+                self.scenario.config.agriculture,
+            )
+        return self._crop_potential
 
     @property
     def mechanisms(self) -> MechanismsConfig:
@@ -107,15 +154,22 @@ class StepContext:
         """Species profile by id."""
         return self.scenario.species[species_id]
 
-    def capabilities(self, unit: PopulationUnit) -> dict[Capability, float]:
-        """Technology capabilities of a unit, honoring the storage/cultivation switches."""
-        caps = (
-            dict(self.knowledge.capabilities(unit.technologies))
-            if self.knowledge
-            else default_capabilities()
-        )
-        if not self.mechanisms.cultivation:
-            caps["crop_yield"] = 0.0
-        if not self.mechanisms.storage:
-            caps["storage_retention"] = 0.0
-        return caps
+    def capabilities(self, unit: PopulationUnit) -> CapabilityMap:
+        """Technology capabilities of a unit, honoring the storage/cultivation switches.
+
+        Read-only and shared: one mapping per technology set for the whole run.
+        """
+        cached = self.capability_cache.get(unit.technologies)
+        if cached is None:
+            caps = (
+                dict(self.knowledge.capabilities(unit.technologies))
+                if self.knowledge
+                else default_capabilities()
+            )
+            if not self.mechanisms.cultivation:
+                caps["crop_yield"] = 0.0
+            if not self.mechanisms.storage:
+                caps["storage_retention"] = 0.0
+            cached = MappingProxyType(caps)
+            self.capability_cache[unit.technologies] = cached
+        return cached

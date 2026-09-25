@@ -288,3 +288,29 @@ def test_smooth_forms_keep_a_food_gradient_where_the_cap_is_flat() -> None:
 def test_saturating_food_utility_is_bounded() -> None:
     behavior = _simulator(food_utility="saturating").scenario.species["human"].migration
     assert food_utility(np.array([1e6]), behavior)[0] <= 1.0
+
+
+def test_batched_decisions_equal_unit_by_unit_decisions_and_draws() -> None:
+    from madexplorer.core.rng import Streams
+    from tests.conftest import mvp2_scenario_dict
+
+    sim = Simulator(Scenario.from_dict(mvp2_scenario_dict(n_years=200), base_dir=ROOT))
+    subsystem = MigrationSubsystem()
+    compared = 0
+    for _ in range(200):
+        sim.step()
+        ctx = sim.context()
+        rng = ctx.rng.stream(Streams.MIGRATION)
+        before = rng.bit_generator.state
+        batched = subsystem.evaluate(sim.state, ctx)
+        after = rng.bit_generator.state
+        rng.bit_generator.state = before
+        prepared = [
+            p for u in sim.state.units.values() if (p := subsystem._prepare(u, sim.state, ctx))
+        ]
+        blocks = subsystem._scores(prepared, sim.state.year, sim.state.world.water_access)
+        sequential = subsystem._evaluate_sequentially(prepared, blocks, sim.state, ctx, rng)
+        assert rng.bit_generator.state == after
+        assert batched == sequential
+        compared += len(prepared)
+    assert compared > 100

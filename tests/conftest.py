@@ -78,19 +78,7 @@ def knowledge_model() -> "KnowledgeModel":
 
 def step_context(sim: "Simulator") -> "StepContext":
     """A step context for calling one subsystem directly on a simulator's current state."""
-    from madexplorer.core.state import StepContext
-
-    return StepContext(
-        year=sim.state.year,
-        scenario=sim.scenario,
-        rng=sim.rng,
-        ids=sim.ids,
-        events=sim.events,
-        tables=sim.tables,
-        movement=sim.movement,
-        trace_units=frozenset(),
-        knowledge=sim.knowledge,
-    )
+    return sim.context()
 
 
 def replay_key(metrics: list[dict[str, float | int]]) -> list[tuple[str, ...]]:

@@ -52,11 +52,25 @@ def access_and_returns(
     return plant_access, game_access, plant_return, game_return
 
 
-def accessible_food_kcal(state: SimulationState, foraging: Foraging) -> FloatArray:
+@dataclass(frozen=True, eq=False)
+class ForageAccess:
+    """Static per-cell foraging access and return rates for one species."""
+
+    plant_access: FloatArray
+    game_access: FloatArray
+    plant_return: FloatArray
+    game_return: FloatArray
+
+    def as_tuple(self) -> tuple[FloatArray, FloatArray, FloatArray, FloatArray]:
+        """``(plant_access, game_access, plant_return, game_return)``."""
+        return self.plant_access, self.game_access, self.plant_return, self.game_return
+
+
+def accessible_food_kcal(state: SimulationState, access: ForageAccess) -> FloatArray:
     """Accessible wild food per cell for a species (what foragers can perceive and take)."""
-    plant_access, game_access, _, _ = access_and_returns(state.world, foraging)
     food: FloatArray = (
-        state.ecology.plant_stock_kcal * plant_access + state.ecology.game_stock_kcal * game_access
+        state.ecology.plant_stock_kcal * access.plant_access
+        + state.ecology.game_stock_kcal * access.game_access
     )
     return food
 
@@ -95,6 +109,41 @@ def _marginal_return(
     return marginal
 
 
+SOLVER_TOLERANCE = 1e-12  # relative harvest error |H(E) - target| / target at convergence
+SOLVER_MAX_NEWTON = 50
+
+
+def _effort_fraction(
+    stock: tuple[float, float], returns: tuple[float, float], capacity: float, target: float
+) -> float:
+    """Fraction of labor whose harvest meets ``target`` (harvest at full labor exceeds it).
+
+    Newton's method on effort, started at zero effort: harvest is increasing and concave in
+    effort, so the iterates rise monotonically to the root without overshooting and never
+    visit the flat, depleted region beyond it; typically ~5 steps reach the tolerance.
+    Numerical approximation of the exact root, as precise as the 40-step bisection it
+    replaces (differences <= ~2e-12 relative on recorded run inputs; objective/status.md
+    P4). Falls back to that bisection if Newton has not converged.
+    """
+    effort = 0.0
+    for _ in range(SOLVER_MAX_NEWTON):
+        gap = sum(_harvest(stock, returns, effort)) - target
+        if abs(gap) <= SOLVER_TOLERANCE * target:
+            return effort / capacity
+        slope = _marginal_return(stock, returns, effort)
+        if slope <= 0:
+            break
+        effort = min(max(effort - gap / slope, 0.0), capacity)
+    lo, hi = 0.0, 1.0
+    for _ in range(40):
+        mid = 0.5 * (lo + hi)
+        if sum(_harvest(stock, returns, capacity * mid)) >= target:
+            hi = mid
+        else:
+            lo = mid
+    return hi
+
+
 @dataclass(frozen=True)
 class CellForagingOutcome:
     """Result of groups foraging one shared pool."""
@@ -107,7 +156,7 @@ class CellForagingOutcome:
 
 @model_rule(
     name="satisficing_group_foraging",
-    version="1.1",
+    version="1.2",
     rationale=(
         "Co-located groups apply the same fraction of their labor, just enough to meet their "
         "combined requirement (net of crops) plus a surplus target; harvest is shared by effective "
@@ -136,14 +185,7 @@ def cell_harvest(
         )
     fraction = 1.0
     if sum(_harvest(stock, returns, capacity)) > target_kcal:
-        lo, hi = 0.0, 1.0
-        for _ in range(40):
-            mid = 0.5 * (lo + hi)
-            if sum(_harvest(stock, returns, capacity * mid)) >= target_kcal:
-                hi = mid
-            else:
-                lo = mid
-        fraction = hi
+        fraction = _effort_fraction(stock, returns, capacity, target_kcal)
     removal = np.array(_harvest(stock, returns, capacity * fraction))
     shares: FloatArray = removal.sum() * effective / capacity
     marginal = _marginal_return(stock, returns, capacity * fraction)
@@ -202,10 +244,7 @@ class ForagingSubsystem:
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[CellHarvest]:
         """Compute harvests; groups of different species in one cell forage in id order."""
         proposals: list[CellHarvest] = []
-        access = {
-            sid: access_and_returns(state.world, profile.foraging)
-            for sid, profile in ctx.scenario.species.items()
-        }
+        access = {sid: forage.as_tuple() for sid, forage in ctx.forage.items()}
         plant_left = state.ecology.plant_stock_kcal.copy()
         game_left = state.ecology.game_stock_kcal.copy()
         for cell, units in state.units_by_cell().items():

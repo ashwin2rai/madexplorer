@@ -3,13 +3,88 @@
 **Last updated:** 2026-09-24
 **Code at time of writing:** `adc1a09` plus uncommitted MVP 2 cleanup changes (the baseline
 manifest records `source_tree_sha256`, which identifies the exact sources).
-**Current phase:** MVP 2 final stabilization pass (Section 0). The earlier cleanup items 1-11
+**Current phase:** MVP 2 final stabilization pass (Section 0), paused in the middle of P4
+(Section 0, "P4" entry lists what is done and what remains). The earlier cleanup items 1-11
 are done (Section 4); the frozen MVP 2 baseline has not been recorded (Section 9) and is now
 the last step of the stabilization pass.
 
 This file records what exists, what was learned while building it, what is broken or
 unfinished, and what to do next. The specification is `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`;
 section numbers below (§) refer to it.
+
+---
+
+## Session handover: working agreements and practical notes
+
+Read this first when resuming in a new session or VM. Nothing outside this repository
+(assistant memory, scratch files) survives between sessions.
+
+### How the user wants work done
+
+- **Phase by phase with checkpoints.** Write the plan into this file before starting a large
+  task. Stop at the end of each phase (or sub-step), summarize, and ask whether to proceed.
+  **The user commits; do not commit or tag unless asked.** Do not work for hours without a
+  checkpoint or leave many uncommitted intermediate files.
+- **Decisions in prose, not multiple-choice prompts.** For modeling decisions, list the
+  options with a recommendation in plain text and let the user reply. The user rejected the
+  multiple-choice question tool twice and answered with nuanced conditions, e.g. "option 1,
+  but don't re-record the golden fixtures until X".
+- **Scientific stance.** Never tune coefficients toward a desired trajectory (for example,
+  colonization speed). Prefer reformulations that are both more plausible and cheaper. Label
+  every change exact, rounding-level, numerical approximation, or model change. Validate
+  behavioral changes with paired ensembles (same seeds) and document the results here.
+- **Performance changes must preserve behavior** unless explicitly isolated and validated:
+  - the golden fixtures stay unchanged for pure optimizations;
+  - RNG draws may be batched only when the values and their order are identical; replacing
+    several independent random events with fewer is a model change needing an experiment;
+  - the 2× speed target is a stretch goal, not a reason to change behavior.
+- **Keep the repository runnable** (`make check` green) and keep status entries factual,
+  including failures and retractions (e.g. P2 found that an earlier claim in this file was
+  wrong).
+
+### Environment and tooling notes
+
+- Setup: `make install` (uv; `UV_LINK_MODE=copy` is set in the Makefile because the uv cache
+  is on another filesystem in Codespaces). Python 3.13 via `.python-version`.
+- Golden fixtures (`tests/regression/golden/`) carry a numeric-platform signature (numpy
+  version, CPU SIMD dispatch). **On a new VM with a different CPU they are skipped, not
+  failed.** In that case, record local fixtures with `make golden` before relying on exact
+  replay, and do not commit them over the reference ones.
+- `make test` is fast (~15 s); `make test-stat` takes ~18 min on 2 cores.
+- **Benchmark on CPU time, not wall time.** On the shared 2-core codespace, wall time varied
+  up to 2× between identical runs (background VS Code processes). `madexplorer bench`
+  reports both; compare `cpu`/`cpu_seconds`.
+- Benchmarks and ensembles spawn fresh processes that import from `src/`. **Do not edit
+  source files while a benchmark is running**; spawned cases would pick up half-edited code.
+  To measure a reference version, use a git worktree at that commit (`git worktree add
+  --detach <dir> <commit>`, then `uv sync` inside it) and run the benchmark there.
+- Run only one heavy job at a time on 2 cores; tests or profiling alongside a benchmark
+  distort its timings.
+- A `Simulator` holds `MappingProxyType` capability maps; clear `sim.capability_cache` before
+  pickling one.
+- Paired comparisons: `madexplorer compare ensembles/<a> ensembles/<b>` (same seeds).
+  Parameter overrides: `--set path=value`, e.g.
+  `--set species.human.cognition.observation_noise_sigma=0.5`,
+  `--set mechanisms.direct_observation_shrinkage=false`,
+  `--set species.human.migration.food_utility=capped_log`.
+- `ensembles/` and `runs/` are git-ignored: ensemble results cited in this file are not in
+  the repository and must be regenerated if needed (commands and settings are given with each
+  result). `benchmarks/perf/*.json` are committed.
+
+### Decisions log for this pass (details in Section 0)
+
+| Phase | Decision (by the user unless noted) |
+|---|---|
+| P0 | Benchmarks come before the belief reform, to get a pre-reform reference |
+| P2 | Food prior for shrinkage = mean of the group's own direct observations; relay confidence decay 0.7 per hop; nothing older than the memory horizon is passed on |
+| P3 | No 12-cell attention cap (reachability already bounds candidates to ~20); `max_considered_destinations: null`, with the utility-blind cap kept for future species |
+| P3 | Direct-observation shrinkage via precision weighting `tau^2/(tau^2+sigma^2)` (not `1/(1+sigma^2)`), made switchable, measured, then **adopted** (on by default) |
+| P3 | Slower colonization under shrinkage is treated as diagnostic, not tuned back |
+| P3b | Hard food cap reviewed; smooth forms compared; **`log1p` selected** (assistant's selection on mechanism grounds, user-delegated); `log` kept as a diagnostic |
+| P3 | Golden fixtures re-recorded once, after both P3 decisions |
+| P3 | Aggregation population test: temporary **strict** xfail linked to P6; tolerance not loosened |
+| P4 | Newton foraging solver accepted as a documented numerical approximation (golden re-recorded for it only) |
+| P4 | Inherited familiarity: investigate first; any bounded/decaying reformulation is a separate model change, not part of P4 |
 
 ---
 
@@ -51,7 +126,7 @@ network; distributional state: later strata) in every new data structure.
 | P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation (exact on all golden fixtures and the 1,000-year seed 0) | **done** |
 | P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** (small measured effect) | **done** |
 | P3 | Revised after P2 (reachability already bounds candidates to ~20): no hard attention cap for humans (`max_considered_destinations: null`, utility-blind nearest-cells cap available for future species); switchable precision-weighted shrinkage of direct observations `q = tau^2/(tau^2 + sigma^2)`; perception-noise experiment with and without it; then review of the capped food utility | **model changes** (shrinkage on; food utility `log1p`) | **done** |
-| P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | planned |
+| P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | **in progress (paused 2026-09-25)** |
 | P5 | Agriculture (20-25): expected future tenure `p(1-p^H)/(1-p)` from the unit's current stay probability; review tech × knowledge (candidate: knowledge sets distance to the technology frontier, `e_min + (1-e_min)K/(K+K_half)`, with `e_min` justified behaviorally, not fitted); small experimental cultivation share (2-5% labor) when crop returns are within a band of foraging, as generic subsistence exploration; scenarios A (abundant frontier) and B (intensification pressure); paired cultivation on/off ablation on B as a statistical test replacing the strict xfail | **model changes** + validation | planned |
 | P6 | Aggregation rerun (26): off / moderate / aggressive, paired seeds, documented approximation errors | experiment | planned |
 | P7 | Freeze (31): canonical scenarios, 32-seed × 1,000-year baseline under `baselines/mvp2`, final status, accepted limitations, git tag `mvp2` (tag only on the user's approval) | release | planned |
@@ -345,8 +420,84 @@ validation, remaining concerns.)
   With 8 units per cell, final population is 2.6× the aggregation-off reference (mean paired
   log ratio 0.97, tolerance 0.35, all 8 seeds higher). Under the new migration model the
   "8 units per cell ≈ reference" approximation from Section 7.1 no longer holds. The
-  tolerance was not loosened; this is P6's subject. Aggregation is not used in reference
-  runs.
+  tolerance was not loosened. **Marked a temporary strict xfail linked to P6** (user
+  decision): aggregation off is the canonical reference; P6 either establishes a defensible
+  approximation range or documents aggregation as performance-only for MVP 2. The
+  cultivation-timing case of the same test still passes and is not marked.
+
+#### P4. Remaining hotspots (IN PROGRESS, paused 2026-09-25)
+
+**Rules for P4 (user):**
+- Behavior-preserving unless a change is isolated and experimentally justified.
+- Golden fixtures stay unchanged for pure optimizations.
+- RNG semantics preserved: draws may be batched only when they are identical; reformulating
+  stochastic decisions needs a separate experiment.
+- Inherited familiarity is investigated, not silently pruned.
+- The 2× target is a stretch goal, never a reason to change behavior.
+
+**Reference for P4.** The P3 model is a larger simulation than the pre-P3 one: log1p
+colonizes more of the map. **1,000-year seed 0 at P4 start: 227.8 s CPU (237.9 s wall),
+35,010 people, 1,376 final units** (`benchmarks/perf/p4_start_seed0_1000y.json`), versus
+168 s / 1,165 units before P3. Per-unit cost is similar (0.37 ms/unit/tick late), so a 2×
+target is ≈ 114 s on this machine. Windows:
+
+| Window | Years | ms/tick | Units |
+|---|---|---|---|
+| Early | 101-150 | 5.5 | 12 |
+| Middle | 451-500 | 167 | 469 |
+| Late | 951-1000 | 490 | 1,325 |
+
+The synthetic reference is `p4_start_synthetic.json`. Its 500-unit case overlapped with a
+test run, so compare CPU time there.
+
+**Done so far (all tests green, 148 fast tests):**
+
+| Item | Change | Kind | Verified |
+|---|---|---|---|
+| 1 | `core/static.py` `StaticContext`: world, life tables, movement models (lazy reachability caches), per-species `ForageAccess`, arable ha, cached perceived cells per (species, cell), padded neighborhood tables. Keyed by a hash of world/ecology/agriculture/species config (not seed or horizon). `Simulator(static=...)` checks the key; ensemble workers reuse one via `shared_static_context` | exact | golden unchanged; `tests/test_static.py` (reuse across seeds reproduces fresh runs) |
+| 2 | `StepContext.crop_potential()` memoized per step (farming + field planning); arable ha from the static context | exact | golden unchanged |
+| 3 | `StepContext.capabilities()` returns one shared read-only mapping per technology set (`capability_cache`), no per-call dict copy | exact | golden unchanged. MappingProxyType is not picklable: clear `sim.capability_cache` before pickling a Simulator |
+| 4a | Migration decisions batched: vectorized first-maximum argmax; the hazard still uses the scalar `migration_probability` (bit-identical); one `rng.random(n)` for all move draws in unit order. Any exact tie sends the year through the sequential path (`_evaluate_sequentially`) to keep the draw order | exact | golden unchanged; `test_batched_decisions_equal_unit_by_unit_decisions_and_draws` (same proposals, same RNG state) |
+| 4b | Perception batched: one `standard_normal` call for all units (verified identical to sequential draws); food prior per segment (`food_prior_batch`) | rounding-level: batched mean/var differ from per-unit `np.mean`/`np.var` by ≤ 2e-14 relative in about half of cases (pairwise vs sequential summation) | golden unchanged; 1,000-year seed 0 identical |
+| 5 | Sharing partner draws: `candidate_encounters` builds all (receiver, partner) pairs in the nested-loop order with array operations, then draws **one independent uniform per pair** in one `rng.random(n_pairs)` call (same law, same draws) | exact | golden unchanged; `test_candidate_encounters_follow_the_nested_loop_order`. Not benchmarked separately yet |
+| 6 | Foraging effort solver: safeguarded Newton from zero effort (monotone on the concave harvest curve), tolerance `abs(H - T) ≤ 1e-12·T`, falls back to the old 40-step bisection | **numerical approximation** | On 4,280 recorded real solves: max difference from 40-step bisection 2.3e-12 (fraction) and 1.9e-12 (harvest), about bisection's own resolution; 2.5× faster per solve (9.7 vs 24.5 µs); 12-step bisection would err by 5e-4. Hypothesis test against a 60-step bisection. Paired ensemble vs bisection (seeds 0-7, 600 years; `ensembles/p4_newton_dev` vs `p3_food_log1p_s0.3`): statistically equivalent (details below the table). **Golden fixtures re-recorded for this change** |
+| 7 | Light recorder: `MetricsRecorder(light=True)` / `Simulator.run(light=True)` computes only `LIGHT_FIELDS` plus tech shares, no snapshots; `Simulator(record_events=False)` discards events. Ensembles default to light unless runs are saved | exact (model untouched) | **TODO:** a test that light rows equal the same fields of full rows; a CLI `--full-recorder` switch |
+| 8 | `run_ensemble`: explicit `spawn` context; `OMP/OPENBLAS/MKL/VECLIB/NUMEXPR_NUM_THREADS=1` for workers (unless the user set them); persistent workers reuse the static context across seeds | implementation | **TODO:** benchmark ensemble wall time before/after; check that `timed_ensemble`/CLI pass `light` |
+
+Item 6 paired ensemble in detail: identical milestones and colonization to year 300; final
+population −219 (se 145); occupied cells −4.4 (se 3.0); migration +0.0004 (se 0.0005).
+
+**Measured after items 1-4** (1,000-year seed 0; `p4_items1to4_seed0_1000y.json`):
+- The run is identical (35,010 people).
+- CPU 227.8 → 198.7 s.
+- Perception 32.5 → 9.5 s; migration 37.0 → 25.7 s.
+- Middle window 167 → 127 ms/tick; late window 490 → 445 ms/tick.
+- Dev ensemble per-run time (items 1-6): 49.8 → 40.1 s.
+
+**Remaining P4 work, in order:**
+1. The item 7-8 TODOs above.
+2. Benchmark the current state (items 1-8): `madexplorer bench runs ... --seeds 0 --years 1000`
+   and `bench synthetic`, using CPU time. Report subsystem CPU shares before/after, the
+   windows, and RSS.
+3. Next hotspots, from the P4-start profile:
+   - foraging (per-cell Python, now with Newton);
+   - diffusion (`contacts` per unit);
+   - sharing's remaining per-unit work;
+   - demography and the `weighted_count` calls;
+   - fusion (`merge_state`, `rewire_ties`).
+4. **Inherited familiarity investigation** (not pruning):
+   - its runtime and memory share;
+   - whether familiar cells affect migration, beliefs or reports (since P2 they no longer
+     feed report pools, only foraging efficiency);
+   - why it is inherited (fission copies it, fusion takes the max);
+   - whether it acts as cultural geographic knowledge or as immortal map memory. If the
+     latter, propose a bounded or decaying reformulation as a separate model change.
+5. Write up P4 (speedup, and whether each change is exact, approximate or behavioral), then
+   checkpoint.
+
+The scratch artifacts used during P4 (recorded solver inputs, a pickled late-run state) are
+not in the repository. To regenerate solver inputs, wrap `economy.foraging.cell_harvest` to
+record every 20th call's arguments during a 600-year seed-0 run (about 6,300 samples).
 
 ---
 
@@ -358,7 +509,7 @@ make check                           # lint, format check, mypy, fast tests (reg
 make test-stat                       # statistical multi-seed model tests (~10-15 min on 2 cores)
 make golden                          # re-record exact regression fixtures after an INTENDED change
 uv run madexplorer run scenarios/mvp1_sandbox.yaml --years 450 --quiet
-#   reference: population=6706 units=250 occupied_cells=199 (was 7282/286/267 before cleanup)
+#   (the old reference numbers here predate the P2-P4 changes; see the golden fixtures instead)
 uv run madexplorer ensemble scenarios/mvp2_neolithic.yaml --seeds 0:15 --jobs 2 --years 600
 uv run madexplorer compare ensembles/<a> ensembles/<b>        # paired, same seeds
 uv run madexplorer ensemble ... --set resolution.max_units_per_cell=8 --set mechanisms.aggregation=true
@@ -372,7 +523,9 @@ recorded on `numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3`. A
 behavior-preserving change must leave them untouched; an intended model change re-records
 them with `make golden` and says so in the commit. On another numeric platform they skip.
 
-Then pick up at **Section 10, Recommended next steps**.
+Then pick up at **Section 0** (the stabilization pass, currently paused in P4). Sections 1-11
+below describe the state before the pass and are kept for history; where they conflict with
+Section 0, Section 0 is current.
 
 ---
 
@@ -810,7 +963,9 @@ least freeze) the code before recording.
 
 ---
 
-## 10. Recommended next steps (in order)
+## 10. Recommended next steps (in order), superseded by Section 0
+
+*Written before the stabilization pass. The current plan is Section 0.*
 
 1. **Record the MVP 2 baseline** (Section 9).
 2. **Belief memory range** (optional model change): forgetting observations beyond a few

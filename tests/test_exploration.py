@@ -194,3 +194,26 @@ def test_recent_residence_is_bounded_by_the_memory_horizon() -> None:
         unit.note_residence(year % 50, year, memory_years=10)
     assert len(unit.recent_residence) <= 11
     assert min(unit.recent_residence.values()) >= 100 - 1 - 11
+
+
+def test_candidate_encounters_follow_the_nested_loop_order() -> None:
+    from madexplorer.config.loader import Scenario
+    from madexplorer.experiments.benchmark import synthetic_simulator
+    from madexplorer.mobility.exploration import candidate_encounters
+    from tests.conftest import ROOT, mvp2_scenario_dict
+
+    scenario = Scenario.from_dict(mvp2_scenario_dict(n_years=1), base_dir=ROOT)
+    sim = synthetic_simulator(scenario, n_units=300)  # dense: many co-resident groups
+    units = list(sim.state.units.values())
+    by_cell = sim.state.units_by_cell()
+    index = {u.id: k for k, u in enumerate(units)}
+    expected = [
+        (k, index[other.id])
+        for k, unit in enumerate(units)
+        for cell in sim.world.cells_within(unit.cell, 1)
+        for other in by_cell.get(cell, [])
+        if other is not unit and other.species_id == unit.species_id
+    ]
+    receiver, partner = candidate_encounters(units, sim.static.neighborhood_table(1))
+    assert list(zip(receiver.tolist(), partner.tolist(), strict=True)) == expected
+    assert len(expected) > 500

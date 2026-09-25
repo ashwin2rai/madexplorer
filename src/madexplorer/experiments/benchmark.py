@@ -156,10 +156,33 @@ def timed_case(scenario: Scenario) -> dict[str, Any]:
     """Run ``scenario`` once with a per-subsystem time breakdown."""
     sim = Simulator(scenario)
     sim.timings = {}
+    tick_ends: list[float] = []
     started, cpu_started = time.perf_counter(), time.process_time()
-    result = sim.run()
+    result = sim.run(progress=lambda _row: tick_ends.append(time.perf_counter()))
     total = time.perf_counter() - started
     cpu_total = time.process_time() - cpu_started
+    ticks = np.diff(np.array([started, *tick_ends]))
+    units = np.array([int(r["units"]) for r in result.metrics])
+    windows = {}
+    n = ticks.size
+    for label, (lo, hi) in {
+        "early": (0.10, 0.15),
+        "middle": (0.45, 0.50),
+        "late": (0.95, 1.00),
+    }.items():
+        rows = slice(int(lo * n), max(int(hi * n), int(lo * n) + 1))
+        ms = 1000.0 * float(ticks[rows].mean())
+        mean_units = float(units[rows].mean())
+        windows[label] = {
+            "years": [
+                int(result.metrics[rows.start]["year"]),
+                int(result.metrics[rows.stop - 1]["year"]),
+            ],
+            "ms_per_tick": round(ms, 2),
+            "mean_units": round(mean_units, 1),
+            "ms_per_unit_tick": round(ms / max(mean_units, 1.0), 4),
+        }
+    subsystem_total = sum(sim.timings.values())
     unit_years = sum(int(r["units"]) for r in result.metrics)
     return {
         "seed": scenario.config.simulation.seed,
@@ -173,6 +196,11 @@ def timed_case(scenario: Scenario) -> dict[str, Any]:
         "subsystem_seconds": {
             k: round(v, 2) for k, v in sorted(sim.timings.items(), key=lambda kv: -kv[1])
         },
+        "subsystem_share": {
+            k: round(v / subsystem_total, 4)
+            for k, v in sorted(sim.timings.items(), key=lambda kv: -kv[1])
+        },
+        "windows": windows,
         "peak_rss_mb": round(_peak_rss_mb(), 1),
     }
 

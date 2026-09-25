@@ -19,14 +19,16 @@ class Event:
 
 
 class EventLog:
-    """Append-only, in-memory event store for one run."""
+    """Append-only, in-memory event store for one run (``enabled=False`` discards events)."""
 
-    def __init__(self) -> None:
+    def __init__(self, enabled: bool = True) -> None:
         self._events: list[Event] = []
+        self.enabled = enabled
 
     def emit(self, year: int, kind: str, **data: Any) -> None:
         """Record an event of ``kind`` with provenance fields ``data``."""
-        self._events.append(Event(year, kind, data))
+        if self.enabled:
+            self._events.append(Event(year, kind, data))
 
     def __iter__(self) -> Iterator[Event]:
         return iter(self._events)

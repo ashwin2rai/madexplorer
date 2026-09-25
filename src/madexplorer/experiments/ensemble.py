@@ -9,10 +9,13 @@ Comparisons between model variants should reuse the same seeds (paired design).
 import csv
 import json
 import math
+import os
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
+from multiprocessing import get_context
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +24,7 @@ import numpy as np
 from madexplorer.config.loader import Scenario
 from madexplorer.core.provenance import run_manifest
 from madexplorer.core.simulation import SimulationResult, Simulator
+from madexplorer.core.static import shared_static_context
 
 # Farming milestones: first year the farmed share of all food reaches each level.
 FARM_SHARE_THRESHOLDS = (0.1, 0.25, 0.5)
@@ -114,11 +118,14 @@ class _Job:
     seed: int
     n_years: int | None
     save_dir: Path | None
+    light: bool = True
 
 
 def _run_job(job: _Job) -> Row:
     scenario = job.scenario.with_overrides(seed=job.seed, n_years=job.n_years)
-    result = Simulator(scenario).run()
+    light = job.light and job.save_dir is None  # saved runs keep full outputs
+    simulator = Simulator(scenario, static=shared_static_context(scenario), record_events=not light)
+    result = simulator.run(light=light)
     if job.save_dir is not None:
         result.save(job.save_dir / f"seed_{job.seed}")
     return summarize_run(result, job.seed)
@@ -131,9 +138,16 @@ def run_ensemble(
     n_years: int | None = None,
     save_runs_dir: Path | None = None,
     progress: Callable[[Row], None] | None = None,
+    light: bool = True,
 ) -> list[Row]:
-    """Run ``scenario`` once per seed (in ``jobs`` processes); rows are ordered by seed."""
-    work = [_Job(scenario, seed, n_years, save_runs_dir) for seed in seeds]
+    """Run ``scenario`` once per seed (in ``jobs`` processes); rows are ordered by seed.
+
+    ``light`` (default) uses the light metrics recorder and no event log; saved runs always
+    keep full outputs. Worker processes are started with ``spawn``, limited to one BLAS /
+    OpenMP thread each, and persist across seeds, so each builds the static scenario context
+    (world, life tables, reachability) once.
+    """
+    work = [_Job(scenario, seed, n_years, save_runs_dir, light) for seed in seeds]
     rows: list[Row] = []
     if jobs <= 1:
         for job in work:
@@ -141,12 +155,40 @@ def run_ensemble(
             if progress:
                 progress(rows[-1])
     else:
-        with ProcessPoolExecutor(max_workers=jobs) as pool:
+        with (
+            _single_threaded_numerics(),
+            ProcessPoolExecutor(max_workers=jobs, mp_context=get_context("spawn")) as pool,
+        ):
             for row in pool.map(_run_job, work):
                 rows.append(row)
                 if progress:
                     progress(row)
     return sorted(rows, key=lambda r: int(r["seed"]))
+
+
+THREAD_VARIABLES = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+
+
+@contextmanager
+def _single_threaded_numerics() -> Iterator[None]:
+    """One numerics thread per worker process (inherited by spawned workers).
+
+    Variables the user has already set are left alone.
+    """
+    added = [name for name in THREAD_VARIABLES if name not in os.environ]
+    for name in added:
+        os.environ[name] = "1"
+    try:
+        yield
+    finally:
+        for name in added:
+            os.environ.pop(name, None)
 
 
 def aggregate(rows: Sequence[Row]) -> dict[str, dict[str, float]]:

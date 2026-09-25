@@ -5,25 +5,30 @@ import numpy as np
 from madexplorer.config.loader import Scenario
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray, IntArray
-from madexplorer.economy.agriculture import arable_hectares
 from madexplorer.population.health import crowding_hazards
 from madexplorer.population.unit import PopulationUnit
 
 
 class MetricsRecorder:
-    """Collects one metrics row per year and population grids at a fixed interval."""
+    """Collects one metrics row per year and population grids at a fixed interval.
 
-    def __init__(self, scenario: Scenario, snapshot_interval_years: int) -> None:
+    The full recorder (default) is for detailed inspection; ``light=True`` keeps only the
+    per-year fields ensemble summaries use (:data:`LIGHT_FIELDS`) and skips snapshots.
+    """
+
+    def __init__(
+        self, scenario: Scenario, snapshot_interval_years: int, light: bool = False
+    ) -> None:
         self.species_ids = sorted(scenario.species)
         knowledge = scenario.knowledge
         self.domains = tuple(knowledge.domains) if knowledge else ()
         self.technologies = tuple(t.id for t in knowledge.technologies) if knowledge else ()
         self.interval = snapshot_interval_years
+        self.light = light
         self.start_year = scenario.config.simulation.start_year
         self.rows: list[dict[str, float | int]] = []
         self.snapshot_years: list[int] = []
         self.snapshots: list[IntArray] = []
-        self._arable: FloatArray | None = None
 
     def _farming_metrics(
         self,
@@ -37,8 +42,6 @@ class MetricsRecorder:
         Everything is computed from cell totals or summed over units, so splitting identical
         groups into more computational units does not change the values.
         """
-        if self._arable is None:
-            self._arable = arable_hectares(state.world, ctx.scenario.config.agriculture)
         fields = state.cell_fields_ha()
         farmed = fields > 0
         occupied = cell_pop > 0
@@ -60,7 +63,7 @@ class MetricsRecorder:
             "mean_soil_nutrients_farmed": ratio(
                 float((state.ecology.soil_nutrients * fields).sum()), cultivated
             ),
-            "arable_utilization": ratio(cultivated, float(self._arable[farmed].sum())),
+            "arable_utilization": ratio(cultivated, float(ctx.arable_ha[farmed].sum())),
             "cultivated_ha_per_capita": ratio(
                 cultivated, sum(u.population for u in units if u.fields_ha > 0)
             ),
@@ -82,6 +85,8 @@ class MetricsRecorder:
 
     def record(self, state: SimulationState, ctx: StepContext) -> dict[str, float | int]:
         """Compute and store this year's metrics row."""
+        if self.light:
+            return self._record_light(state, ctx)
         units = list(state.units.values())
         sizes = np.array([u.population for u in units], dtype=np.float64)
         population = int(sizes.sum())
@@ -190,3 +195,78 @@ class MetricsRecorder:
         if (state.year - self.start_year) % self.interval == 0:
             self.snapshot(state)
         return row
+
+    def _record_light(self, state: SimulationState, ctx: StepContext) -> dict[str, float | int]:
+        """The ensemble subset of :meth:`record` (same formulas; checked by a test)."""
+        units = list(state.units.values())
+        population = sum(u.population for u in units)
+        ledger = ctx.ledger
+        harvest = ledger.harvest_kcal
+        fields = state.cell_fields_ha()
+        cultivated = float(fields.sum())
+
+        def share(selected: int) -> float:
+            return selected / population if population else 0.0
+
+        crowding = (
+            crowding_hazards(
+                units,
+                {sid: p.health for sid, p in ctx.scenario.species.items()},
+                state.world.cell_area_km2,
+            )
+            if ctx.mechanisms.crowding_mortality
+            else {}
+        )
+        sizes = np.array([u.population for u in units], dtype=np.float64)
+        row: dict[str, float | int] = {
+            "year": state.year,
+            "population": population,
+            "units": len(units),
+            "occupied_cells": int((state.cell_population() > 0).sum()),
+            "crude_death_rate": ledger.deaths * (1000.0 / population if population else 0.0),
+            "migrations": ledger.migrations,
+            "migration_decisions": ledger.migration_decisions,
+            "food_saturated_decisions": ledger.food_saturated_decisions,
+            "farm_share_of_harvest": ledger.farm_harvest_kcal / harvest if harvest else 0.0,
+            "cultivated_ha": float(sum(u.fields_ha for u in units)),
+            "sedentary_share": share(sum(u.population for u in units if u.residence_years >= 10)),
+            "inventions": ledger.inventions,
+            "mean_soil_nutrients_farmed": (
+                float((state.ecology.soil_nutrients * fields).sum()) / cultivated
+                if cultivated > 0
+                else float("nan")
+            ),
+            "mean_crowding_hazard": (
+                float(np.dot([crowding.get(u.id, 0.0) for u in units], sizes) / population)
+                if population
+                else 0.0
+            ),
+            "crowding_death_share": (
+                ledger.crowding_deaths_expected / ledger.deaths if ledger.deaths else 0.0
+            ),
+        }
+        for tech in self.technologies:
+            row[f"tech_share_{tech}"] = share(
+                sum(u.population for u in units if tech in u.technologies)
+            )
+        self.rows.append(row)
+        return row
+
+
+LIGHT_FIELDS = (
+    "year",
+    "population",
+    "units",
+    "occupied_cells",
+    "crude_death_rate",
+    "migrations",
+    "migration_decisions",
+    "food_saturated_decisions",
+    "farm_share_of_harvest",
+    "cultivated_ha",
+    "sedentary_share",
+    "inventions",
+    "mean_soil_nutrients_farmed",
+    "mean_crowding_hazard",
+    "crowding_death_share",
+)  # plus tech_share_<technology> for every technology

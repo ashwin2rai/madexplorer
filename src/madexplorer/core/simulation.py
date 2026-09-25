@@ -13,7 +13,8 @@ from madexplorer.core.ids import IdAllocator
 from madexplorer.core.invariants import check_nonnegative, check_population_accounting, check_units
 from madexplorer.core.provenance import run_manifest
 from madexplorer.core.rng import RngManager, Streams
-from madexplorer.core.state import SimulationState, StepContext
+from madexplorer.core.state import CapabilityMap, SimulationState, StepContext
+from madexplorer.core.static import StaticContext, static_key
 from madexplorer.core.subsystem import Subsystem
 from madexplorer.core.types import IntArray
 from madexplorer.ecology.resources import initial_ecology
@@ -28,15 +29,12 @@ from madexplorer.knowledge.system import KnowledgeModel
 from madexplorer.metrics.recorder import MetricsRecorder
 from madexplorer.mobility.exploration import KnowledgeSharingSubsystem, PerceptionSubsystem
 from madexplorer.mobility.migration import MigrationSubsystem
-from madexplorer.mobility.movement import MovementModel
 from madexplorer.population.demography import DemographySubsystem
 from madexplorer.population.energetics import EnergeticsSubsystem
 from madexplorer.population.groups import ExtinctionSubsystem, FissionSubsystem, FusionSubsystem
 from madexplorer.population.initialization import found_unit
 from madexplorer.resolution.coarsening import CoarseningSubsystem
-from madexplorer.species.life_history import LifeTables
 from madexplorer.world.climate import ClimateYear
-from madexplorer.world.generation import generate_world
 from madexplorer.world.grid import WorldGrid
 from madexplorer.world.subsystems import ClimateSubsystem
 
@@ -105,20 +103,30 @@ class SimulationResult:
 class Simulator:
     """Runs one scenario with one seed."""
 
-    def __init__(self, scenario: Scenario, trace_units: Sequence[str] = ()) -> None:
+    def __init__(
+        self,
+        scenario: Scenario,
+        trace_units: Sequence[str] = (),
+        static: StaticContext | None = None,
+        record_events: bool = True,
+    ) -> None:
         self.scenario = scenario
         config = scenario.config
         self.rng = RngManager(config.simulation.seed)
         self.ids = IdAllocator()
-        self.events = EventLog()
+        self.events = EventLog(enabled=record_events)
         self.trace_units = frozenset(config.output.trace_units) | frozenset(trace_units)
         # Cumulative seconds per subsystem (evaluate + apply) when set to a dict; benchmarks only.
         self.timings: dict[str, float] | None = None
-        self.world = generate_world(config.world, config.ecology)
-        self.tables = {sid: LifeTables.build(p) for sid, p in scenario.species.items()}
-        self.movement = {
-            sid: MovementModel(self.world, p.movement) for sid, p in scenario.species.items()
-        }
+        if static is None:
+            static = StaticContext.build(scenario)
+        elif static.key != static_key(scenario):
+            raise ValueError("static context was built for a different scenario")
+        self.static = static
+        self.world = static.world
+        self.tables = static.tables
+        self.movement = static.movement
+        self.capability_cache: dict[frozenset[str], CapabilityMap] = {}
         self.knowledge = KnowledgeModel(scenario.knowledge) if scenario.knowledge else None
         self.pipeline = build_pipeline(scenario, self.knowledge)
         climate = ClimateYear.base(self.world)
@@ -167,10 +175,10 @@ class Simulator:
             rng=self.rng,
             ids=self.ids,
             events=self.events,
-            tables=self.tables,
-            movement=self.movement,
+            static=self.static,
             trace_units=self.trace_units,
             knowledge=self.knowledge,
+            capability_cache=self.capability_cache,
         )
 
     def step(self) -> StepContext:
@@ -200,12 +208,21 @@ class Simulator:
         return ctx
 
     def run(
-        self, progress: Callable[[dict[str, float | int]], None] | None = None
+        self,
+        progress: Callable[[dict[str, float | int]], None] | None = None,
+        light: bool = False,
     ) -> SimulationResult:
-        """Run the full horizon and return the result."""
+        """Run the full horizon and return the result.
+
+        ``light`` records only the per-year fields ensemble summaries use and no spatial
+        snapshots (the model itself is unaffected).
+        """
         config = self.scenario.config
-        recorder = MetricsRecorder(self.scenario, config.output.spatial_snapshot_interval_years)
-        recorder.snapshot(self.state)
+        recorder = MetricsRecorder(
+            self.scenario, config.output.spatial_snapshot_interval_years, light=light
+        )
+        if not light:
+            recorder.snapshot(self.state)
         started = time.perf_counter()
         for _ in range(config.simulation.n_years):
             ctx = self.step()
