@@ -12,7 +12,9 @@ Two kinds of measurement:
 
 Each case runs in a fresh ``spawn``-ed process so peak RSS belongs to that case only.
 Timings are machine-specific: compare results only against a reference recorded on the
-same machine (the output records the numeric platform).
+same machine (the output records the numeric platform). Wall time on a shared machine is
+sensitive to other load, so reports also give process CPU time, which is the better basis
+for comparisons.
 """
 
 import multiprocessing
@@ -118,11 +120,13 @@ def synthetic_case(
     sim.timings = {}
     unit_counts: list[int] = []
     tick_seconds: list[float] = []
+    cpu_started = time.process_time()
     for _ in range(ticks):
         unit_counts.append(len(sim.state.units))
         started = time.perf_counter()
         sim.step()
         tick_seconds.append(time.perf_counter() - started)
+    cpu_total = time.process_time() - cpu_started
     mean_units = float(np.mean(unit_counts))
     total = float(np.sum(tick_seconds))
     return {
@@ -138,6 +142,7 @@ def synthetic_case(
         "known_cells_final": round(_known_cells(sim), 1),
         "ms_per_tick": round(1000.0 * total / ticks, 2),
         "ms_per_tick_median": round(1000.0 * float(np.median(tick_seconds)), 2),
+        "cpu_ms_per_tick": round(1000.0 * cpu_total / ticks, 2),
         "ms_per_unit_tick": round(1000.0 * total / ticks / max(mean_units, 1.0), 4),
         "subsystem_ms_per_tick": {
             k: round(1000.0 * v / ticks, 2)
@@ -151,14 +156,16 @@ def timed_case(scenario: Scenario) -> dict[str, Any]:
     """Run ``scenario`` once with a per-subsystem time breakdown."""
     sim = Simulator(scenario)
     sim.timings = {}
-    started = time.perf_counter()
+    started, cpu_started = time.perf_counter(), time.process_time()
     result = sim.run()
     total = time.perf_counter() - started
+    cpu_total = time.process_time() - cpu_started
     unit_years = sum(int(r["units"]) for r in result.metrics)
     return {
         "seed": scenario.config.simulation.seed,
         "years": len(result.metrics),
         "runtime_seconds": round(total, 2),
+        "cpu_seconds": round(cpu_total, 2),
         "final_population": int(result.metrics[-1]["population"]),
         "final_units": int(result.metrics[-1]["units"]),
         "unit_years": unit_years,

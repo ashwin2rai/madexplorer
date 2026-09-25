@@ -49,7 +49,7 @@ network; distributional state: later strata) in every new data structure.
 |---|---|---|---|
 | P0 | Benchmarks first (18): synthetic performance scenario with 100/500/1000/2000 units for 25-50 ticks (ms/tick, ms/unit/tick, per-subsystem time, peak RSS); benchmark tiers smoke / dev / release / baseline as make targets; record **pre-reform reference timings** (incl. 1,000-year seed 0) for target 19 | tooling | **done** |
 | P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation (exact on all golden fixtures and the 1,000-year seed 0) | **done** |
-| P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** | planned |
+| P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** (small measured effect) | **done** |
 | P3 | Bounded migration attention (9-10): `migration.max_considered_destinations` (default ~12) drawn by proximity, recency, direct knowledge and a random exploratory slot, **independent of utility**; then argmax + one move draw as now. Rerun perception-noise experiment | **model change** + experiment | planned |
 | P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | planned |
 | P5 | Agriculture (20-25): expected future tenure `p(1-p^H)/(1-p)` from the unit's current stay probability; review tech × knowledge (candidate: knowledge sets distance to the technology frontier, `e_min + (1-e_min)K/(K+K_half)`, with `e_min` justified behaviorally, not fitted); small experimental cultivation share (2-5% labor) when crop returns are within a band of foraging, as generic subsistence exploration; scenarios A (abundant frontier) and B (intensification pressure); paired cultivation on/off ablation on B as a statistical test replacing the strict xfail | **model changes** + validation | planned |
@@ -148,6 +148,73 @@ validation, remaining concerns.)
   per unit) and is now the dominant cost (≈28% of the run); P2 replaces it with bounded
   reports. Perception's remaining cost is per-unit Python overhead (radius, neighborhood,
   noise draw), addressed in P4 if still significant.
+
+#### P2. Bounded social information (model change)
+
+- **Old.** An encounter copied every partner observation fresher than the receiver's own:
+  maps converged toward the whole map (≈800 known cells per unit late in a run), at a cost of
+  O(cells × partners) per unit.
+- **New** (`mobility/exploration.py`, `species/human.yaml` `social_information:`):
+  - Beliefs carry provenance `hops` (0 = direct observation, k = relayed k times); confidence
+    `q = decay ** hops` (`transmission_confidence`, decay 0.7).
+  - Each sender picks `reports_per_interaction` = 8 reports per year from a small pool: cells
+    it perceives this year, cells it lived in within its memory (`recent_residence`, at most
+    one per year), and cells it last received reports about (so relaying is possible). Only
+    current beliefs no older than `max_report_age_years` (20) qualify. Ranking
+    (`social_report_salience`): the current cell first, then
+    `q × recency × (1 + |ln(food / prior)|)`, i.e. first-hand, recent and unusually rich or poor
+    places first; ties by cell id (deterministic).
+  - The receiver takes, per cell, the freshest report (then fewest relays, then earliest
+    partner) and adopts it if strictly fresher than its own belief, or as fresh with fewer
+    relays; it stores one more relay than the sender had.
+  - `belief_shrinkage`: migration evaluates `q·food + (1-q)·prior`. **The prior is the mean
+    of this year's direct food observations** (the group's current surroundings), a
+    simplification of the agreed "mean of its direct observations in memory" that needs no
+    scan of the map. Direct observations (q = 1) are unaffected.
+  - Report selection and receipt run once for all units (`select_reports_batch`,
+    `receive_reports_batch`); the per-unit `select_reports` / `receive_reports` are thin
+    wrappers used by the tests, so the rule exists once. The batched version reproduced the
+    per-unit version exactly (1,000-year seed 0 identical).
+  - New unit fields with merge/split rules: `food_prior_kcal` (weighted mean / copy),
+    `report_cells` (union / copy), `recent_residence` (latest year per cell / copy).
+- **Finding: social information barely reaches migration.** When a group decides, nearly all
+  cells it can reach in one move are cells it perceived directly that year (after 250 years,
+  6 of 818 reachable cells were outside perception), and a same-year direct observation always
+  beats a report. So map-wide synchronization cost ~28% of run time for almost no behavioral
+  effect, and **the earlier claim that migration chose among hundreds of cells was wrong:**
+  candidates are limited by reachability (~20 cells). The remaining winner's curse comes from
+  noisy *direct* observations of those ~20 cells.
+- **Finding: inherited familiarity grows without bound.** `familiarity` (foraging skill per
+  cell) is copied on fission and max-merged on fusion, so by year 850 a unit carries ~540
+  cells of lineage familiarity. Using it as "places lived" made report pools huge (sharing
+  51 s); replaced by `recent_residence`. The dictionary itself still costs memory and lookups;
+  noted for P4.
+- **Validation.** Golden fixtures unchanged (≤ 250 years, reports never changed a decision);
+  1,000-year seed 0 diverges (28,853 → 29,628 people after the residence fix vs 29,794 in P1).
+  Paired dev ensemble, P1 (`d47628d`) vs P2, 8 seeds × 600 years: final population −0.4%
+  (−52, se 100), migration rate +0.5% (se 0.3%), final-tail migration rate +0.007 (se 0.003),
+  identical technology milestones and invention counts. New mechanism tests
+  (`tests/test_exploration.py`, `tests/test_migration.py`): bounded report count whatever the
+  map size; current, first-hand and exceptional places first; stale and too-old beliefs not
+  passed on; relays add a hop and replace only worse beliefs; freshest-then-least-relayed wins
+  between partners; Hypothesis test of vectorized receipt against a one-by-one reference;
+  confidence falls per relay; hearsay pulls less than a direct observation but still more
+  than an average alternative; residence record bounded.
+- **Performance** (`benchmarks/perf/p2_*`; CPU time now recorded because wall time on this
+  shared machine varied by up to 2× between runs):
+
+  | | P1 | P2 |
+  |---|---|---|
+  | Synthetic 2000 units, ms/tick (sharing) | 601 (235) | 545 (120) |
+  | Synthetic 1000 units, ms/tick (sharing) | 305 (96) | 321 (52) |
+  | Known cells per unit after warm-up (2000 units) | 796 | 44 |
+  | Seed 0, 1,000 y: total / sharing / perception / migration | 168 / 48 / 9 / 20 s | 175 (169 CPU) / 30 / 16 / 25 s |
+  | Peak RSS seed 0 | 185 MB | 182 MB |
+
+- **Remaining.** Sharing is bounded, but the new per-unit work (hops, prior, residence
+  record, shrinkage) added fixed overhead to perception and migration, so the whole run is
+  not yet faster. Batching perception and migration per unit is a P4 item. The partner-draw
+  loop (one Python iteration per candidate pair) is now the largest part of sharing.
 
 ---
 

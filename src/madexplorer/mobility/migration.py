@@ -20,6 +20,7 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
+from madexplorer.mobility.exploration import report_confidence
 from madexplorer.population.energetics import annual_need_kcal
 from madexplorer.population.groups import sigmoid
 from madexplorer.population.unit import Observation, PopulationUnit
@@ -117,6 +118,31 @@ def choose_destination(
     return int(cells[best[int(rng.integers(best.size))]])
 
 
+@model_rule(
+    name="belief_shrinkage",
+    version="1.0",
+    rationale=(
+        "A food belief held with confidence q is used as q*belief + (1-q)*prior, where the "
+        "prior is the typical food per cell in the group's current direct experience. Hearsay "
+        "about exceptional places still counts but cannot dominate the choice among many "
+        "uncertain options (limits the winner's curse)."
+    ),
+    source_type="heuristic",
+    parameters=("transmission_confidence_decay",),
+    expected_domain="effective food estimate between the prior and the belief",
+    known_limitations=(
+        "Linear shrinkage with a prior from this year's perception only; no variance-based "
+        "(Bayesian) weighting, and staleness is handled by the separate uncertainty term."
+    ),
+)
+def shrunk_food_kcal(
+    food_kcal: FloatArray | float, confidence: FloatArray | float, prior_kcal: FloatArray | float
+) -> FloatArray:
+    """Effective food belief: confidence-weighted mix of the belief and the prior."""
+    shrunk: FloatArray = np.asarray(confidence * food_kcal + (1.0 - confidence) * prior_kcal)
+    return shrunk
+
+
 @dataclass(frozen=True)
 class MoveCosts:
     """What a unit gives up or pays by moving, fixed for one year's decision."""
@@ -136,9 +162,13 @@ def destination_components(
     memory_years: int,
     behavior: MigrationBehavior,
     water_access: float,
+    confidence_decay: float,
 ) -> dict[str, float]:
     """Utility components of ``cell`` for ``unit``, including the cost of leaving."""
     obs = unit.beliefs[cell]
+    confidence = float(report_confidence(np.array([obs.hops]), confidence_decay)[0])
+    food = float(shrunk_food_kcal(obs.food_kcal, confidence, unit.food_prior_kcal))
+    obs = replace(obs, food_kcal=food)
     staying = cell == unit.cell
     if staying and costs.farm_kcal > 0:
         obs = replace(obs, food_kcal=obs.food_kcal + costs.farm_kcal)
@@ -250,6 +280,7 @@ class _Prepared:
     carry_kcal: float
     behavior: MigrationBehavior
     memory_years: int
+    confidence_decay: float
 
 
 class MigrationSubsystem:
@@ -291,6 +322,7 @@ class MigrationSubsystem:
             carry,
             behavior,
             profile.cognition.memory_years,
+            profile.social_information.transmission_confidence_decay,
         )
 
     @staticmethod
@@ -307,12 +339,21 @@ class MigrationSubsystem:
         def gather(field: str) -> np.ndarray:
             return np.concatenate([getattr(p.unit.beliefs, field)[p.candidates] for p in prepared])
 
-        food, water = gather("food_kcal"), water_access[cells]
         others, observed = gather("population"), gather("year")
 
         def per_unit(values: list[float]) -> FloatArray:
             array: FloatArray = np.asarray(values, dtype=np.float64)[owner]
             return array
+
+        confidence = np.power(
+            per_unit([p.confidence_decay for p in prepared]), gather("hops").astype(np.float64)
+        )
+        food = shrunk_food_kcal(
+            gather("food_kcal").astype(np.float64),
+            confidence,
+            per_unit([p.unit.food_prior_kcal for p in prepared]),
+        )
+        water = water_access[cells]
 
         weights = np.array(
             [
@@ -370,6 +411,7 @@ class MigrationSubsystem:
                     prepared.memory_years,
                     prepared.behavior,
                     float(state.world.water_access[cell]),
+                    prepared.confidence_decay,
                 )
 
             ctx.events.emit(

@@ -101,6 +101,16 @@ social:
   knowledge_sharing_probability: 0.5
   food_sharing_propensity: 0.3
 
+# Bounded social information: an encounter passes a handful of reports (the group's
+# current place, what it saw first-hand, unusually good or poor places), not its whole
+# remembered map. 8 reports is a conversational scale (placeholder, heuristic); relayed
+# reports lose confidence by a factor 0.7 per hop, and nothing older than the memory
+# horizon is passed on.
+social_information:
+  reports_per_interaction: 8
+  max_report_age_years: 20
+  transmission_confidence_decay: 0.7
+
 migration:
   food_weight: 2.0
   water_weight: 0.5

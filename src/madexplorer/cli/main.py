@@ -249,7 +249,8 @@ def cmd_bench(args: argparse.Namespace) -> int:
             print(
                 f"units={case['n_units']:>5} mean={case['mean_units']:>7} "
                 f"known={case['known_cells_after_warmup']:>6} "
-                f"ms/tick={case['ms_per_tick']:>8} ms/unit/tick={case['ms_per_unit_tick']:.4f} "
+                f"ms/tick={case['ms_per_tick']:>8} cpu={case['cpu_ms_per_tick']:>8} "
+                f"ms/unit/tick={case['ms_per_unit_tick']:.4f} "
                 f"rss={case['peak_rss_mb']}MB | {top}"
             )
     else:
@@ -258,6 +259,7 @@ def cmd_bench(args: argparse.Namespace) -> int:
             top = ", ".join(f"{k} {v}" for k, v in list(run["subsystem_seconds"].items())[:5])
             print(
                 f"seed={run['seed']} years={run['years']} runtime={run['runtime_seconds']}s "
+                f"cpu={run['cpu_seconds']}s "
                 f"units={run['final_units']} ms/unit-year={run['ms_per_unit_year']} "
                 f"rss={run['peak_rss_mb']}MB | {top}"
             )

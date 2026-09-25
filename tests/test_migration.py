@@ -122,6 +122,7 @@ def test_vectorized_scores_match_the_component_rule() -> None:
     unit = _only_unit(sim)
     rng = np.random.default_rng(9)
     unit.fields_ha, unit.crop_yield_kcal_per_ha, unit.stores_kcal = 2.0, 8e5, 4e6
+    unit.food_prior_kcal = 3e6
     cells = [unit.cell, *_neighbors_by_cost(sim, unit)[:15]]
     unit.beliefs = BeliefMap.from_observations(
         sim.world.n_cells,
@@ -130,6 +131,7 @@ def test_vectorized_scores_match_the_component_rule() -> None:
                 year=sim.state.year - int(rng.integers(0, 15)),
                 food_kcal=float(rng.uniform(1e5, 1e7)),
                 population=int(rng.integers(0, 300)),
+                hops=0 if c == unit.cell else int(rng.integers(0, 4)),
             )
             for c in cells
         },
@@ -148,6 +150,23 @@ def test_vectorized_scores_match_the_component_rule() -> None:
             prepared.memory_years,
             prepared.behavior,
             float(water[cell]),
+            prepared.confidence_decay,
         )
         expected = sum(components.values())
         assert score == pytest.approx(expected, rel=1e-9, abs=1e-12)
+
+
+def test_hearsay_about_a_rich_cell_pulls_less_than_a_direct_observation() -> None:
+    sim = _simulator()
+    unit = _only_unit(sim)
+    target = _neighbors_by_cost(sim, unit)[0]
+    unit.food_prior_kcal = 2e6
+    hazards = []
+    for hops in (0, 1, 3):
+        rich = Observation(year=sim.state.year, food_kcal=8e6, population=0, hops=hops)
+        hazards.append(_hazard(sim, {unit.cell: _observation(sim, 2e6), target: rich}))
+    assert hazards[0] > hazards[1] > hazards[2]
+    # Shrinkage never makes the report useless: even hearsay beats an average alternative.
+    average = Observation(year=sim.state.year, food_kcal=2e6, population=0, hops=3)
+    baseline = _hazard(sim, {unit.cell: _observation(sim, 2e6), target: average})
+    assert hazards[2] > baseline

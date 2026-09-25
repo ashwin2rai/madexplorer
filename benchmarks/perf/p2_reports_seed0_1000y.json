@@ -1,0 +1,45 @@
+{
+  "scenario_name": "mvp2_neolithic",
+  "world_seed": 7,
+  "config_hash": "7b6bda30b642cbf3cac39ca392c23f5986b9dc6d115e41d8280dc2d3e8e2b7eb",
+  "git_commit": "d47628db2bc0851ef9c646770c433227253f6fec",
+  "git_dirty": true,
+  "source_tree_sha256": "e0e79a9accec800db5da6a3ab1449c61539c810405f193b35e90ad9dc8d0e27d",
+  "numeric_platform": "numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3",
+  "cpu_count": 2,
+  "timestamp_utc": "2026-09-25T00:45:52+00:00",
+  "kind": "timed_runs",
+  "runs": [
+    {
+      "seed": 0,
+      "years": 1000,
+      "runtime_seconds": 175.03,
+      "cpu_seconds": 169.37,
+      "final_population": 29628,
+      "final_units": 1123,
+      "unit_years": 504896,
+      "ms_per_unit_year": 0.3467,
+      "subsystem_seconds": {
+        "knowledge_sharing": 29.97,
+        "migration": 24.53,
+        "foraging": 18.57,
+        "diffusion": 17.2,
+        "perception": 15.68,
+        "demography": 13.45,
+        "field_planning": 10.39,
+        "learning": 8.86,
+        "fusion": 7.38,
+        "trade": 4.65,
+        "energetics": 4.02,
+        "innovation": 3.16,
+        "invariants": 2.99,
+        "fission": 2.67,
+        "farming": 2.62,
+        "extinction": 1.35,
+        "ecology": 0.67,
+        "climate": 0.35
+      },
+      "peak_rss_mb": 181.5
+    }
+  ]
+}

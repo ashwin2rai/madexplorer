@@ -1,60 +1,50 @@
-"""Beliefs: sharing equals the reference dictionary merge; patches, lazy expiry, ownership."""
+"""Beliefs and bounded social information: patches, lazy expiry, reports, confidence."""
 
 import numpy as np
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from madexplorer.mobility.exploration import freshest_from_partners
-from madexplorer.population.unit import BeliefMap, Observation
+from madexplorer.mobility.exploration import (
+    Reports,
+    receive_reports,
+    report_confidence,
+    select_reports,
+)
+from madexplorer.population.unit import BeliefMap, Observation, PopulationUnit
+from madexplorer.species.profile import SocialInformation
 
 N_CELLS = 60
-
-
-def _reference(
-    own: dict[int, Observation], partners: list[dict[int, Observation]]
-) -> dict[int, Observation]:
-    """The original dictionary merge (first partner wins ties), applied to ``own``."""
-    received: dict[int, Observation] = {}
-    for other in partners:
-        for c, obs in other.items():
-            best = received.get(c) or own.get(c)
-            if best is None or obs.year > best.year:
-                received[c] = obs
-    return own | received
-
-
-beliefs_strategy = st.dictionaries(
-    st.integers(0, N_CELLS - 1),
-    st.tuples(st.integers(-5, 20), st.floats(0, 1e6, width=32), st.integers(0, 500)).map(
-        lambda t: Observation(year=t[0], food_kcal=t[1], population=t[2])
-    ),
-    max_size=40,
+INFO = SocialInformation(
+    reports_per_interaction=4, max_report_age_years=10, transmission_confidence_decay=0.7
 )
+YEAR, MEMORY = 20, 20
 
 
-@settings(max_examples=200, deadline=None)
-@given(own=beliefs_strategy, others=st.lists(beliefs_strategy, min_size=1, max_size=6))
-def test_vectorized_sharing_matches_reference(
-    own: dict[int, Observation], others: list[dict[int, Observation]]
-) -> None:
-    beliefs = BeliefMap.from_observations(N_CELLS, own)
-    patch = freshest_from_partners(
-        "u", beliefs, [BeliefMap.from_observations(N_CELLS, b) for b in others], N_CELLS
+def _unit(beliefs: BeliefMap, cell: int = 0, prior: float = 1000.0) -> PopulationUnit:
+    zeros = np.zeros(3, dtype=np.int64)
+    unit = PopulationUnit("s", "human", cell, zeros, zeros, 0.0, 0, beliefs=beliefs)
+    unit.food_prior_kcal = prior
+    return unit
+
+
+def _reports(observations: dict[int, Observation]) -> Reports:
+    cells = np.array(sorted(observations), dtype=np.int64)
+    beliefs = BeliefMap.from_observations(N_CELLS, observations)
+    return Reports(
+        cells,
+        beliefs.year[cells],
+        beliefs.food_kcal[cells],
+        beliefs.population[cells],
+        beliefs.hops[cells],
     )
+
+
+def _apply(own: BeliefMap, received: list[Reports]) -> BeliefMap:
+    patch = receive_reports("u", own, received, N_CELLS)
     if patch is not None:
-        beliefs.write(patch.cells, patch.year, patch.food_kcal, patch.population)
-    assert beliefs.to_dict() == _reference(own, others)
-
-
-def test_belief_map_merge_keeps_the_freshest_observation() -> None:
-    old, same = Observation(5, 1.0, 1), Observation(9, 2.0, 2)
-    newer, tie = Observation(7, 3.0, 3), Observation(9, 4.0, 4)
-    a = BeliefMap.from_observations(4, {0: old, 1: same})
-    b = BeliefMap.from_observations(4, {0: newer, 1: tie})
-    merged = a.merged_with(b)
-    assert merged.to_dict() == {0: newer, 1: same}  # strictly fresher wins; a tie keeps ours
-    assert 2 not in merged and len(a.to_dict()) == 2
-    assert merged is not b
+        own.write(patch.cells, patch.year, patch.food_kcal, patch.population, patch.hops)
+    return own
 
 
 def test_expiry_is_lazy_and_checked_on_read() -> None:
@@ -79,3 +69,126 @@ def test_patch_changes_only_its_cells_and_copies_are_independent() -> None:
     assert after[0] == before[0]
     assert after[1] == Observation(9, 1.5, 0) and after[4] == Observation(9, 2.5, 1)
     assert daughter.to_dict() == before  # the copy is unaffected
+
+
+def test_merge_keeps_the_freshest_then_the_least_relayed_entry() -> None:
+    a = BeliefMap.from_observations(
+        4, {0: Observation(5, 1.0, 1), 1: Observation(9, 2.0, 2, hops=2)}
+    )
+    b = BeliefMap.from_observations(
+        4, {0: Observation(7, 3.0, 3, hops=1), 1: Observation(9, 4.0, 4, hops=1)}
+    )
+    merged = a.merged_with(b)
+    assert merged.to_dict() == {0: Observation(7, 3.0, 3, 1), 1: Observation(9, 4.0, 4, 1)}
+    assert 2 not in merged and merged is not b
+
+
+def test_confidence_falls_with_each_relay() -> None:
+    q = report_confidence(np.array([0, 1, 2, 3]), 0.7)
+    assert q[0] == 1.0
+    assert np.all(np.diff(q) < 0)
+    assert q[2] == pytest.approx(0.49)
+
+
+def test_an_encounter_passes_a_bounded_number_of_reports_whatever_the_map_size() -> None:
+    for known in (10, 50):
+        beliefs = BeliefMap.from_observations(
+            N_CELLS, {c: Observation(YEAR, 1000.0 + c, 0) for c in range(known)}
+        )
+        pool = np.arange(known)
+        reports = select_reports(_unit(beliefs), pool, YEAR, MEMORY, INFO)
+        assert reports.cells.size == INFO.reports_per_interaction
+
+
+def test_current_cell_first_hand_and_exceptional_places_are_mentioned_first() -> None:
+    observations = {
+        0: Observation(YEAR, 1000.0, 0),  # the sender's own cell, unremarkable
+        1: Observation(YEAR, 1000.0, 0),  # first-hand, unremarkable
+        2: Observation(YEAR, 1000.0, 0, hops=3),  # hearsay, unremarkable
+        3: Observation(YEAR, 20000.0, 0),  # first-hand, exceptionally rich
+        4: Observation(YEAR, 50.0, 0),  # first-hand, exceptionally poor
+        5: Observation(YEAR - 9, 1000.0, 0),  # first-hand but old
+    }
+    beliefs = BeliefMap.from_observations(N_CELLS, observations)
+    unit = _unit(beliefs, cell=0, prior=1000.0)
+    chosen = select_reports(unit, np.arange(6), YEAR, MEMORY, INFO).cells.tolist()
+    assert chosen[0] == 0
+    assert set(chosen) == {0, 1, 3, 4}  # hearsay and old unremarkable reports lose out
+
+
+def test_stale_and_too_old_beliefs_are_not_passed_on() -> None:
+    observations = {
+        0: Observation(YEAR, 1000.0, 0),
+        1: Observation(YEAR - MEMORY, 1000.0, 0),  # forgotten (outside memory)
+        2: Observation(YEAR - INFO.max_report_age_years - 1, 1000.0, 0),  # too old to mention
+    }
+    beliefs = BeliefMap.from_observations(N_CELLS, observations)
+    chosen = select_reports(_unit(beliefs), np.arange(3), YEAR, MEMORY, INFO).cells.tolist()
+    assert chosen == [0]
+
+
+def test_received_reports_gain_a_relay_and_replace_only_worse_beliefs() -> None:
+    own = BeliefMap.from_observations(
+        N_CELLS,
+        {
+            0: Observation(YEAR, 1.0, 0),  # own direct observation this year
+            1: Observation(YEAR - 5, 1.0, 0),  # older direct observation
+        },
+    )
+    sender = _reports(
+        {
+            0: Observation(YEAR, 9.0, 9),  # as fresh, but hearsay to the receiver: rejected
+            1: Observation(YEAR - 1, 9.0, 9),  # fresher: accepted
+            2: Observation(YEAR - 2, 9.0, 9, hops=1),  # new: accepted with 2 relays
+        }
+    )
+    result = _apply(own, [sender]).to_dict()
+    assert result[0] == Observation(YEAR, 1.0, 0, 0)
+    assert result[1] == Observation(YEAR - 1, 9.0, 9, 1)
+    assert result[2] == Observation(YEAR - 2, 9.0, 9, 2)
+
+
+def test_between_partners_the_freshest_then_least_relayed_report_wins() -> None:
+    own = BeliefMap.empty(N_CELLS)
+    first = _reports({5: Observation(YEAR - 1, 1.0, 1, hops=2), 6: Observation(YEAR, 3.0, 0)})
+    second = _reports({5: Observation(YEAR - 1, 2.0, 2, hops=0), 6: Observation(YEAR, 4.0, 0)})
+    result = _apply(own, [first, second]).to_dict()
+    assert result[5] == Observation(YEAR - 1, 2.0, 2, 1)  # fewer relays
+    assert result[6] == Observation(YEAR, 3.0, 0, 1)  # full tie: first partner
+
+
+observation_strategy = st.tuples(
+    st.integers(-5, 20), st.floats(0, 1e6, width=32), st.integers(0, 500), st.integers(0, 5)
+).map(lambda t: Observation(year=t[0], food_kcal=t[1], population=t[2], hops=t[3]))
+beliefs_strategy = st.dictionaries(st.integers(0, N_CELLS - 1), observation_strategy, max_size=40)
+
+
+def _better(new: Observation, old: Observation | None) -> bool:
+    return old is None or (new.year, -new.hops) > (old.year, -old.hops)
+
+
+@settings(max_examples=200, deadline=None)
+@given(own=beliefs_strategy, senders=st.lists(beliefs_strategy, min_size=1, max_size=5))
+def test_vectorized_receipt_matches_a_one_by_one_reference(
+    own: dict[int, Observation], senders: list[dict[int, Observation]]
+) -> None:
+    expected = dict(own)
+    received: dict[int, Observation] = {}
+    for sender in senders:
+        for cell, obs in sender.items():
+            relayed = Observation(obs.year, obs.food_kcal, obs.population, obs.hops + 1)
+            if _better(relayed, received.get(cell)):
+                received[cell] = relayed
+    for cell, obs in received.items():
+        if _better(obs, own.get(cell)):
+            expected[cell] = obs
+    got = _apply(BeliefMap.from_observations(N_CELLS, own), [_reports(s) for s in senders])
+    assert got.to_dict() == expected
+
+
+def test_recent_residence_is_bounded_by_the_memory_horizon() -> None:
+    unit = _unit(BeliefMap.empty(N_CELLS))
+    for year in range(100):
+        unit.note_residence(year % 50, year, memory_years=10)
+    assert len(unit.recent_residence) <= 11
+    assert min(unit.recent_residence.values()) >= 100 - 1 - 11

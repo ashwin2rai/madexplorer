@@ -149,6 +149,18 @@ class SocialBehavior(FrozenModel):
         return self
 
 
+class SocialInformation(FrozenModel):
+    """Bounded social transmission of geographic information (MVP 2 stabilization).
+
+    One encounter passes a few reports, not a whole remembered map; each relay lowers the
+    confidence the receiver places in a report (``decay ** hops``).
+    """
+
+    reports_per_interaction: int = Field(ge=1)  # reports a group passes per encounter
+    max_report_age_years: int = Field(ge=0)  # older observations are not passed on
+    transmission_confidence_decay: float = Field(gt=0, le=1)  # confidence factor per relay
+
+
 class MigrationBehavior(FrozenModel):
     """Weights of the perceived-utility migration model (spec §10.2)."""
 
@@ -177,4 +189,5 @@ class SpeciesProfile(FrozenModel):
     foraging: Foraging
     subsistence: SubsistenceBehavior
     social: SocialBehavior
+    social_information: SocialInformation
     migration: MigrationBehavior

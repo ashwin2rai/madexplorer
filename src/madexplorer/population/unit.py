@@ -33,6 +33,7 @@ class Observation:
     year: int
     food_kcal: float  # perceived accessible wild food stock
     population: int  # other people perceived in the cell (excluding the observer)
+    hops: int = 0  # provenance: 0 = observed directly, k = report relayed k times
 
 
 NEVER_OBSERVED = -(2**31)  # observation year of a cell the unit knows nothing about
@@ -41,17 +42,22 @@ POPULATION_DTYPE = np.int32  # perceived head counts
 # Perceived food is a noisy estimate (lognormal noise, sigma ~0.3); float32's ~1e-7 relative
 # precision is far below that, and halves the memory of the largest belief array.
 FOOD_DTYPE = np.float32
+HOPS_DTYPE = np.int8  # relay count; saturates at MAX_HOPS
+MAX_HOPS = 100
 YearArray = npt.NDArray[np.int32]
 CountArray = npt.NDArray[np.int32]
 FoodArray = npt.NDArray[np.float32]
+HopsArray = npt.NDArray[np.int8]
 
 
 @dataclass(frozen=True, slots=True)
 class BeliefPatch:
-    """Sparse change to one unit's beliefs: new observations for a few cells.
+    """Sparse change to one unit's beliefs: new observations or reports for a few cells.
 
     Values are copies taken when the patch is built, so patches computed from one year's
-    beliefs stay valid while other patches are applied.
+    beliefs stay valid while other patches are applied. Perception also sets the unit's food
+    prior (its current direct experience); sharing records which cells it received reports
+    about, so they can be relayed next year.
     """
 
     unit_id: str
@@ -59,12 +65,23 @@ class BeliefPatch:
     year: YearArray
     food_kcal: FoodArray | FloatArray
     population: CountArray | IntArray
+    hops: HopsArray
+    food_prior_kcal: float | None = None
+    received: bool = False
+    resident_cell: int | None = None  # perception: the cell the unit lives in this year
 
     def apply(self, state: "SimulationState", ctx: "StepContext") -> None:
         """Write the observations into the unit's belief arrays (only these cells)."""
         unit = state.units[self.unit_id]
         unit.beliefs = unit.beliefs.sized(state.world.n_cells)
-        unit.beliefs.write(self.cells, self.year, self.food_kcal, self.population)
+        unit.beliefs.write(self.cells, self.year, self.food_kcal, self.population, self.hops)
+        if self.food_prior_kcal is not None:
+            unit.food_prior_kcal = self.food_prior_kcal
+        if self.received:
+            unit.report_cells = self.cells
+        if self.resident_cell is not None:
+            memory = ctx.species(unit.species_id).cognition.memory_years
+            unit.note_residence(self.resident_cell, state.year, memory)
 
 
 @dataclass(eq=False)
@@ -85,6 +102,7 @@ class BeliefMap:
     year: YearArray
     food_kcal: FoodArray  # perceived accessible wild food stock (float32)
     population: CountArray  # other people perceived in the cell (excluding the observer)
+    hops: HopsArray  # provenance: 0 = direct observation, k = relayed k times
 
     @classmethod
     def empty(cls, n_cells: int) -> "BeliefMap":
@@ -93,6 +111,7 @@ class BeliefMap:
             np.full(n_cells, NEVER_OBSERVED, dtype=YEAR_DTYPE),
             np.zeros(n_cells, dtype=FOOD_DTYPE),
             np.zeros(n_cells, dtype=POPULATION_DTYPE),
+            np.zeros(n_cells, dtype=HOPS_DTYPE),
         )
 
     @classmethod
@@ -101,7 +120,7 @@ class BeliefMap:
         beliefs = cls.empty(n_cells)
         for cell, obs in observations.items():
             beliefs.year[cell], beliefs.food_kcal[cell] = obs.year, obs.food_kcal
-            beliefs.population[cell] = obs.population
+            beliefs.population[cell], beliefs.hops[cell] = obs.population, obs.hops
         return beliefs
 
     @property
@@ -111,7 +130,9 @@ class BeliefMap:
 
     def copy(self) -> "BeliefMap":
         """An independent copy (for a daughter unit)."""
-        return BeliefMap(self.year.copy(), self.food_kcal.copy(), self.population.copy())
+        return BeliefMap(
+            self.year.copy(), self.food_kcal.copy(), self.population.copy(), self.hops.copy()
+        )
 
     def sized(self, n_cells: int) -> "BeliefMap":
         """This map, or an empty one of the right size if it covers no cells yet."""
@@ -127,11 +148,13 @@ class BeliefMap:
         year: YearArray | int,
         food_kcal: FoodArray | FloatArray,
         population: CountArray | IntArray,
+        hops: HopsArray | int = 0,
     ) -> None:
         """Overwrite the entries of ``cells`` (apply phase only)."""
         self.year[cells] = year
         self.food_kcal[cells] = food_kcal
         self.population[cells] = population
+        self.hops[cells] = hops
 
     def current(self, cells: IntArray, year: int, memory_years: int) -> BoolArray:
         """Which of ``cells`` hold an observation still within memory in ``year``."""
@@ -150,7 +173,10 @@ class BeliefMap:
         if cell not in self:
             raise KeyError(cell)
         return Observation(
-            int(self.year[cell]), float(self.food_kcal[cell]), int(self.population[cell])
+            int(self.year[cell]),
+            float(self.food_kcal[cell]),
+            int(self.population[cell]),
+            int(self.hops[cell]),
         )
 
     def to_dict(self) -> dict[int, Observation]:
@@ -158,19 +184,23 @@ class BeliefMap:
         return {c: self[c] for c in np.flatnonzero(self.year != NEVER_OBSERVED).tolist()}
 
     def merged_with(self, other: "BeliefMap") -> "BeliefMap":
-        """Per cell, ``other``'s observation where it is strictly fresher than this map's.
+        """Per cell, ``other``'s entry where it is better than this map's.
 
-        Returns this map (unchanged) or a new one; never ``other`` itself.
+        Better means strictly fresher, or equally fresh with fewer relays (higher
+        confidence). Returns this map (unchanged) or a new one; never ``other`` itself.
         """
         n = max(self.n_cells, other.n_cells)
         mine, theirs = self.sized(n), other.sized(n)
-        fresher = theirs.year > mine.year
-        if not fresher.any():
+        better = (theirs.year > mine.year) | (
+            (theirs.year == mine.year) & (theirs.hops < mine.hops)
+        )
+        if not better.any():
             return mine
         return BeliefMap(
-            np.where(fresher, theirs.year, mine.year),
-            np.where(fresher, theirs.food_kcal, mine.food_kcal),
-            np.where(fresher, theirs.population, mine.population),
+            np.where(better, theirs.year, mine.year),
+            np.where(better, theirs.food_kcal, mine.food_kcal),
+            np.where(better, theirs.population, mine.population),
+            np.where(better, theirs.hops, mine.hops),
         )
 
 
@@ -215,6 +245,11 @@ class PopulationUnit:
     food_ratio: float = 1.0  # acquired / required, last year
     energy_deficit: float = 0.0  # unmet fraction of requirement after reserves, last year
     beliefs: BeliefMap = field(default_factory=lambda: BeliefMap.empty(0))  # spatial beliefs
+    food_prior_kcal: float = 0.0  # typical food per cell in current direct experience
+    report_cells: IntArray = field(
+        default_factory=lambda: np.zeros(0, dtype=np.int64)
+    )  # cells last received as social reports (candidates for relaying)
+    recent_residence: dict[int, int] = field(default_factory=dict)  # cell -> last year lived there
     familiarity: dict[int, float] = field(default_factory=dict)
     groups: int = 1  # social groups represented by this unit
     # Knowledge and technology (MVP 2).
@@ -265,6 +300,13 @@ class PopulationUnit:
         value = float(((self.females + self.males) * weights).sum())
         cache[id(weights)] = (weights, value)
         return value
+
+    def note_residence(self, cell: int, year: int, memory_years: int) -> None:
+        """Record living in ``cell`` this year; forget residences beyond the memory horizon."""
+        self.recent_residence[cell] = year
+        if len(self.recent_residence) > memory_years:
+            horizon = year - memory_years
+            self.recent_residence = {c: y for c, y in self.recent_residence.items() if y > horizon}
 
     @property
     def total_reserve_kcal(self) -> float:

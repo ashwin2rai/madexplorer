@@ -44,7 +44,10 @@ FIELD_RULES: dict[str, tuple[str, str]] = {
     "harvest_kcal": ("sum", "proportional to people"),
     "food_ratio": ("population-weighted mean", "copy"),
     "energy_deficit": ("population-weighted mean", "copy"),
-    "beliefs": ("freshest observation per cell", "copy"),
+    "beliefs": ("freshest observation per cell (fewer relays on ties)", "copy"),
+    "food_prior_kcal": ("population-weighted mean", "copy"),
+    "report_cells": ("union", "copy"),
+    "recent_residence": ("latest year per cell", "copy"),
     "familiarity": ("max per cell", "copy"),
     "groups": ("sum (aggregation) / keep target (fusion)", "one group leaves a multi-group unit"),
     "knowledge": ("population-weighted mean", "copy"),
@@ -88,6 +91,7 @@ _WEIGHTED_MEAN = (
     "energy_deficit",
     "forage_marginal_kcal_per_hour",
     "forage_plant_share",
+    "food_prior_kcal",
 )
 
 
@@ -125,6 +129,9 @@ def merge_state(target: PopulationUnit, source: PopulationUnit, mode: MergeMode)
     n = target.population
     target.reserve_kcal_per_capita = total_reserve / n if n else 0.0
     target.beliefs = target.beliefs.merged_with(source.beliefs)
+    target.report_cells = np.union1d(target.report_cells, source.report_cells)
+    for cell, year in source.recent_residence.items():
+        target.recent_residence[cell] = max(year, target.recent_residence.get(cell, year))
     for cell, value in source.familiarity.items():
         target.familiarity[cell] = max(value, target.familiarity.get(cell, 0.0))
 
@@ -184,6 +191,9 @@ def split_off(
         food_ratio=parent.food_ratio,
         energy_deficit=parent.energy_deficit,
         beliefs=parent.beliefs.copy(),  # maps are owned and patched in place
+        food_prior_kcal=parent.food_prior_kcal,
+        report_cells=parent.report_cells.copy(),
+        recent_residence=dict(parent.recent_residence),
         familiarity=dict(parent.familiarity),
         knowledge=parent.knowledge.copy(),
         technologies=parent.technologies,
