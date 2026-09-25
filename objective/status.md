@@ -499,6 +499,48 @@ The scratch artifacts used during P4 (recorded solver inputs, a pickled late-run
 not in the repository. To regenerate solver inputs, wrap `economy.foraging.cell_harvest` to
 record every 20th call's arguments during a 600-year seed-0 run (about 6,300 samples).
 
+#### Performance outlook (assessment after P0-P4 profiling, 2026-09-25)
+
+Question asked: can the simulation become much faster, and would model simplifications help?
+The estimates below are **not measurements**.
+
+- **Diagnosis.** Cost per unit per tick is roughly constant (0.3-0.4 ms from 100 to 2,000
+  units), so the algorithms are not blowing up. The time is mostly Python overhead: per-unit
+  loops in every subsystem, dictionary lookups, and small numpy calls on 10-50-element
+  arrays. The arithmetic itself is small.
+- **The real scaling limit.** Cost scales with the number of groups (units of ~25-30 people),
+  not with people. 35k people ≈ 1,300 units ≈ 450 ms per late tick. MVP 2 aims at dense
+  farming populations: 100k people would be ~3-4k units, and 1M is out of reach at this group
+  size.
+- **Engineering options (no model change):**
+  1. Structure-of-arrays unit state: one array per field across all units, beliefs as one
+     units × cells matrix. Every subsystem becomes a few large vectorized operations.
+     Estimated 5-20× on per-unit overhead (P4's migration/perception batching is a small
+     instance: perception 32 → 9.5 s). A large refactor, best combined with MVP 3's redesign
+     of the unit.
+  2. Compiled kernels (e.g. Numba) for the per-cell foraging solver, diffusion contacts and
+     demography cohorts, once the profile is stable.
+  3. More cores: seeds are independent, so ensembles scale ~linearly. The 32-seed baseline
+     (~25 min on this 2-core codespace) would take ~3-4 min on 16 cores.
+- **Model-level options and their scientific cost:**
+  - *Adaptive resolution (MVP 3 distributional units, stratum-wise binomial decisions)*: the
+    principled reduction of unit count, which is what cost scales with. Naive merging is
+    not acceptable: 8 units per cell changed population 2.6× (P3 statistical test).
+  - *Longer timesteps for slow processes* (learning, diffusion, innovation every few years):
+    moderate gain; rates and hazards need rescaling; changes timing.
+  - *Updating beliefs only when stale* (e.g. skip perception for long-settled groups): cheap,
+    but a behavioral assumption needing an experiment.
+  - *Coarser cells*: probably little gain, since cost follows units, not cells.
+  - *Expected-value demography for large units*: small gain; loses stochasticity that matters
+    for small groups.
+- **Recommendation.**
+  - Finish P4 without model changes; ~2× looks attainable.
+  - After the MVP 2 freeze, design structure-of-arrays state and MVP 3 adaptive resolution
+    together.
+  - Run frozen baselines on a machine with more cores.
+  - Do not simplify the MVP 2 model for speed: in this pass, small representational shortcuts
+    (map-wide gossip, the hard food cap, aggregation) changed outcomes more than expected.
+
 ---
 
 ## 1. Quick restart checklist
