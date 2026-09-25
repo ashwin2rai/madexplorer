@@ -94,7 +94,11 @@ def warm_up_beliefs(sim: Simulator, years: int) -> None:
 
 def _known_cells(sim: Simulator) -> float:
     units = list(sim.state.units.values())
-    return float(np.mean([len(u.beliefs) for u in units])) if units else 0.0
+    if not units:
+        return 0.0
+    year = sim.state.year
+    memory = {sid: p.cognition.memory_years for sid, p in sim.scenario.species.items()}
+    return float(np.mean([u.beliefs.known_cells(year, memory[u.species_id]) for u in units]))
 
 
 def synthetic_case(

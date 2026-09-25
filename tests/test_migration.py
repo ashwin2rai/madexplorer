@@ -1,5 +1,7 @@
 """Mechanism tests for the migration choice (spec §10.2): no best-of-many-noise bias."""
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -24,7 +26,10 @@ def _simulator(inertia: float | None = None) -> Simulator:
                 "overrides": {"migration": {"inertia": inertia}},
             }
         ]
-    return Simulator(Scenario.from_dict(data, base_dir=ROOT))
+    sim = Simulator(Scenario.from_dict(data, base_dir=ROOT))
+    # Uniform water access, so alternatives that share a food belief are truly identical.
+    sim.state.world = replace(sim.world, water_access=np.full(sim.world.n_cells, 0.5))
+    return sim
 
 
 def _only_unit(sim: Simulator) -> PopulationUnit:
@@ -33,7 +38,7 @@ def _only_unit(sim: Simulator) -> PopulationUnit:
 
 
 def _observation(sim: Simulator, food_kcal: float) -> Observation:
-    return Observation(year=sim.state.year, food_kcal=food_kcal, water_access=0.5, population=0)
+    return Observation(year=sim.state.year, food_kcal=food_kcal, population=0)
 
 
 def _neighbors_by_cost(sim: Simulator, unit: PopulationUnit) -> list[int]:
@@ -124,7 +129,6 @@ def test_vectorized_scores_match_the_component_rule() -> None:
             c: Observation(
                 year=sim.state.year - int(rng.integers(0, 15)),
                 food_kcal=float(rng.uniform(1e5, 1e7)),
-                water_access=float(rng.uniform()),
                 population=int(rng.integers(0, 300)),
             )
             for c in cells
@@ -133,10 +137,17 @@ def test_vectorized_scores_match_the_component_rule() -> None:
     subsystem = MigrationSubsystem()
     prepared = subsystem._prepare(unit, sim.state, step_context(sim))
     assert prepared is not None
-    (scores,) = subsystem._scores([prepared], sim.state.year)
+    water = rng.uniform(size=sim.world.n_cells)
+    (scores,) = subsystem._scores([prepared], sim.state.year, water)
     for cell, score in zip(prepared.candidates.tolist(), scores.tolist(), strict=True):
         components = destination_components(
-            unit, cell, prepared.costs, sim.state.year, prepared.memory_years, prepared.behavior
+            unit,
+            cell,
+            prepared.costs,
+            sim.state.year,
+            prepared.memory_years,
+            prepared.behavior,
+            float(water[cell]),
         )
         expected = sum(components.values())
         assert score == pytest.approx(expected, rel=1e-9, abs=1e-12)

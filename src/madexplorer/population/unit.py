@@ -9,76 +9,109 @@ super-agents with wealth and health distributions arrive in MVP 3.
 
 from collections import deque
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 import numpy.typing as npt
 
-from madexplorer.core.types import FloatArray, IntArray
+from madexplorer.core.types import BoolArray, FloatArray, IntArray
+
+if TYPE_CHECKING:
+    from madexplorer.core.state import SimulationState, StepContext
 
 HARVEST_MEMORY_YEARS = 10
 
 
 @dataclass(frozen=True, slots=True)
 class Observation:
-    """What a unit believes about a cell, and when it learned it."""
+    """What a unit believes about a cell, and when it learned it.
+
+    Static, noise-free cell properties (such as water access) are not part of a belief:
+    once a cell is known they are read from the world.
+    """
 
     year: int
     food_kcal: float  # perceived accessible wild food stock
-    water_access: float
     population: int  # other people perceived in the cell (excluding the observer)
 
 
 NEVER_OBSERVED = -(2**31)  # observation year of a cell the unit knows nothing about
 YEAR_DTYPE = np.int32  # observation years (halves memory traffic versus int64)
+POPULATION_DTYPE = np.int32  # perceived head counts
+# Perceived food is a noisy estimate (lognormal noise, sigma ~0.3); float32's ~1e-7 relative
+# precision is far below that, and halves the memory of the largest belief array.
+FOOD_DTYPE = np.float32
+YearArray = npt.NDArray[np.int32]
+CountArray = npt.NDArray[np.int32]
+FoodArray = npt.NDArray[np.float32]
 
 
-@dataclass(frozen=True, eq=False)
-class BeliefMap:
-    """A unit's beliefs about every cell, as dense per-cell arrays.
+@dataclass(frozen=True, slots=True)
+class BeliefPatch:
+    """Sparse change to one unit's beliefs: new observations for a few cells.
 
-    ``year[c] == NEVER_OBSERVED`` means the cell is unknown (the other entries are then
-    meaningless). The arrays are never modified after the map is built: perception, sharing
-    and merging all construct new maps, so proposals evaluated against one year's beliefs
-    stay valid until applied, and maps can be shared between units safely.
+    Values are copies taken when the patch is built, so patches computed from one year's
+    beliefs stay valid while other patches are applied.
     """
 
-    year: npt.NDArray[np.int32]
-    food_kcal: FloatArray  # perceived accessible wild food stock
-    water_access: FloatArray
-    population: IntArray  # other people perceived in the cell (excluding the observer)
+    unit_id: str
+    cells: IntArray
+    year: YearArray
+    food_kcal: FoodArray | FloatArray
+    population: CountArray | IntArray
+
+    def apply(self, state: "SimulationState", ctx: "StepContext") -> None:
+        """Write the observations into the unit's belief arrays (only these cells)."""
+        unit = state.units[self.unit_id]
+        unit.beliefs = unit.beliefs.sized(state.world.n_cells)
+        unit.beliefs.write(self.cells, self.year, self.food_kcal, self.population)
+
+
+@dataclass(eq=False)
+class BeliefMap:
+    """A unit's beliefs about every cell, as dense per-cell arrays owned by one unit.
+
+    ``year[c] == NEVER_OBSERVED`` means the cell was never observed (the other entries are
+    then meaningless). Expiry is lazy: an entry is *current* in year ``t`` for a memory of
+    ``m`` years while ``year[c] > t - m``; stale entries stay in the arrays and are simply
+    ignored by readers (:meth:`current`), so no yearly scan of the whole map is needed.
+
+    The arrays are modified in place, only through :class:`BeliefPatch` in the apply phase
+    (staged evaluation stays valid because patches carry copies). A map belongs to exactly
+    one unit: fission copies it (:meth:`copy`), so the copying cost falls on rare structural
+    events rather than on every perception step.
+    """
+
+    year: YearArray
+    food_kcal: FoodArray  # perceived accessible wild food stock (float32)
+    population: CountArray  # other people perceived in the cell (excluding the observer)
 
     @classmethod
     def empty(cls, n_cells: int) -> "BeliefMap":
         """A map in which nothing is known."""
         return cls(
             np.full(n_cells, NEVER_OBSERVED, dtype=YEAR_DTYPE),
-            np.zeros(n_cells),
-            np.zeros(n_cells),
-            np.zeros(n_cells, dtype=np.int64),
+            np.zeros(n_cells, dtype=FOOD_DTYPE),
+            np.zeros(n_cells, dtype=POPULATION_DTYPE),
         )
 
     @classmethod
     def from_observations(cls, n_cells: int, observations: dict[int, Observation]) -> "BeliefMap":
         """Build a map from ``{cell: Observation}`` (tests and conversions)."""
-        year, food, water, population = cls.empty(n_cells).arrays()
+        beliefs = cls.empty(n_cells)
         for cell, obs in observations.items():
-            year[cell], food[cell] = obs.year, obs.food_kcal
-            water[cell], population[cell] = obs.water_access, obs.population
-        return cls(year, food, water, population)
+            beliefs.year[cell], beliefs.food_kcal[cell] = obs.year, obs.food_kcal
+            beliefs.population[cell] = obs.population
+        return beliefs
 
     @property
     def n_cells(self) -> int:
         """Number of cells the map covers (0 for a unit that has never perceived)."""
         return int(self.year.size)
 
-    def arrays(self) -> tuple[npt.NDArray[np.int32], FloatArray, FloatArray, IntArray]:
-        """Fresh copies of the four arrays, for building a new map."""
-        return (
-            self.year.copy(),
-            self.food_kcal.copy(),
-            self.water_access.copy(),
-            self.population.copy(),
-        )
+    def copy(self) -> "BeliefMap":
+        """An independent copy (for a daughter unit)."""
+        return BeliefMap(self.year.copy(), self.food_kcal.copy(), self.population.copy())
 
     def sized(self, n_cells: int) -> "BeliefMap":
         """This map, or an empty one of the right size if it covers no cells yet."""
@@ -88,28 +121,47 @@ class BeliefMap:
             return BeliefMap.empty(n_cells)
         raise ValueError(f"belief map covers {self.n_cells} cells, expected {n_cells}")
 
-    def __contains__(self, cell: int) -> bool:
-        return 0 <= cell < self.n_cells and int(self.year[cell]) != NEVER_OBSERVED
+    def write(
+        self,
+        cells: IntArray,
+        year: YearArray | int,
+        food_kcal: FoodArray | FloatArray,
+        population: CountArray | IntArray,
+    ) -> None:
+        """Overwrite the entries of ``cells`` (apply phase only)."""
+        self.year[cells] = year
+        self.food_kcal[cells] = food_kcal
+        self.population[cells] = population
 
-    def __len__(self) -> int:
-        return int((self.year != NEVER_OBSERVED).sum())
+    def current(self, cells: IntArray, year: int, memory_years: int) -> BoolArray:
+        """Which of ``cells`` hold an observation still within memory in ``year``."""
+        mask: BoolArray = self.year[cells] > year - memory_years
+        return mask
+
+    def known_cells(self, year: int, memory_years: int) -> int:
+        """Number of cells with a current observation."""
+        return int((self.year > year - memory_years).sum())
+
+    def __contains__(self, cell: int) -> bool:
+        """Whether the cell has ever been observed (current or stale)."""
+        return 0 <= cell < self.n_cells and int(self.year[cell]) != NEVER_OBSERVED
 
     def __getitem__(self, cell: int) -> Observation:
         if cell not in self:
             raise KeyError(cell)
         return Observation(
-            int(self.year[cell]),
-            float(self.food_kcal[cell]),
-            float(self.water_access[cell]),
-            int(self.population[cell]),
+            int(self.year[cell]), float(self.food_kcal[cell]), int(self.population[cell])
         )
 
     def to_dict(self) -> dict[int, Observation]:
-        """``{cell: Observation}`` for every known cell."""
+        """``{cell: Observation}`` for every cell ever observed (current or stale)."""
         return {c: self[c] for c in np.flatnonzero(self.year != NEVER_OBSERVED).tolist()}
 
     def merged_with(self, other: "BeliefMap") -> "BeliefMap":
-        """Per cell, ``other``'s observation where it is strictly fresher than this map's."""
+        """Per cell, ``other``'s observation where it is strictly fresher than this map's.
+
+        Returns this map (unchanged) or a new one; never ``other`` itself.
+        """
         n = max(self.n_cells, other.n_cells)
         mine, theirs = self.sized(n), other.sized(n)
         fresher = theirs.year > mine.year
@@ -118,7 +170,6 @@ class BeliefMap:
         return BeliefMap(
             np.where(fresher, theirs.year, mine.year),
             np.where(fresher, theirs.food_kcal, mine.food_kcal),
-            np.where(fresher, theirs.water_access, mine.water_access),
             np.where(fresher, theirs.population, mine.population),
         )
 

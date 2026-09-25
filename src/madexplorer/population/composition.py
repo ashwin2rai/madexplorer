@@ -183,7 +183,7 @@ def split_off(
         parent_id=parent.id,
         food_ratio=parent.food_ratio,
         energy_deficit=parent.energy_deficit,
-        beliefs=parent.beliefs,  # immutable map, safe to share
+        beliefs=parent.beliefs.copy(),  # maps are owned and patched in place
         familiarity=dict(parent.familiarity),
         knowledge=parent.knowledge.copy(),
         technologies=parent.technologies,

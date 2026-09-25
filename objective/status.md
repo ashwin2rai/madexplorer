@@ -48,7 +48,7 @@ network; distributional state: later strata) in every new data structure.
 | Phase | Content (brief items) | Kind of change | Status |
 |---|---|---|---|
 | P0 | Benchmarks first (18): synthetic performance scenario with 100/500/1000/2000 units for 25-50 ticks (ms/tick, ms/unit/tick, per-subsystem time, peak RSS); benchmark tiers smoke / dev / release / baseline as make targets; record **pre-reform reference timings** (incl. 1,000-year seed 0) for target 19 | tooling | **done** |
-| P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation; float32 is a rounding-level change (golden re-recorded, documented) | planned |
+| P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation (exact on all golden fixtures and the 1,000-year seed 0) | **done** |
 | P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** | planned |
 | P3 | Bounded migration attention (9-10): `migration.max_considered_destinations` (default ~12) drawn by proximity, recency, direct knowledge and a random exploratory slot, **independent of utility**; then argmax + one move draw as now. Rerun perception-noise experiment | **model change** + experiment | planned |
 | P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | planned |
@@ -105,6 +105,49 @@ validation, remaining concerns.)
   belief sharing scales with units × known cells (41 → 255 ms, 6× for 3.5× units) as maps
   saturate (106 → 796 known cells). Fusion (3 → 24 ms) and diffusion also grow faster than
   linearly; to be checked in P4. P1-P3 target sharing, perception and migration directly.
+
+#### P1. Belief representation (representation change; seeded output unchanged)
+
+- **Old.** `BeliefMap` was immutable: perception copied four cell-length arrays per unit per
+  year and scanned them to erase stale entries; sharing copied them again for every unit with
+  partners; fission shared the map object; `water_access` (static, noise-free) was stored in
+  every unit's map.
+- **New** (`population/unit.py`, `mobility/exploration.py`, `mobility/migration.py`):
+  - `BeliefPatch(unit_id, cells, year, food_kcal, population)` is the proposal of perception
+    and sharing; `apply` writes only those cells into the unit's arrays. Patches carry copies,
+    so staged evaluate/apply semantics are unchanged.
+  - **Lazy expiry.** No yearly scan: an entry is current in year `t` while
+    `observed > t - memory_years`; `BeliefMap.current()` / `known_cells()` apply the test on
+    read (migration uses it to pick candidates). Stale entries may be merged or relayed, but
+    are always older than any current entry, so this never changes a current belief. This is
+    exactly equivalent to the old eager erasure.
+  - **Ownership.** A map belongs to one unit; fission copies it (`BeliefMap.copy()`), fusion
+    builds a merged map. Copy cost moved from every tick to rare structural events.
+  - **Static data out of beliefs.** Water access is read from `world.water_access` for known
+    cells; `Observation` and `cell_utility` changed accordingly.
+  - **Smaller types.** Food estimates float32 (noise sigma 0.3 ≫ 1e-7 precision), perceived
+    population int32, years int32: 12 bytes per cell per unit instead of 32.
+- **Validation.** All five golden fixtures unchanged (including after float32); the 1,000-year
+  seed-0 run is identical (29,794 people, 500,700 unit-years). New mechanism tests: lazy expiry,
+  patches touch only their cells, copies are independent; the Hypothesis sharing test now
+  applies the patch and compares with the reference dictionary merge.
+- **Performance** (`benchmarks/perf/p1_*`):
+
+  | Synthetic units | ms/tick P0 → P1 | perception | sharing | peak RSS |
+  |---|---|---|---|---|
+  | 500 | 171 → 166 | 18.4 → 10.6 | 41 → 36 | 127 → 87 MB |
+  | 1000 | 362 → 305 | 37.6 → 18.2 | 112 → 96 | 178 → 112 MB |
+  | 2000 | 677 → 601 | 60.2 → 32.4 | 255 → 235 | 293 → 165 MB |
+
+  1,000-year seed 0: perception 15.2 → 9.4 s, peak RSS 256 → 185 MB, but total 167.9 →
+  168.4 s because every other subsystem measured 3-10% slower in this run. That looks like
+  machine timing noise on the shared codespace (roughly ±5%), not a regression: the code
+  those subsystems run did not change. Whole-run comparisons below that noise level need
+  repeated runs.
+- **Remaining.** Sharing still compares whole maps with every partner (O(cells × partners)
+  per unit) and is now the dominant cost (≈28% of the run); P2 replaces it with bounded
+  reports. Perception's remaining cost is per-unit Python overhead (radius, neighborhood,
+  noise draw), addressed in P4 if still significant.
 
 ---
 

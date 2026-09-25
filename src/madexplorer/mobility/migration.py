@@ -13,7 +13,6 @@ because there are more of them (no best-of-many-noise bias).
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from functools import partial
 
 import numpy as np
 
@@ -23,7 +22,7 @@ from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.population.energetics import annual_need_kcal
 from madexplorer.population.groups import sigmoid
-from madexplorer.population.unit import NEVER_OBSERVED, Observation, PopulationUnit
+from madexplorer.population.unit import Observation, PopulationUnit
 from madexplorer.species.profile import MigrationBehavior
 
 
@@ -49,6 +48,7 @@ from madexplorer.species.profile import MigrationBehavior
 )
 def cell_utility(
     observation: Observation,
+    water_access: float,
     population: int,
     need_kcal: float,
     path_cost_km: float,
@@ -56,13 +56,17 @@ def cell_utility(
     memory_years: int,
     behavior: MigrationBehavior,
 ) -> dict[str, float]:
-    """Utility components of settling in a cell (noise excluded)."""
+    """Utility components of settling in a cell (noise excluded).
+
+    ``water_access`` is the cell's static, exactly known water access (read from the world
+    once the cell is known), not part of the belief.
+    """
     per_head = population + observation.population
     ratio = observation.food_kcal / max(need_kcal * per_head / max(population, 1), 1.0)
     ratio = min(max(ratio, 0.05), behavior.food_ratio_cap)
     return {
         "expected_food": behavior.food_weight * math.log(ratio),
-        "water_access": behavior.water_weight * observation.water_access,
+        "water_access": behavior.water_weight * water_access,
         "movement_cost": -behavior.movement_cost_weight
         * path_cost_km
         / behavior.movement_reference_km,
@@ -131,6 +135,7 @@ def destination_components(
     year: int,
     memory_years: int,
     behavior: MigrationBehavior,
+    water_access: float,
 ) -> dict[str, float]:
     """Utility components of ``cell`` for ``unit``, including the cost of leaving."""
     obs = unit.beliefs[cell]
@@ -139,6 +144,7 @@ def destination_components(
         obs = replace(obs, food_kcal=obs.food_kcal + costs.farm_kcal)
     components = cell_utility(
         obs,
+        water_access,
         unit.population,
         costs.need_kcal,
         costs.reachable[cell],
@@ -267,7 +273,7 @@ class MigrationSubsystem:
         )
         movement = ctx.movement[unit.species_id]
         cells, path_costs = movement.reachable_arrays(unit.cell)
-        known = beliefs.year[cells] != NEVER_OBSERVED
+        known = beliefs.current(cells, state.year, profile.cognition.memory_years)
         candidates = cells[known]
         if not (candidates == unit.cell).any():
             return None  # cannot evaluate staying without a current observation
@@ -288,7 +294,9 @@ class MigrationSubsystem:
         )
 
     @staticmethod
-    def _scores(prepared: Sequence[_Prepared], year: int) -> list[FloatArray]:
+    def _scores(
+        prepared: Sequence[_Prepared], year: int, water_access: FloatArray
+    ) -> list[FloatArray]:
         """Utilities of every candidate of every prepared unit, in one vectorized pass."""
         if not prepared:
             return []
@@ -299,7 +307,7 @@ class MigrationSubsystem:
         def gather(field: str) -> np.ndarray:
             return np.concatenate([getattr(p.unit.beliefs, field)[p.candidates] for p in prepared])
 
-        food, water = gather("food_kcal"), gather("water_access")
+        food, water = gather("food_kcal"), water_access[cells]
         others, observed = gather("population"), gather("year")
 
         def per_unit(values: list[float]) -> FloatArray:
@@ -352,14 +360,18 @@ class MigrationSubsystem:
         gain = float(scores[position[best]] - scores[position[unit.cell]])
         hazard = migration_probability(gain, prepared.behavior)
         if unit.id in ctx.trace_units:
-            components = partial(
-                destination_components,
-                unit,
-                costs=prepared.costs,
-                year=state.year,
-                memory_years=prepared.memory_years,
-                behavior=prepared.behavior,
-            )
+
+            def components(cell: int) -> dict[str, float]:
+                return destination_components(
+                    unit,
+                    cell,
+                    prepared.costs,
+                    state.year,
+                    prepared.memory_years,
+                    prepared.behavior,
+                    float(state.world.water_access[cell]),
+                )
+
             ctx.events.emit(
                 state.year,
                 "trace_migration",
@@ -384,7 +396,7 @@ class MigrationSubsystem:
         prepared = self._prepare(unit, state, ctx)
         if prepared is None:
             return None
-        (scores,) = self._scores([prepared], state.year)
+        (scores,) = self._scores([prepared], state.year, state.world.water_access)
         return self._finish(prepared, scores, state, ctx, rng)
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Relocation]:
@@ -392,7 +404,9 @@ class MigrationSubsystem:
         rng = ctx.rng.stream(Streams.MIGRATION)
         prepared = [p for u in state.units.values() if (p := self._prepare(u, state, ctx))]
         proposals: list[Relocation] = []
-        for item, scores in zip(prepared, self._scores(prepared, state.year), strict=True):
+        for item, scores in zip(
+            prepared, self._scores(prepared, state.year, state.world.water_access), strict=True
+        ):
             unit = item.unit
             decision = self._finish(item, scores, state, ctx, rng)
             if decision is None or rng.random() >= decision.hazard:
