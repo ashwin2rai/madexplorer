@@ -79,6 +79,8 @@ class TickLedger:
     technology_losses: int = 0
     resolution_merges: int = 0
     crowding_deaths_expected: float = 0.0  # deaths attributable to crowding (expected value)
+    migration_decisions: int = 0  # units that compared staying with a destination
+    food_saturated_decisions: int = 0  # of those, with a flat food utility at home
 
 
 @dataclass(eq=False)

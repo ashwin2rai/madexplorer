@@ -113,6 +113,8 @@ class MetricsRecorder:
             "crude_death_rate": ledger.deaths * per_thousand,
             "mean_age": mean_age,
             "migrations": ledger.migrations,
+            "migration_decisions": ledger.migration_decisions,
+            "food_saturated_decisions": ledger.food_saturated_decisions,
             "fissions": ledger.fissions,
             "fusions": ledger.fusions,
             "extinctions": ledger.extinctions,

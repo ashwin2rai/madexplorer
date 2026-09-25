@@ -9,7 +9,7 @@ Physiology distributions, social psychology distributions, and manipulation /
 niche-construction traits arrive with the subsystems that consume them.
 """
 
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -171,7 +171,9 @@ class MigrationBehavior(FrozenModel):
     uncertainty_weight: float
     inertia: float
     decisiveness: float = Field(ge=0)
-    food_ratio_cap: float = Field(gt=0)
+    food_utility: Literal["capped_log", "log1p", "saturating", "log"]
+    food_ratio_cap: float = Field(gt=0)  # capped_log only: stock (years of need) valued at most
+    food_half_saturation_years: float = Field(gt=0)  # saturating only: R with half the value
     abandoned_stores_weight: float = Field(ge=0)  # per year of need left behind when moving
     abandoned_fields_weight: float = Field(ge=0)  # per year of need of crop output forgone
     # Optional cap on destinations evaluated per year (nearest by path cost, utility-blind);

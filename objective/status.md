@@ -50,7 +50,7 @@ network; distributional state: later strata) in every new data structure.
 | P0 | Benchmarks first (18): synthetic performance scenario with 100/500/1000/2000 units for 25-50 ticks (ms/tick, ms/unit/tick, per-subsystem time, peak RSS); benchmark tiers smoke / dev / release / baseline as make targets; record **pre-reform reference timings** (incl. 1,000-year seed 0) for target 19 | tooling | **done** |
 | P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation (exact on all golden fixtures and the 1,000-year seed 0) | **done** |
 | P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** (small measured effect) | **done** |
-| P3 | Revised after P2 (reachability already bounds candidates to ~20): no hard attention cap for humans (`max_considered_destinations: null`, utility-blind nearest-cells cap available for future species); switchable precision-weighted shrinkage of direct observations `q = tau^2/(tau^2 + sigma^2)`; perception-noise experiment with and without it | experiment + optional model change | **experiment done, decision pending** |
+| P3 | Revised after P2 (reachability already bounds candidates to ~20): no hard attention cap for humans (`max_considered_destinations: null`, utility-blind nearest-cells cap available for future species); switchable precision-weighted shrinkage of direct observations `q = tau^2/(tau^2 + sigma^2)`; perception-noise experiment with and without it; then review of the capped food utility | **model changes** (shrinkage on; food utility `log1p`) | **done** |
 | P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | planned |
 | P5 | Agriculture (20-25): expected future tenure `p(1-p^H)/(1-p)` from the unit's current stay probability; review tech × knowledge (candidate: knowledge sets distance to the technology frontier, `e_min + (1-e_min)K/(K+K_half)`, with `e_min` justified behaviorally, not fitted); small experimental cultivation share (2-5% labor) when crop returns are within a band of foraging, as generic subsistence exploration; scenarios A (abundant frontier) and B (intensification pressure); paired cultivation on/off ablation on B as a statistical test replacing the strict xfail | **model changes** + validation | planned |
 | P6 | Aggregation rerun (26): off / moderate / aggressive, paired seeds, documented approximation errors | experiment | planned |
@@ -274,12 +274,72 @@ validation, remaining concerns.)
   cell look worse than it is (a random-walk diffusion), not by a perceived benefit.
   Shrinkage removes that, leaving expansion to real signals (crowding lowers food per head
   below the cap), which are weak while land is abundant.
-- **Decision: pending** (see the checkpoint question). The default stays
-  `direct_observation_shrinkage: false` until decided; golden fixtures unchanged.
-- **Open issue raised.** The capped, stock-based food ratio makes the food term flat in most
-  decisions: groups cannot tell a rich from a very rich cell, and migration responds mainly to
-  crowding, water, distance and noise. This bears on colonization speed and on the P5
-  intensification scenario.
+- **Decision (user): adopt shrinkage** (`mechanisms.direct_observation_shrinkage: true` by
+  default) and treat the slower colonization as diagnostic, not as something to tune back.
+  Before re-recording fixtures, review the saturated food term (next).
+
+#### P3b. Food utility review (model change)
+
+- **Problem.** Migration valued food as `w·ln(min(R, 2))`, where R is perceived stock per
+  prospective head in years of need. The cap dates from the first commit with no recorded
+  purpose beyond "diminishing marginal value". Measured R in decisions: median about 3,
+  90th percentile 4-9; 65-100% of candidates above the cap. The term was flat in 67-77% of
+  decisions, so groups could not tell a rich cell from a very rich one. Once noise was
+  shrunk, many destinations became indistinguishable on food.
+- **Change.** `food_utility` rule v2.0 with a species choice
+  `migration.food_utility ∈ {capped_log, log1p, saturating, log}`; numerical guards clamp R to
+  [0.05, 1000]. Diagnostic `food_utility_slope` = dU/d ln R; a decision counts as
+  *food-saturated* when home R > 1 and the slope < 0.1 (ledger
+  `migration_decisions` / `food_saturated_decisions`, ensemble `food_saturated_share`).
+  Ensemble rows now also record occupied cells in years 150, 300, 450, 600 and 1000. The food
+  weight (2) was not retuned for any form.
+- **Controlled response** (shrinkage on, 21 cells around R ≈ 3, sigma 0.3; move probability):
+
+  | Form | noise only | 4× richer neighbor, true spread 0.3 | no richer neighbor, spread 0.3 |
+  |---|---|---|---|
+  | capped_log | 0.110 | 0.113 | 0.110 |
+  | log1p | 0.148 | 0.816 | 0.275 |
+  | saturating (k = 1) | 0.115 | 0.213 | 0.125 |
+  | log | 0.169 | 0.875 | 0.340 |
+
+- **Ensembles** (shrinkage on; seeds 0-7 paired, 600 years; `ensembles/p3_food_{form}_s{sigma}`;
+  values at sigma 0.1 / 0.3 / 0.5):
+
+  | Form | cells y300 | cells y600 | migration | food-saturated | sedentary | population y600 | first cultivation | inventions |
+  |---|---|---|---|---|---|---|---|---|
+  | capped_log | 34 / 20 / 14 | 405 / 225 / 116 | 0.16 / 0.15 / 0.14 | 67-77% | 0.28 | 13.6k / 7.4k / 3.8k | 120 / 134 / 142 | 6.5 / 5.8 / 4.9 |
+  | log1p | 44 / 53 / 33 | 595 / 641 / 456 | 0.17 / 0.19 / 0.19 | 0% | 0.32 / 0.27 / 0.21 | 16.1k / 17.9k / 12.2k | 240 / 173 / 304 | 11.9 / 11.1 / 11.6 |
+  | saturating | 36 / 28 / 23 | 394 / 272 / 183 | 0.09 / 0.08 / 0.08 | 6-10% | 0.52-0.62 | 13.4k / 9.7k / 6.8k | 194 / 214 / 185 | 25 / 23 / 18 |
+  | log | 48 / 48 / 41 | 532 / 522 / 514 | 0.23 / 0.23 / 0.24 | 0% | 0.26 / 0.20 / 0.15 | 14.7k / 14.3k / 13.9k | 258 / 216 / 227 | 12.9 / 10.2 / 12.4 |
+
+  Noise sensitivity (sigma 0.5 − 0.1, paired, se): cells at year 600 −289 (25) capped_log,
+  −139 (53) log1p, −211 (43) saturating, −18 (65) log; final population −9.8k (0.9k),
+  −4.0k (1.6k), −6.6k (2.1k), −0.7k (2.0k); sedentary share +0.00, −0.11 (0.007), +0.10,
+  −0.11 (0.009).
+- **Selection: `log1p`**, on mechanism grounds:
+  - It is monotone and never flat (0% saturated decisions).
+  - It is bounded only logarithmically, so abundance cannot run away, and it is finite at R = 0.
+  - It has the requested interpretation: diminishing returns, marginal value per kcal 1/(1+R).
+  - It responds strongly to genuinely richer neighbors, and its noise sensitivity of
+    colonization and population is less than half the cap's.
+  - The other forms: `capped_log` rejected (flat, blind to a 4× richer neighbor, colonization
+    set by noise); `saturating` rejected (nearly flat above R ≈ 3 with k = 1, a new free
+    parameter, weak response, extreme sedentism); `log` kept as a diagnostic (most
+    noise-robust, but no diminishing returns and a hard floor at R → 0). It shows that
+    colonization of ~500-640 cells is not an artifact of log1p's shape.
+  - Colonization speed was not a criterion; the old reference's 519 cells were not targeted.
+- **Accepted trade-offs.**
+  - Under log1p, sedentism still depends on noise (−0.11 from sigma 0.1 to 0.5, versus −0.19
+    in the original model without shrinkage).
+  - log1p has low elasticity at very low stocks (R < 1: a 4× richer cell gains only
+    ln(1.56/1.14) at R = 0.14). This regime is rare in runs (home R 10th percentile ≈ 1.2).
+    The shrinkage mechanism tests now use a realistic R ≈ 3.
+  - First cultivation comes later and varies more (173-304 vs 120-142). Inventions double
+    (≈11-12 vs 5-7), with larger populations and wider range. Both are for P5 to examine.
+- **Validation.** Golden fixtures re-recorded once, after both P3 decisions
+  (shrinkage on, log1p). 141 fast tests pass. New tests: forms monotone with correct slope;
+  smooth forms keep a gradient where the cap is flat; saturating bounded; shrinkage damps
+  noise-only moves at R ≈ 3 and keeps the response to a real 4× richer neighbor.
 
 ---
 

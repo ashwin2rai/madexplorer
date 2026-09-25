@@ -10,7 +10,6 @@ per-candidate noise draw, so identical options do not make moving likelier just
 because there are more of them (no best-of-many-noise bias).
 """
 
-import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
@@ -26,14 +25,83 @@ from madexplorer.population.groups import sigmoid
 from madexplorer.population.unit import Observation, PopulationUnit
 from madexplorer.species.profile import MigrationBehavior
 
+FOOD_RATIO_FLOOR = 0.05  # numerical guard: log of an empty cell
+FOOD_RATIO_CEILING = 1000.0  # numerical guard for the unbounded forms (1,000 years of need)
+# Diagnostic: a decision is food-saturated when the home cell has at least a year of stock per
+# head and the food utility's slope dU/d ln R there is below 10% of the plain log's.
+SATURATED_SLOPE = 0.1
+
+
+def food_ratio(
+    food_kcal: FloatArray, others: FloatArray, population: FloatArray, need_kcal: FloatArray
+) -> FloatArray:
+    """Perceived food stock per prospective head, in years of the group's per-capita need."""
+    per_head = population + others
+    ratio: FloatArray = food_kcal / np.maximum(
+        need_kcal * per_head / np.maximum(population, 1.0), 1.0
+    )
+    return ratio
+
+
+@model_rule(
+    name="food_utility",
+    version="2.0",
+    rationale=(
+        "Value of a cell's food stock R (years of need per prospective head), with diminishing "
+        "returns. Forms: capped_log = ln(min(R, cap)) (flat above the cap; the original rule); "
+        "log1p = ln(1 + R) (each further year of stock is worth less, marginal value per kcal "
+        "1/(1+R), never flat); saturating = R/(R + k) (bounded: value above sufficiency falls "
+        "off sharply); log = ln R (diagnostic, no diminishing returns beyond the log). Guards "
+        "clamp R to [0.05, 1000] (cap for capped_log)."
+    ),
+    source_type="heuristic",
+    parameters=("food_utility", "food_ratio_cap", "food_half_saturation_years"),
+    expected_domain="monotone non-decreasing in R; multiplied by food_weight",
+    known_limitations=(
+        "Standing stock, not expected sustained yield: regrowth and depletion by the group are "
+        "not projected."
+    ),
+)
+def food_utility(ratio: FloatArray, behavior: MigrationBehavior) -> FloatArray:
+    """Unweighted food utility of stock ratios under the species' chosen form."""
+    form = behavior.food_utility
+    if form == "capped_log":
+        values = np.log(np.minimum(np.maximum(ratio, FOOD_RATIO_FLOOR), behavior.food_ratio_cap))
+    else:
+        r = np.minimum(np.maximum(ratio, FOOD_RATIO_FLOOR), FOOD_RATIO_CEILING)
+        if form == "log1p":
+            values = np.log1p(r)
+        elif form == "saturating":
+            values = r / (r + behavior.food_half_saturation_years)
+        else:
+            values = np.log(r)
+    result: FloatArray = np.asarray(values, dtype=np.float64)
+    return result
+
+
+def food_utility_slope(ratio: FloatArray, behavior: MigrationBehavior) -> FloatArray:
+    """``dU/d ln R`` of :func:`food_utility` (1 for the plain log): food sensitivity."""
+    form = behavior.food_utility
+    if form == "capped_log":
+        within = (ratio >= FOOD_RATIO_FLOOR) & (ratio < behavior.food_ratio_cap)
+        slope = np.where(within, 1.0, 0.0)
+    elif form == "log1p":
+        slope = ratio / (1.0 + ratio)
+    elif form == "saturating":
+        k = behavior.food_half_saturation_years
+        slope = ratio * k / (ratio + k) ** 2
+    else:
+        slope = np.ones_like(ratio)
+    result: FloatArray = np.asarray(slope, dtype=np.float64)
+    return result
+
 
 @model_rule(
     name="perceived_cell_utility",
-    version="1.0",
+    version="2.0",
     rationale=(
-        "Utility = w_food*log(perceived food per head relative to need, capped) + w_water*water "
-        "- w_move*path_cost/reference - w_uncertainty*information_age/memory. Log food captures "
-        "diminishing marginal value of abundance."
+        "Utility = w_food*food_utility(perceived food per head relative to need) + "
+        "w_water*water - w_move*path_cost/reference - w_uncertainty*information_age/memory."
     ),
     source_type="heuristic",
     parameters=(
@@ -42,7 +110,6 @@ from madexplorer.species.profile import MigrationBehavior
         "movement_cost_weight",
         "movement_reference_km",
         "uncertainty_weight",
-        "food_ratio_cap",
     ),
     expected_domain="real-valued score; only differences matter",
     known_limitations="No security, trade, disease, or extraction terms until later MVPs.",
@@ -62,11 +129,14 @@ def cell_utility(
     ``water_access`` is the cell's static, exactly known water access (read from the world
     once the cell is known), not part of the belief.
     """
-    per_head = population + observation.population
-    ratio = observation.food_kcal / max(need_kcal * per_head / max(population, 1), 1.0)
-    ratio = min(max(ratio, 0.05), behavior.food_ratio_cap)
+    ratio = food_ratio(
+        np.array([observation.food_kcal]),
+        np.array([float(observation.population)]),
+        np.array([float(population)]),
+        np.array([need_kcal]),
+    )
     return {
-        "expected_food": behavior.food_weight * math.log(ratio),
+        "expected_food": behavior.food_weight * float(food_utility(ratio, behavior)[0]),
         "water_access": behavior.water_weight * water_access,
         "movement_cost": -behavior.movement_cost_weight
         * path_cost_km
@@ -234,15 +304,11 @@ def destination_components(
 
 
 def candidate_utilities(
-    food_kcal: FloatArray,
+    food_term: FloatArray,
     water_access: FloatArray,
-    others: FloatArray,
     age_years: FloatArray,
     path_cost_km: FloatArray,
     staying: BoolArray,
-    population: FloatArray,
-    need_kcal: FloatArray,
-    farm_kcal: FloatArray,
     stores_cost: FloatArray,
     fields_cost: FloatArray,
     memory_years: FloatArray,
@@ -250,16 +316,12 @@ def candidate_utilities(
 ) -> FloatArray:
     """:func:`cell_utility` plus leaving costs for many candidates at once (numpy).
 
-    Every argument is one value per candidate (per-unit values repeated); ``weights`` has
-    columns food, water, movement, movement reference km, uncertainty, food-ratio cap.
-    Matches the scalar rule up to floating-point rounding.
+    Every argument is one value per candidate (per-unit values repeated); ``food_term`` is
+    ``food_weight * food_utility``; ``weights`` has columns food, water, movement, movement
+    reference km, uncertainty. Matches the scalar rule up to floating-point rounding.
     """
-    food = np.where(staying & (farm_kcal > 0), food_kcal + farm_kcal, food_kcal)
-    per_head = population + others
-    ratio = food / np.maximum(need_kcal * per_head / np.maximum(population, 1.0), 1.0)
-    ratio = np.minimum(np.maximum(ratio, 0.05), weights[:, 5])
     utility: FloatArray = (
-        weights[:, 0] * np.log(ratio)
+        food_term
         + weights[:, 1] * water_access
         - weights[:, 2] * path_cost_km / weights[:, 3]
         - weights[:, 4] * age_years / memory_years
@@ -384,8 +446,8 @@ class MigrationSubsystem:
     @staticmethod
     def _scores(
         prepared: Sequence[_Prepared], year: int, water_access: FloatArray
-    ) -> list[FloatArray]:
-        """Utilities of every candidate of every prepared unit, in one vectorized pass."""
+    ) -> list[tuple[FloatArray, FloatArray]]:
+        """Utilities and food ratios of every candidate of every prepared unit, in one pass."""
         if not prepared:
             return []
         counts = np.array([p.candidates.size for p in prepared])
@@ -410,7 +472,21 @@ class MigrationSubsystem:
             per_unit([p.unit.food_log_prior for p in prepared]),
         )
         water = water_access[cells]
-
+        staying = cells == per_unit([p.unit.cell for p in prepared])
+        farm = per_unit([p.costs.farm_kcal for p in prepared])
+        food = np.where(staying & (farm > 0), food + farm, food)
+        ratio = food_ratio(
+            food,
+            others.astype(np.float64),
+            per_unit([p.unit.population for p in prepared]),
+            per_unit([p.costs.need_kcal for p in prepared]),
+        )
+        food_term = np.empty_like(ratio)
+        behaviors = {id(p.behavior): p.behavior for p in prepared}
+        behavior_of = np.array([id(p.behavior) for p in prepared])[owner]
+        for key, behavior in behaviors.items():
+            rows = behavior_of == key
+            food_term[rows] = behavior.food_weight * food_utility(ratio[rows], behavior)
         weights = np.array(
             [
                 (
@@ -419,27 +495,23 @@ class MigrationSubsystem:
                     p.behavior.movement_cost_weight,
                     p.behavior.movement_reference_km,
                     p.behavior.uncertainty_weight,
-                    p.behavior.food_ratio_cap,
                 )
                 for p in prepared
             ]
         )[owner]
         scores = candidate_utilities(
-            food,
+            food_term,
             water,
-            others.astype(np.float64),
             (year - observed).astype(np.float64),
             np.concatenate([p.path_costs for p in prepared]),
-            cells == per_unit([p.unit.cell for p in prepared]),
-            per_unit([p.unit.population for p in prepared]),
-            per_unit([p.costs.need_kcal for p in prepared]),
-            per_unit([p.costs.farm_kcal for p in prepared]),
+            staying,
             per_unit([p.costs.stores_cost for p in prepared]),
             per_unit([p.costs.fields_cost for p in prepared]),
             per_unit([p.memory_years for p in prepared]),
             weights,
         )
-        return np.split(scores, np.cumsum(counts)[:-1])
+        split = np.cumsum(counts)[:-1]
+        return list(zip(np.split(scores, split), np.split(ratio, split), strict=True))
 
     def _finish(
         self,
@@ -495,7 +567,7 @@ class MigrationSubsystem:
         prepared = self._prepare(unit, state, ctx)
         if prepared is None:
             return None
-        (scores,) = self._scores([prepared], state.year, state.world.water_access)
+        ((scores, _),) = self._scores([prepared], state.year, state.world.water_access)
         return self._finish(prepared, scores, state, ctx, rng)
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Relocation]:
@@ -503,11 +575,19 @@ class MigrationSubsystem:
         rng = ctx.rng.stream(Streams.MIGRATION)
         prepared = [p for u in state.units.values() if (p := self._prepare(u, state, ctx))]
         proposals: list[Relocation] = []
-        for item, scores in zip(
+        home_ratios: dict[int, list[float]] = {}
+        behaviors: dict[int, MigrationBehavior] = {}
+        for item, (scores, ratios) in zip(
             prepared, self._scores(prepared, state.year, state.world.water_access), strict=True
         ):
             unit = item.unit
             decision = self._finish(item, scores, state, ctx, rng)
+            if decision is not None:
+                key = id(item.behavior)
+                behaviors[key] = item.behavior
+                home_ratios.setdefault(key, []).append(
+                    float(ratios[item.candidates == unit.cell][0])
+                )
             if decision is None or rng.random() >= decision.hazard:
                 continue
             cost = item.costs.reachable[decision.destination]
@@ -523,4 +603,9 @@ class MigrationSubsystem:
                     decision.carry_kcal,
                 )
             )
+        for key, values in home_ratios.items():
+            ratio = np.asarray(values)
+            flat = (food_utility_slope(ratio, behaviors[key]) < SATURATED_SLOPE) & (ratio > 1.0)
+            ctx.ledger.migration_decisions += ratio.size
+            ctx.ledger.food_saturated_decisions += int(flat.sum())
         return proposals

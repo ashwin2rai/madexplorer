@@ -119,7 +119,12 @@ migration:
   uncertainty_weight: 0.5
   inertia: 1.0
   decisiveness: 3.0
+  # Food utility of perceived stock R (years of need per prospective head); see the
+  # food_utility rule. log1p = ln(1 + R): diminishing returns, never flat (the original
+  # capped_log was flat above R = 2 in ~70% of decisions; objective/status.md P3).
+  food_utility: log1p
   food_ratio_cap: 2.0
+  food_half_saturation_years: 1.0
   abandoned_stores_weight: 1.0
   abandoned_fields_weight: 2.0
   # No attention cap: one relocation reaches ~20 cells, which bounds the choice already.

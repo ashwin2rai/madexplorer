@@ -25,6 +25,8 @@ from madexplorer.core.simulation import SimulationResult, Simulator
 # Farming milestones: first year the farmed share of all food reaches each level.
 FARM_SHARE_THRESHOLDS = (0.1, 0.25, 0.5)
 QUANTILES = (0.05, 0.25, 0.5, 0.75, 0.95)
+# Colonization checkpoints: occupied cells in these years (NaN if the run is shorter).
+OCCUPIED_CELL_YEARS = (150, 300, 450, 600, 1000)
 # Final-state averages use the last years of a run to smooth year-to-year noise.
 TAIL_YEARS = 50
 
@@ -72,6 +74,10 @@ def summarize_run(result: SimulationResult, seed: int) -> Row:
             metrics, lambda r, x=threshold: r["farm_share_of_harvest"] >= x
         )
     migrations = sum(int(r["migrations"]) for r in metrics)
+    decisions = sum(int(r["migration_decisions"]) for r in metrics)
+    for year in OCCUPIED_CELL_YEARS:
+        rows = [r for r in metrics if int(r["year"]) == year]
+        row[f"occupied_cells_y{year}"] = int(rows[0]["occupied_cells"]) if rows else math.nan
     unit_years = sum(int(r["units"]) for r in metrics)
     tail = metrics[-TAIL_YEARS:]
     row.update(
@@ -86,6 +92,12 @@ def summarize_run(result: SimulationResult, seed: int) -> Row:
             "final_crowding_hazard": _tail_mean(metrics, "mean_crowding_hazard"),
             "final_crowding_death_share": _tail_mean(metrics, "crowding_death_share"),
             "final_crude_death_rate": _tail_mean(metrics, "crude_death_rate"),
+            "food_saturated_share": (
+                sum(int(r["food_saturated_decisions"]) for r in metrics) / decisions
+                if decisions
+                else math.nan
+            ),
+            "final_occupied_cells": int(last["occupied_cells"]),
             "inventions": sum(int(r["inventions"]) for r in metrics),
             "units": int(last["units"]),
             "runtime_seconds": float(result.manifest.get("runtime_seconds", math.nan)),

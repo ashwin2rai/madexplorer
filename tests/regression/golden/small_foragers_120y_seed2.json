@@ -1,18 +1,18 @@
 {
   "platform": "numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3",
   "final_year": 120,
-  "final_population": 81,
-  "final_units": 3,
-  "final_occupied_cells": 3,
+  "final_population": 111,
+  "final_units": 7,
+  "final_occupied_cells": 7,
   "totals": {
-    "births": 307.0,
-    "deaths": 256.0,
-    "migrations": 49.0,
-    "fissions": 7.0,
+    "births": 346.0,
+    "deaths": 265.0,
+    "migrations": 58.0,
+    "fissions": 11.0,
     "fusions": 5.0,
     "inventions": 0.0
   },
-  "event_count": 62,
-  "metrics_sha256": "2fc540ff1c9cfa4d2af77680477a17daf5e55615310d2d7856287748a972cfc9",
-  "events_sha256": "c9c9121a95f0a995cffd9087d2130222c477d322814078b3fa50fcbc7b9e6d82"
+  "event_count": 75,
+  "metrics_sha256": "9923238e9dbcbda8cd90b2c5edc9bf3a32e4b65c3dfcf3c3d44f1203cc3a87f6",
+  "events_sha256": "558585feed0632a8a6cde82d9f892390149f1526939824a5a1ad3755e1cb9a31"
 }

@@ -15,22 +15,27 @@ from madexplorer.mobility.migration import (
     choose_destination,
     destination_components,
     direct_confidence,
+    food_utility,
+    food_utility_slope,
 )
+from madexplorer.population.energetics import annual_need_kcal
 from madexplorer.population.unit import BeliefMap, Observation, PopulationUnit
 from tests.conftest import ROOT, small_scenario_dict, step_context
 
 
-def _simulator(inertia: float | None = None, shrink: bool = False) -> Simulator:
+def _simulator(
+    inertia: float | None = None, shrink: bool = False, food_utility: str | None = None
+) -> Simulator:
     data = small_scenario_dict()
-    if shrink:
-        data["mechanisms"] = {"direct_observation_shrinkage": True}
+    data["mechanisms"] = {"direct_observation_shrinkage": shrink}
+    migration: dict[str, object] = {}
     if inertia is not None:
+        migration["inertia"] = inertia
+    if food_utility is not None:
+        migration["food_utility"] = food_utility
+    if migration:
         data["species"] = [
-            {
-                "id": "human",
-                "profile": "species/human.yaml",
-                "overrides": {"migration": {"inertia": inertia}},
-            }
+            {"id": "human", "profile": "species/human.yaml", "overrides": {"migration": migration}}
         ]
     sim = Simulator(Scenario.from_dict(data, base_dir=ROOT))
     # Uniform water access, so alternatives that share a food belief are truly identical.
@@ -146,7 +151,7 @@ def test_vectorized_scores_match_the_component_rule() -> None:
     prepared = subsystem._prepare(unit, sim.state, step_context(sim))
     assert prepared is not None
     water = rng.uniform(size=sim.world.n_cells)
-    (scores,) = subsystem._scores([prepared], sim.state.year, water)
+    ((scores, _),) = subsystem._scores([prepared], sim.state.year, water)
     for cell, score in zip(prepared.candidates.tolist(), scores.tolist(), strict=True):
         components = destination_components(
             unit,
@@ -198,21 +203,32 @@ def test_food_prior_recovers_the_true_between_cell_variance() -> None:
     assert food_prior(np.full(9, 5e6), 0.3)[1] == 0.0  # no spread beyond noise: tau^2 = 0
 
 
-def _noisy_hazards(shrink: bool, spread: float, seed: int, better: float = 1.0) -> list[float]:
+def _noisy_hazards(
+    shrink: bool,
+    spread: float,
+    seed: int,
+    better: float = 1.0,
+    food_utility: str | None = None,
+    stock_years: float = 3.0,
+) -> list[float]:
     """Hazards for a unit whose neighborhood is observed with sigma = 0.3 noise.
 
-    True food is lognormal with ``spread`` across cells; the nearest neighbor's true food is
-    multiplied by ``better``. The prior is estimated from the observations, as in perception.
+    True food is lognormal with ``spread`` across cells around ``stock_years`` of the group's
+    need (a typical perceived stock ratio); the nearest neighbor's true food is multiplied by
+    ``better``. The prior is estimated from the observations, as in perception.
     """
-    sim = _simulator(shrink=shrink)
+    sim = _simulator(shrink=shrink, food_utility=food_utility)
     unit = _only_unit(sim)
+    profile = sim.scenario.species["human"]
+    temperature = float(sim.state.climate.temperature_c[unit.cell])
+    base_kcal = stock_years * annual_need_kcal(unit, profile, sim.tables["human"], temperature)
     rng = np.random.default_rng(seed)
     cells = [unit.cell, *_neighbors_by_cost(sim, unit)[:20]]
     hazards = []
     for _ in range(40):
-        true = 3e6 * np.exp(spread * rng.standard_normal(len(cells)))
-        true[0] = 3e6
-        true[1] = 3e6 * better
+        true = base_kcal * np.exp(spread * rng.standard_normal(len(cells)))
+        true[0] = base_kcal
+        true[1] = base_kcal * better
         observed = true * np.exp(0.3 * rng.standard_normal(len(cells)))
         unit.food_log_prior, unit.food_log_signal_var = food_prior(observed, 0.3)
         beliefs = {
@@ -245,3 +261,30 @@ def test_attention_cap_is_utility_blind_and_keeps_the_current_cell() -> None:
     assert attention_set(candidates, costs, 5, None).tolist() == [0, 1, 2, 3, 4]
     kept = candidates[attention_set(candidates, costs, 5, 3)].tolist()
     assert kept == [5, 9, 11]  # current cell + two nearest (ties by cell id)
+
+
+FORMS = ["capped_log", "log1p", "saturating", "log"]
+
+
+@pytest.mark.parametrize("form", FORMS)
+def test_food_utility_is_monotone_and_its_slope_matches(form: str) -> None:
+    behavior = _simulator(food_utility=form).scenario.species["human"].migration
+    ratio = np.geomspace(0.1, 50.0, 400)
+    values = food_utility(ratio, behavior)
+    assert np.all(np.diff(values) >= 0)
+    numeric = np.gradient(values, np.log(ratio))
+    inside = np.abs(np.log(ratio / behavior.food_ratio_cap)) > 0.05  # away from the kink
+    assert np.allclose(numeric[inside], food_utility_slope(ratio, behavior)[inside], atol=0.02)
+
+
+def test_smooth_forms_keep_a_food_gradient_where_the_cap_is_flat() -> None:
+    ratio = np.array([3.0, 6.0])  # typical perceived stock ratios above the cap of 2
+    capped = _simulator(food_utility="capped_log").scenario.species["human"].migration
+    smooth = _simulator(food_utility="log1p").scenario.species["human"].migration
+    assert np.ptp(food_utility(ratio, capped)) == 0.0
+    assert np.ptp(food_utility(ratio, smooth)) > 0.2
+
+
+def test_saturating_food_utility_is_bounded() -> None:
+    behavior = _simulator(food_utility="saturating").scenario.species["human"].migration
+    assert food_utility(np.array([1e6]), behavior)[0] <= 1.0
