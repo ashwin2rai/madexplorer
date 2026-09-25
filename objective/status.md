@@ -340,6 +340,13 @@ validation, remaining concerns.)
   (shrinkage on, log1p). 141 fast tests pass. New tests: forms monotone with correct slope;
   smooth forms keep a gradient where the cap is flat; saturating bounded; shrinkage damps
   noise-only moves at R ≈ 3 and keeps the response to a real 4× richer neighbor.
+- **Statistical suite after P3** (`make test-stat`, 18 min): 3 pass, the agriculture test is
+  still the strict xfail (open issue 1, P5), and **the aggregation-tolerance test now fails**.
+  With 8 units per cell, final population is 2.6× the aggregation-off reference (mean paired
+  log ratio 0.97, tolerance 0.35, all 8 seeds higher). Under the new migration model the
+  "8 units per cell ≈ reference" approximation from Section 7.1 no longer holds. The
+  tolerance was not loosened; this is P6's subject. Aggregation is not used in reference
+  runs.
 
 ---
 
