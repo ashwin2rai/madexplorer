@@ -1,5 +1,6 @@
 """Mechanism tests for the migration choice (spec §10.2): no best-of-many-noise bias."""
 
+import math
 from dataclasses import replace
 
 import numpy as np
@@ -7,17 +8,22 @@ import pytest
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
+from madexplorer.mobility.exploration import food_prior
 from madexplorer.mobility.migration import (
     MigrationSubsystem,
+    attention_set,
     choose_destination,
     destination_components,
+    direct_confidence,
 )
 from madexplorer.population.unit import BeliefMap, Observation, PopulationUnit
 from tests.conftest import ROOT, small_scenario_dict, step_context
 
 
-def _simulator(inertia: float | None = None) -> Simulator:
+def _simulator(inertia: float | None = None, shrink: bool = False) -> Simulator:
     data = small_scenario_dict()
+    if shrink:
+        data["mechanisms"] = {"direct_observation_shrinkage": True}
     if inertia is not None:
         data["species"] = [
             {
@@ -122,7 +128,7 @@ def test_vectorized_scores_match_the_component_rule() -> None:
     unit = _only_unit(sim)
     rng = np.random.default_rng(9)
     unit.fields_ha, unit.crop_yield_kcal_per_ha, unit.stores_kcal = 2.0, 8e5, 4e6
-    unit.food_prior_kcal = 3e6
+    unit.food_log_prior = math.log(3e6)
     cells = [unit.cell, *_neighbors_by_cost(sim, unit)[:15]]
     unit.beliefs = BeliefMap.from_observations(
         sim.world.n_cells,
@@ -151,6 +157,7 @@ def test_vectorized_scores_match_the_component_rule() -> None:
             prepared.behavior,
             float(water[cell]),
             prepared.confidence_decay,
+            prepared.direct_confidence,
         )
         expected = sum(components.values())
         assert score == pytest.approx(expected, rel=1e-9, abs=1e-12)
@@ -160,7 +167,7 @@ def test_hearsay_about_a_rich_cell_pulls_less_than_a_direct_observation() -> Non
     sim = _simulator()
     unit = _only_unit(sim)
     target = _neighbors_by_cost(sim, unit)[0]
-    unit.food_prior_kcal = 2e6
+    unit.food_log_prior = math.log(2e6)
     hazards = []
     for hops in (0, 1, 3):
         rich = Observation(year=sim.state.year, food_kcal=8e6, population=0, hops=hops)
@@ -170,3 +177,71 @@ def test_hearsay_about_a_rich_cell_pulls_less_than_a_direct_observation() -> Non
     average = Observation(year=sim.state.year, food_kcal=2e6, population=0, hops=3)
     baseline = _hazard(sim, {unit.cell: _observation(sim, 2e6), target: average})
     assert hazards[2] > baseline
+
+
+def test_direct_confidence_is_precision_weighted_and_off_by_default() -> None:
+    assert direct_confidence(0.5, 0.3, enabled=False) == 1.0
+    assert direct_confidence(0.5, 0.0, enabled=True) == 1.0
+    assert direct_confidence(0.0, 0.3, enabled=True) == 0.0  # differences are all noise
+    assert direct_confidence(0.09, 0.3, enabled=True) == pytest.approx(0.5)
+    assert direct_confidence(1.0, 0.3, True) > direct_confidence(0.1, 0.3, True)
+    assert direct_confidence(0.5, 0.1, True) > direct_confidence(0.5, 0.5, True)
+
+
+def test_food_prior_recovers_the_true_between_cell_variance() -> None:
+    rng = np.random.default_rng(3)
+    true = np.exp(12.0 + 0.6 * rng.standard_normal(5000))
+    observed = true * np.exp(0.3 * rng.standard_normal(true.size))
+    log_prior, signal_var = food_prior(observed, 0.3)
+    assert log_prior == pytest.approx(12.0, abs=0.05)
+    assert signal_var == pytest.approx(0.36, rel=0.1)
+    assert food_prior(np.full(9, 5e6), 0.3)[1] == 0.0  # no spread beyond noise: tau^2 = 0
+
+
+def _noisy_hazards(shrink: bool, spread: float, seed: int, better: float = 1.0) -> list[float]:
+    """Hazards for a unit whose neighborhood is observed with sigma = 0.3 noise.
+
+    True food is lognormal with ``spread`` across cells; the nearest neighbor's true food is
+    multiplied by ``better``. The prior is estimated from the observations, as in perception.
+    """
+    sim = _simulator(shrink=shrink)
+    unit = _only_unit(sim)
+    rng = np.random.default_rng(seed)
+    cells = [unit.cell, *_neighbors_by_cost(sim, unit)[:20]]
+    hazards = []
+    for _ in range(40):
+        true = 3e6 * np.exp(spread * rng.standard_normal(len(cells)))
+        true[0] = 3e6
+        true[1] = 3e6 * better
+        observed = true * np.exp(0.3 * rng.standard_normal(len(cells)))
+        unit.food_log_prior, unit.food_log_signal_var = food_prior(observed, 0.3)
+        beliefs = {
+            c: Observation(year=sim.state.year, food_kcal=float(f), population=0)
+            for c, f in zip(cells, observed, strict=True)
+        }
+        hazards.append(_hazard(sim, beliefs))
+    return hazards
+
+
+def test_shrinkage_damps_moves_driven_only_by_observation_noise() -> None:
+    # Every cell is truly identical: any apparent advantage is noise (winner's curse).
+    off = np.mean(_noisy_hazards(shrink=False, spread=0.0, seed=1))
+    on = np.mean(_noisy_hazards(shrink=True, spread=0.0, seed=1))
+    assert on < 0.8 * off
+
+
+def test_shrinkage_keeps_responding_to_a_genuinely_better_nearby_cell() -> None:
+    # Cells differ for real (spread 0.8 >> noise 0.3) and one neighbor is 4x richer.
+    better_on = np.mean(_noisy_hazards(shrink=True, spread=0.8, seed=2, better=4.0))
+    same_on = np.mean(_noisy_hazards(shrink=True, spread=0.8, seed=2, better=1.0))
+    better_off = np.mean(_noisy_hazards(shrink=False, spread=0.8, seed=2, better=4.0))
+    assert better_on > same_on
+    assert better_on > 0.8 * better_off  # real differences are barely discounted
+
+
+def test_attention_cap_is_utility_blind_and_keeps_the_current_cell() -> None:
+    candidates = np.array([3, 5, 7, 9, 11])
+    costs = np.array([10.0, 0.0, 30.0, 5.0, 5.0])
+    assert attention_set(candidates, costs, 5, None).tolist() == [0, 1, 2, 3, 4]
+    kept = candidates[attention_set(candidates, costs, 5, 3)].tolist()
+    assert kept == [5, 9, 11]  # current cell + two nearest (ties by cell id)

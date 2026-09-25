@@ -1,5 +1,7 @@
 """Beliefs and bounded social information: patches, lazy expiry, reports, confidence."""
 
+import math
+
 import numpy as np
 import pytest
 from hypothesis import given, settings
@@ -24,7 +26,7 @@ YEAR, MEMORY = 20, 20
 def _unit(beliefs: BeliefMap, cell: int = 0, prior: float = 1000.0) -> PopulationUnit:
     zeros = np.zeros(3, dtype=np.int64)
     unit = PopulationUnit("s", "human", cell, zeros, zeros, 0.0, 0, beliefs=beliefs)
-    unit.food_prior_kcal = prior
+    unit.food_log_prior = math.log(prior)
     return unit
 
 

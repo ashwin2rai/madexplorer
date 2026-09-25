@@ -174,6 +174,9 @@ class MigrationBehavior(FrozenModel):
     food_ratio_cap: float = Field(gt=0)
     abandoned_stores_weight: float = Field(ge=0)  # per year of need left behind when moving
     abandoned_fields_weight: float = Field(ge=0)  # per year of need of crop output forgone
+    # Optional cap on destinations evaluated per year (nearest by path cost, utility-blind);
+    # null = every reachable known cell (physical reachability is the bound).
+    max_considered_destinations: int | None = Field(ge=2)
 
 
 class SpeciesProfile(FrozenModel):

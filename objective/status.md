@@ -50,7 +50,7 @@ network; distributional state: later strata) in every new data structure.
 | P0 | Benchmarks first (18): synthetic performance scenario with 100/500/1000/2000 units for 25-50 ticks (ms/tick, ms/unit/tick, per-subsystem time, peak RSS); benchmark tiers smoke / dev / release / baseline as make targets; record **pre-reform reference timings** (incl. 1,000-year seed 0) for target 19 | tooling | **done** |
 | P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation (exact on all golden fixtures and the 1,000-year seed 0) | **done** |
 | P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** (small measured effect) | **done** |
-| P3 | Bounded migration attention (9-10): `migration.max_considered_destinations` (default ~12) drawn by proximity, recency, direct knowledge and a random exploratory slot, **independent of utility**; then argmax + one move draw as now. Rerun perception-noise experiment | **model change** + experiment | planned |
+| P3 | Revised after P2 (reachability already bounds candidates to ~20): no hard attention cap for humans (`max_considered_destinations: null`, utility-blind nearest-cells cap available for future species); switchable precision-weighted shrinkage of direct observations `q = tau^2/(tau^2 + sigma^2)`; perception-noise experiment with and without it | experiment + optional model change | **experiment done, decision pending** |
 | P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | planned |
 | P5 | Agriculture (20-25): expected future tenure `p(1-p^H)/(1-p)` from the unit's current stay probability; review tech × knowledge (candidate: knowledge sets distance to the technology frontier, `e_min + (1-e_min)K/(K+K_half)`, with `e_min` justified behaviorally, not fitted); small experimental cultivation share (2-5% labor) when crop returns are within a band of foraging, as generic subsistence exploration; scenarios A (abundant frontier) and B (intensification pressure); paired cultivation on/off ablation on B as a statistical test replacing the strict xfail | **model changes** + validation | planned |
 | P6 | Aggregation rerun (26): off / moderate / aggressive, paired seeds, documented approximation errors | experiment | planned |
@@ -215,6 +215,71 @@ validation, remaining concerns.)
   record, shrinkage) added fixed overhead to perception and migration, so the whole run is
   not yet faster. Batching perception and migration per unit is a P4 item. The partner-draw
   loop (one Python iteration per candidate pair) is now the largest part of sharing.
+
+#### P3. Migration uncertainty: direct-observation shrinkage and the noise experiment
+
+- **Decisions taken with the user after P2.** (1) No 12-cell attention cap: one relocation
+  already reaches only ~20 cells, so a cap would add a behavioral assumption for no speed
+  gain. `migration.max_considered_destinations` exists (`null` for humans); when set it keeps
+  the current cell plus the nearest cells by path cost (`attention_set`, utility-blind, so it
+  cannot re-create a best-of-many selection). (2) Direct observations get switchable
+  precision-weighted shrinkage instead of an ad hoc `1/(1+sigma^2)`.
+- **Implementation.**
+  - `food_prior` (perception): per unit and year, the mean log food of its direct
+    observations and `tau^2 = max(Var_obs(log food) - sigma^2, 0)`, the estimated true
+    between-cell variance (empirical Bayes; noise is multiplicative, so it is a log-space
+    quantity). Uses only what the group sees; no new parameter.
+  - `direct_observation_confidence`: `q_direct = tau^2 / (tau^2 + sigma^2)` when
+    `mechanisms.direct_observation_shrinkage` is on, else 1.
+  - `belief_shrinkage` v2.0: confidence `q = q_direct × decay^hops`; effective food
+    `exp(q·ln(food) + (1-q)·log_prior)`, unchanged when `q = 1`. **Relay shrinkage moved from
+    linear to log space** to use one consistent form (golden fixtures unchanged by this).
+  - The current cell is shrunk like any other cell (symmetric treatment of staying and moving).
+  - Fields `food_log_prior` / `food_log_signal_var` replace `food_prior_kcal`.
+- **Controlled mechanism result** (`tests/test_migration.py`; 21 cells observed with sigma 0.3,
+  40 draws). Mean annual move probability:
+
+  | Situation | shrinkage off | shrinkage on |
+  |---|---|---|
+  | All cells truly identical (pure noise) | 0.57 | 0.17 |
+  | True spread 0.3 (log sd), one neighbor 4× richer | 0.97 | 0.88 |
+  | True spread 0.3, no richer neighbor | 0.62 | 0.34 |
+  | True spread 0.8, one neighbor 4× richer | 0.99 | 0.98 |
+
+  Shrinkage removes most noise-only moves and keeps most of the response to real differences.
+- **Perception-noise ensembles** (MVP 2, seeds 0-7 paired, 600 years;
+  `ensembles/p3_noise_s{sigma}_shrink_{off,on}`):
+
+  | sigma | shrinkage | migration rate | sedentary share | final population | crowding death share | inventions | first cultivation |
+  |---|---|---|---|---|---|---|---|
+  | 0.1 | off | 0.159 | 0.26 | 11.5k | 4.0% | 7.5 | 121 |
+  | 0.3 | off | 0.219 | 0.14 | 12.0k | 2.8% | 7.25 | 122 |
+  | 0.5 | off | 0.271 | 0.07 | 7.7k | 2.1% | 7.0 | 148 |
+  | 0.1 | on | 0.161 | 0.28 | 13.6k | 4.1% | 6.5 | 120 |
+  | 0.3 | on | 0.146 | 0.28 | 7.4k | 4.2% | 5.75 | 134 |
+  | 0.5 | on | 0.137 | 0.28 | 3.8k | 4.0% | 4.9 | 142 |
+
+  Noise sensitivity (sigma 0.5 − 0.1, paired): **without shrinkage** migration +0.112
+  (se 0.005) and sedentary share −0.19 (se 0.005): noise dominates mobility, as before.
+  **With shrinkage** migration −0.024 (se 0.005) and sedentary share +0.002 (se 0.009):
+  mobility no longer depends on noise. Instead, noise now acts through information: final
+  population falls 13.6k → 3.8k (−9.8k, se 0.9k).
+- **Why population falls with shrinkage on** (seed 0, sigma 0.3, 600 years): groups are not
+  starving (food ratio 1.08 vs 1.02, energy deficit 0.006 vs 0.029); they colonize more slowly
+  (171 vs 519 occupied cells at year 600; similar density, 30 vs 34 people per cell). In the
+  reference model at year 300, **the food term is at the food-ratio cap (2) for both the home
+  cell and the best destination in 77% of decisions**; the median perceived gain of the best
+  cell is negative (−0.45) although by true food it is poorer than home in only 22% of cases.
+  So in the reference model much of the range expansion is driven by noise making the home
+  cell look worse than it is (a random-walk diffusion), not by a perceived benefit.
+  Shrinkage removes that, leaving expansion to real signals (crowding lowers food per head
+  below the cap), which are weak while land is abundant.
+- **Decision: pending** (see the checkpoint question). The default stays
+  `direct_observation_shrinkage: false` until decided; golden fixtures unchanged.
+- **Open issue raised.** The capped, stock-based food ratio makes the food term flat in most
+  decisions: groups cannot tell a rich from a very rich cell, and migration responds mainly to
+  crowding, water, distance and noise. This bears on colonization speed and on the P5
+  intensification scenario.
 
 ---
 

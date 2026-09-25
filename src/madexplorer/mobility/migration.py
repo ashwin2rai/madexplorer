@@ -119,28 +119,73 @@ def choose_destination(
 
 
 @model_rule(
-    name="belief_shrinkage",
+    name="direct_observation_confidence",
     version="1.0",
     rationale=(
-        "A food belief held with confidence q is used as q*belief + (1-q)*prior, where the "
-        "prior is the typical food per cell in the group's current direct experience. Hearsay "
-        "about exceptional places still counts but cannot dominate the choice among many "
-        "uncertain options (limits the winner's curse)."
+        "Precision weighting of one noisy direct observation: q = tau^2 / (tau^2 + sigma^2), "
+        "with sigma^2 the (log) observation-noise variance and tau^2 the estimated true "
+        "between-cell variance of the group's surroundings (food_prior). Where cells really "
+        "differ much more than the noise, observations are trusted; where apparent differences "
+        "are mostly noise, they are discounted. Switchable (mechanisms."
+        "direct_observation_shrinkage); off means direct observations are taken at face value."
+    ),
+    source_type="theoretical",
+    parameters=("observation_noise_sigma",),
+    expected_domain="confidence in [0, 1]",
+    known_limitations="tau^2 comes from one year's neighborhood and is itself noisy.",
+)
+def direct_confidence(signal_var: float, noise_sigma: float, enabled: bool) -> float:
+    """Confidence in a single direct observation (1 when shrinkage is off or noise is 0)."""
+    noise_var = noise_sigma**2
+    if not enabled or noise_var == 0:
+        return 1.0
+    return signal_var / (signal_var + noise_var)
+
+
+@model_rule(
+    name="belief_shrinkage",
+    version="2.0",
+    rationale=(
+        "A food belief held with confidence q is used as exp(q*ln(belief) + (1-q)*log_prior): "
+        "shrinkage toward the group's log-space prior (noise is multiplicative). Confidence is "
+        "the direct-observation confidence times transmission_confidence_decay per relay, so "
+        "hearsay about exceptional places counts but cannot dominate a choice among uncertain "
+        "options (limits the winner's curse). A belief with q = 1 is used unchanged."
     ),
     source_type="heuristic",
-    parameters=("transmission_confidence_decay",),
-    expected_domain="effective food estimate between the prior and the belief",
+    parameters=("transmission_confidence_decay", "observation_noise_sigma"),
+    expected_domain="effective food estimate between the prior and the belief (geometrically)",
     known_limitations=(
-        "Linear shrinkage with a prior from this year's perception only; no variance-based "
-        "(Bayesian) weighting, and staleness is handled by the separate uncertainty term."
+        "Prior from this year's perception only; staleness is handled by the separate "
+        "uncertainty term, not by confidence."
     ),
 )
 def shrunk_food_kcal(
-    food_kcal: FloatArray | float, confidence: FloatArray | float, prior_kcal: FloatArray | float
+    food_kcal: FloatArray | float, confidence: FloatArray | float, log_prior: FloatArray | float
 ) -> FloatArray:
-    """Effective food belief: confidence-weighted mix of the belief and the prior."""
-    shrunk: FloatArray = np.asarray(confidence * food_kcal + (1.0 - confidence) * prior_kcal)
+    """Effective food belief: confidence-weighted log-space mix of the belief and the prior."""
+    food = np.asarray(food_kcal, dtype=np.float64)
+    q = np.asarray(confidence, dtype=np.float64)
+    with np.errstate(invalid="ignore"):
+        mixed = np.exp(q * np.log(np.maximum(food, 1.0)) + (1.0 - q) * np.asarray(log_prior))
+    shrunk: FloatArray = np.where(q >= 1.0, food, mixed)
     return shrunk
+
+
+def attention_set(
+    candidates: IntArray, path_costs: FloatArray, current: int, cap: int | None
+) -> IntArray:
+    """Indices of the candidates a group considers: all, or the current cell plus the nearest.
+
+    The cap is utility-blind (path cost, then cell id), so it cannot re-create a best-of-many
+    selection. ``None`` keeps every reachable known cell. Indices are returned ascending.
+    """
+    if cap is None or candidates.size <= cap:
+        return np.arange(candidates.size)
+    others = np.flatnonzero(candidates != current)
+    nearest = others[np.lexsort((candidates[others], path_costs[others]))[: cap - 1]]
+    keep: IntArray = np.sort(np.concatenate([np.flatnonzero(candidates == current), nearest]))
+    return keep
 
 
 @dataclass(frozen=True)
@@ -163,11 +208,12 @@ def destination_components(
     behavior: MigrationBehavior,
     water_access: float,
     confidence_decay: float,
+    direct_confidence: float,
 ) -> dict[str, float]:
     """Utility components of ``cell`` for ``unit``, including the cost of leaving."""
     obs = unit.beliefs[cell]
-    confidence = float(report_confidence(np.array([obs.hops]), confidence_decay)[0])
-    food = float(shrunk_food_kcal(obs.food_kcal, confidence, unit.food_prior_kcal))
+    relay = float(report_confidence(np.array([obs.hops]), confidence_decay)[0])
+    food = float(shrunk_food_kcal(obs.food_kcal, direct_confidence * relay, unit.food_log_prior))
     obs = replace(obs, food_kcal=food)
     staying = cell == unit.cell
     if staying and costs.farm_kcal > 0:
@@ -281,6 +327,7 @@ class _Prepared:
     behavior: MigrationBehavior
     memory_years: int
     confidence_decay: float
+    direct_confidence: float
 
 
 class MigrationSubsystem:
@@ -305,9 +352,13 @@ class MigrationSubsystem:
         movement = ctx.movement[unit.species_id]
         cells, path_costs = movement.reachable_arrays(unit.cell)
         known = beliefs.current(cells, state.year, profile.cognition.memory_years)
-        candidates = cells[known]
+        candidates, path_costs = cells[known], path_costs[known]
         if not (candidates == unit.cell).any():
             return None  # cannot evaluate staying without a current observation
+        considered = attention_set(
+            candidates, path_costs, unit.cell, behavior.max_considered_destinations
+        )
+        candidates, path_costs = candidates[considered], path_costs[considered]
         farm_kcal = unit.fields_ha * unit.crop_yield_kcal_per_ha
         carry = n * profile.movement.carry_kcal_per_capita
         abandoned = max(unit.stores_kcal - carry, 0.0)
@@ -317,12 +368,17 @@ class MigrationSubsystem:
         return _Prepared(
             unit,
             candidates,
-            path_costs[known],
+            path_costs,
             costs,
             carry,
             behavior,
             profile.cognition.memory_years,
             profile.social_information.transmission_confidence_decay,
+            direct_confidence(
+                unit.food_log_signal_var,
+                profile.cognition.observation_noise_sigma,
+                ctx.mechanisms.direct_observation_shrinkage,
+            ),
         )
 
     @staticmethod
@@ -345,13 +401,13 @@ class MigrationSubsystem:
             array: FloatArray = np.asarray(values, dtype=np.float64)[owner]
             return array
 
-        confidence = np.power(
+        confidence = per_unit([p.direct_confidence for p in prepared]) * np.power(
             per_unit([p.confidence_decay for p in prepared]), gather("hops").astype(np.float64)
         )
         food = shrunk_food_kcal(
             gather("food_kcal").astype(np.float64),
             confidence,
-            per_unit([p.unit.food_prior_kcal for p in prepared]),
+            per_unit([p.unit.food_log_prior for p in prepared]),
         )
         water = water_access[cells]
 
@@ -412,6 +468,7 @@ class MigrationSubsystem:
                     prepared.behavior,
                     float(state.world.water_access[cell]),
                     prepared.confidence_decay,
+                    prepared.direct_confidence,
                 )
 
             ctx.events.emit(

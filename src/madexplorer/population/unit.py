@@ -7,6 +7,7 @@ similar groups are coarsened into one unit (MVP 2); distributional
 super-agents with wealth and health distributions arrive in MVP 3.
 """
 
+import math
 from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -56,8 +57,8 @@ class BeliefPatch:
 
     Values are copies taken when the patch is built, so patches computed from one year's
     beliefs stay valid while other patches are applied. Perception also sets the unit's food
-    prior (its current direct experience); sharing records which cells it received reports
-    about, so they can be relayed next year.
+    prior (log-space mean and signal variance of its current direct observations) and its
+    residence; sharing records which cells it received reports about, for relaying.
     """
 
     unit_id: str
@@ -66,7 +67,8 @@ class BeliefPatch:
     food_kcal: FoodArray | FloatArray
     population: CountArray | IntArray
     hops: HopsArray
-    food_prior_kcal: float | None = None
+    food_log_prior: float | None = None
+    food_log_signal_var: float | None = None
     received: bool = False
     resident_cell: int | None = None  # perception: the cell the unit lives in this year
 
@@ -75,8 +77,10 @@ class BeliefPatch:
         unit = state.units[self.unit_id]
         unit.beliefs = unit.beliefs.sized(state.world.n_cells)
         unit.beliefs.write(self.cells, self.year, self.food_kcal, self.population, self.hops)
-        if self.food_prior_kcal is not None:
-            unit.food_prior_kcal = self.food_prior_kcal
+        if self.food_log_prior is not None:
+            unit.food_log_prior = self.food_log_prior
+        if self.food_log_signal_var is not None:
+            unit.food_log_signal_var = self.food_log_signal_var
         if self.received:
             unit.report_cells = self.cells
         if self.resident_cell is not None:
@@ -245,7 +249,10 @@ class PopulationUnit:
     food_ratio: float = 1.0  # acquired / required, last year
     energy_deficit: float = 0.0  # unmet fraction of requirement after reserves, last year
     beliefs: BeliefMap = field(default_factory=lambda: BeliefMap.empty(0))  # spatial beliefs
-    food_prior_kcal: float = 0.0  # typical food per cell in current direct experience
+    # Prior for food beliefs from this year's direct observations (log kcal per cell): mean,
+    # and the estimated true between-cell variance tau^2 (observed variance minus noise).
+    food_log_prior: float = math.nan
+    food_log_signal_var: float = 0.0
     report_cells: IntArray = field(
         default_factory=lambda: np.zeros(0, dtype=np.int64)
     )  # cells last received as social reports (candidates for relaying)

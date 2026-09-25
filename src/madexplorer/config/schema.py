@@ -144,6 +144,9 @@ class MechanismsConfig(FrozenModel):
     aggregation: bool = True
     # MVP 2 cleanup
     crowding_mortality: bool = True
+    # MVP 2 stabilization: shrink single noisy direct observations toward the prior by
+    # precision (tau^2 / (tau^2 + sigma^2)); relayed reports are always shrunk.
+    direct_observation_shrinkage: bool = False
 
 
 class OutputConfig(FrozenModel):

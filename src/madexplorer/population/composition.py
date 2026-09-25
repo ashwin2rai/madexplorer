@@ -45,7 +45,8 @@ FIELD_RULES: dict[str, tuple[str, str]] = {
     "food_ratio": ("population-weighted mean", "copy"),
     "energy_deficit": ("population-weighted mean", "copy"),
     "beliefs": ("freshest observation per cell (fewer relays on ties)", "copy"),
-    "food_prior_kcal": ("population-weighted mean", "copy"),
+    "food_log_prior": ("population-weighted mean", "copy"),
+    "food_log_signal_var": ("population-weighted mean", "copy"),
     "report_cells": ("union", "copy"),
     "recent_residence": ("latest year per cell", "copy"),
     "familiarity": ("max per cell", "copy"),
@@ -91,7 +92,8 @@ _WEIGHTED_MEAN = (
     "energy_deficit",
     "forage_marginal_kcal_per_hour",
     "forage_plant_share",
-    "food_prior_kcal",
+    "food_log_prior",
+    "food_log_signal_var",
 )
 
 
@@ -191,7 +193,8 @@ def split_off(
         food_ratio=parent.food_ratio,
         energy_deficit=parent.energy_deficit,
         beliefs=parent.beliefs.copy(),  # maps are owned and patched in place
-        food_prior_kcal=parent.food_prior_kcal,
+        food_log_prior=parent.food_log_prior,
+        food_log_signal_var=parent.food_log_signal_var,
         report_cells=parent.report_cells.copy(),
         recent_residence=dict(parent.recent_residence),
         familiarity=dict(parent.familiarity),

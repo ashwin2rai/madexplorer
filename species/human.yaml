@@ -122,3 +122,5 @@ migration:
   food_ratio_cap: 2.0
   abandoned_stores_weight: 1.0
   abandoned_fields_weight: 2.0
+  # No attention cap: one relocation reaches ~20 cells, which bounds the choice already.
+  max_considered_destinations: null

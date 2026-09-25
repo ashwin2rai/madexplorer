@@ -71,8 +71,8 @@ class PerceptionSubsystem:
         """This year's direct observations of the cells each unit can see (sparse patches).
 
         Old observations are not scanned or erased here: expiry is lazy (see
-        :class:`BeliefMap`), so the cost is proportional to the cells perceived. The mean of
-        this year's food observations becomes the unit's prior for uncertain reports.
+        :class:`BeliefMap`), so the cost is proportional to the cells perceived. This year's
+        food observations also set the unit's prior (:func:`food_prior`).
         """
         rng = ctx.rng.stream(Streams.PERCEPTION)
         world = state.world
@@ -88,6 +88,7 @@ class PerceptionSubsystem:
             cells = perceived_cells(unit, cognition, world)
             noise = np.exp(cognition.observation_noise_sigma * rng.standard_normal(cells.size))
             food = food_by_species[unit.species_id][cells] * noise
+            log_prior, signal_var = food_prior(food, cognition.observation_noise_sigma)
             others = cell_population[cells]
             updates.append(
                 BeliefPatch(
@@ -97,11 +98,37 @@ class PerceptionSubsystem:
                     food,
                     np.where(cells == unit.cell, others - unit.population, others),
                     np.zeros(cells.size, dtype=HOPS_DTYPE),
-                    food_prior_kcal=float(food.mean()),
+                    food_log_prior=log_prior,
+                    food_log_signal_var=signal_var,
                     resident_cell=unit.cell,
                 )
             )
         return updates
+
+
+@model_rule(
+    name="food_prior",
+    version="1.0",
+    rationale=(
+        "A group's prior for food in a cell is what its surroundings look like this year: the "
+        "mean log food of its direct observations. Observation noise is multiplicative "
+        "(lognormal), so the observed log variance across those cells is about tau^2 + sigma^2; "
+        "the true between-cell variance tau^2 is estimated as max(observed - sigma^2, 0) "
+        "(empirical Bayes), using only what the group sees."
+    ),
+    source_type="theoretical",
+    parameters=("observation_noise_sigma",),
+    expected_domain="log kcal per cell; tau^2 >= 0",
+    known_limitations=(
+        "Estimated from one year's neighborhood (often < 25 cells), so tau^2 is itself noisy; "
+        "no memory of earlier years or of other regions."
+    ),
+)
+def food_prior(food_kcal: FloatArray, noise_sigma: float) -> tuple[float, float]:
+    """``(mean log food, estimated signal variance tau^2)`` of direct observations."""
+    logs = np.log(np.maximum(food_kcal, 1.0))
+    observed_var = float(logs.var(ddof=1)) if logs.size > 1 else 0.0
+    return float(logs.mean()), max(observed_var - noise_sigma**2, 0.0)
 
 
 @model_rule(
@@ -128,7 +155,7 @@ def report_confidence(hops: HopsArray | IntArray, decay: float) -> FloatArray:
     version="1.0",
     rationale=(
         "Groups talk about what matters and what they trust: salience = confidence x recency x "
-        "(1 + |ln(food / prior)|), so first-hand, recent and unusually rich or poor places are "
+        "(1 + |ln food - log prior|), so first-hand, recent and unusually rich or poor places are "
         "mentioned first. The group's current place is always mentioned."
     ),
     source_type="heuristic",
@@ -144,16 +171,16 @@ def report_salience(
     age_years: FloatArray,
     max_age_years: FloatArray | float,
     food_kcal: FloatArray,
-    prior_kcal: FloatArray | float,
+    log_prior: FloatArray | float,
 ) -> FloatArray:
     """Salience of candidate reports (higher is mentioned first); elementwise.
 
-    A nonpositive prior (a group that has not perceived yet) makes no place exceptional.
+    A missing prior (NaN: a group that has not perceived yet) makes no place exceptional.
     """
     recency = 1.0 - age_years / (np.asarray(max_age_years) + 1.0)
-    prior = np.broadcast_to(np.asarray(prior_kcal, dtype=np.float64), food_kcal.shape)
-    safe = np.where(prior > 0, prior, 1.0)
-    exceptional = np.where(prior > 0, np.abs(np.log(np.maximum(food_kcal, 1.0) / safe)), 0.0)
+    prior = np.broadcast_to(np.asarray(log_prior, dtype=np.float64), food_kcal.shape)
+    deviation = np.abs(np.log(np.maximum(food_kcal, 1.0)) - np.nan_to_num(prior))
+    exceptional = np.where(np.isfinite(prior), deviation, 0.0)
     salience: FloatArray = confidence * recency * (1.0 + exceptional)
     return salience
 
@@ -269,7 +296,7 @@ def select_reports_batch(senders: Sequence[SenderInputs], year: int, n_cells: in
         age.astype(np.float64),
         max_age,
         food.astype(np.float64),
-        per_sender([s.unit.food_prior_kcal for s in senders]),
+        per_sender([s.unit.food_log_prior for s in senders]),
     )
     salience[cells == per_sender([s.unit.cell for s in senders]).astype(np.int64)] = np.inf
     order = np.lexsort((cells, -salience, owner))
