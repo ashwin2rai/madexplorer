@@ -14,7 +14,10 @@ from madexplorer.population.composition import (
     merge_state,
     split_off,
 )
+from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.unit import PopulationUnit
+
+RULE = FamiliarityRule(baseline=0.6, time_constant_years=20.0)
 
 
 def _unit(uid: str, n_female: int, n_male: int = 0, cell: int = 0) -> PopulationUnit:
@@ -43,15 +46,15 @@ def test_every_unit_field_has_merge_and_split_rules() -> None:
 
 def test_merge_rejects_units_in_different_cells() -> None:
     with pytest.raises(ValueError):
-        merge_state(_unit("a", 5), _unit("b", 5, cell=1), MergeMode.FUSION)
+        merge_state(_unit("a", 5), _unit("b", 5, cell=1), MergeMode.FUSION, 5, RULE)
 
 
 def test_aggregation_keeps_groups_and_fusion_absorbs_them() -> None:
     a, b = _unit("a", 10), _unit("b", 10)
-    merge_state(a, b, MergeMode.AGGREGATION)
+    merge_state(a, b, MergeMode.AGGREGATION, 5, RULE)
     assert a.groups == 2
     c, d = _unit("c", 10), _unit("d", 10)
-    merge_state(c, d, MergeMode.FUSION)
+    merge_state(c, d, MergeMode.FUSION, 5, RULE)
     assert c.groups == 1
 
 
@@ -60,7 +63,7 @@ def test_merge_weights_intensive_state_by_people() -> None:
     a.food_ratio, b.food_ratio = 1.0, 0.6
     a.harvest_history.extend([100.0, 200.0])
     b.harvest_history.extend([50.0])
-    merge_state(a, b, MergeMode.FUSION)
+    merge_state(a, b, MergeMode.FUSION, 5, RULE)
     assert a.food_ratio == pytest.approx(0.9)
     assert list(a.harvest_history) == [pytest.approx(0.75 * 200 + 0.25 * 50)]
 
@@ -90,13 +93,13 @@ def test_split_then_merge_conserves_people_food_fields_and_debts(
     moved = int(leave_f.sum() + leave_m.sum())
     if not 0 < moved < parent.population:
         return
-    daughter = split_off(parent, leave_f, leave_m, "d", year=5)
+    daughter = split_off(parent, leave_f, leave_m, "d", year=5, familiarity=RULE)
     assert daughter.population + parent.population == totals[0]
     assert daughter.stores_kcal + parent.stores_kcal == pytest.approx(totals[2])
     assert daughter.stores_kcal / daughter.population == pytest.approx(
         parent.stores_kcal / parent.population
     )
-    merge_state(parent, daughter, MergeMode.FUSION)
+    merge_state(parent, daughter, MergeMode.FUSION, 5, RULE)
     after = (
         parent.population,
         parent.total_reserve_kcal,
@@ -112,7 +115,7 @@ def test_split_then_merge_conserves_people_food_fields_and_debts(
 def test_split_requires_people_on_both_sides() -> None:
     parent = _unit("p", 10)
     with pytest.raises(ValueError):
-        split_off(parent, parent.females.copy(), parent.males.copy(), "d", year=1)
+        split_off(parent, parent.females.copy(), parent.males.copy(), "d", year=1, familiarity=RULE)
 
 
 def _network() -> dict[str, PopulationUnit]:
@@ -126,7 +129,7 @@ def _network() -> dict[str, PopulationUnit]:
 
 def test_absorb_rewires_incoming_ties_to_the_surviving_unit() -> None:
     units = _network()
-    absorb(units, "b", "a", MergeMode.AGGREGATION)
+    absorb(units, "b", "a", MergeMode.AGGREGATION, 5, RULE)
     assert "b" not in units
     assert all("b" not in u.trade_ties for u in units.values())
     assert units["d"].trade_ties == {"a": pytest.approx(0.1)}  # was only linked to b
@@ -134,7 +137,7 @@ def test_absorb_rewires_incoming_ties_to_the_surviving_unit() -> None:
 
 def test_absorb_combines_duplicate_edges_and_drops_self_edges() -> None:
     units = _network()
-    absorb(units, "b", "a", MergeMode.AGGREGATION)
+    absorb(units, "b", "a", MergeMode.AGGREGATION, 5, RULE)
     assert "a" not in units["a"].trade_ties
     assert units["a"].trade_ties == {"c": pytest.approx(0.5), "d": pytest.approx(0.1)}
     assert units["c"].trade_ties == {"a": pytest.approx(0.5)}
@@ -144,6 +147,6 @@ def test_absorb_preserves_total_tie_weight_except_the_internal_edge() -> None:
     units = _network()
     before = sum(sum(u.trade_ties.values()) for u in units.values())
     internal = units["a"].trade_ties["b"] + units["b"].trade_ties["a"]
-    absorb(units, "b", "a", MergeMode.FUSION)
+    absorb(units, "b", "a", MergeMode.FUSION, 5, RULE)
     after = sum(sum(u.trade_ties.values()) for u in units.values())
     assert after == pytest.approx(before - internal)

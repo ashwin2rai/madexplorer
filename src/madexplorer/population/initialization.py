@@ -4,6 +4,7 @@ import numpy as np
 
 from madexplorer.config.schema import InitialPopulation
 from madexplorer.knowledge.system import KnowledgeModel
+from madexplorer.population.familiarity import FamiliarityMap
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import SpeciesProfile
@@ -36,7 +37,7 @@ def found_unit(
         males=males,
         reserve_kcal_per_capita=reserve,
         founded_year=year,
-        familiarity={cell: 1.0},  # founders know their homeland
+        familiarity=FamiliarityMap({cell: 1.0}, {cell: year}),  # founders know their homeland
         knowledge=knowledge.initial_levels(seed.initial_knowledge) if knowledge else np.zeros(0),
         technologies=frozenset(seed.technologies),
     )

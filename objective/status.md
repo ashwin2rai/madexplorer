@@ -577,6 +577,34 @@ The scratch artifacts used during P4 (recorded solver inputs, a pickled late-run
 not in the repository. To regenerate solver inputs, wrap `economy.foraging.cell_harvest` to
 record every 20th call's arguments during a 600-year seed-0 run (about 6,300 samples).
 
+#### P4b. Practiced familiarity reform (MODEL CHANGE, separate from P4; in progress)
+
+User decision 2026-09-29: options 1 + 3 from the P4 familiarity investigation. P4 itself stays
+behavior-preserving / numerically controlled; this is a later, intentional model reform.
+
+Plan:
+1. Semantics. Familiarity = practiced competence at exploiting one cell's ecology, not
+   knowledge that the place exists (that stays in beliefs). Effective value
+   `F = F0 + (F_stored - F0)·exp(-a/tau)`, with F0 = `cognition.initial_familiarity` (0.6),
+   tau = `cognition.memory_years` (20; no new timescale), and a = years without practice. A
+   cell foraged in consecutive years does not decay (a = years since last practice − 1,
+   floored at 0), so resident groups are unaffected. No hard cutoff.
+2. Lazy evaluation. Store value and last-practiced year per cell; decay only when read.
+   Practice = decayed value + the usual learning increment, stamped with the current year.
+3. Merge = population-weighted mean of values decayed to the merge year (a cell missing on
+   one side counts as F0), for fusion and coarsening alike. Fission gives the daughter the
+   parent's effective values materialized at the split year; lineages then decay
+   independently.
+4. Pruning (representation only): an entry within 1e-6 of F0 when materialized at a merge or
+   split is dropped, since absence means F0. An implementation threshold, not a parameter.
+5. Switch `mechanisms.familiarity_decay` (covers decay and weighted merge), **off by default
+   until the experiment is accepted**, so golden fixtures stay unchanged; the old rules are
+   reproduced exactly when off.
+6. Mechanism tests (spec list), paired dev ensemble (seeds 0-7, 600 years) plus 1,000-year
+   runs for agriculture, with the requested diagnostics (familiarity on arrival, time since
+   practice, foraging returns, cultivation, sedentism, milestones). Checkpoint. On
+   acceptance: flip the default, re-record golden fixtures once, update this file.
+
 #### Performance outlook (assessment after P0-P4 profiling, 2026-09-25)
 
 Question asked: can the simulation become much faster, and would model simplifications help?

@@ -16,6 +16,7 @@ import numpy as np
 import numpy.typing as npt
 
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
+from madexplorer.population.familiarity import FamiliarityMap
 
 if TYPE_CHECKING:
     from madexplorer.core.state import SimulationState, StepContext
@@ -257,7 +258,7 @@ class PopulationUnit:
         default_factory=lambda: np.zeros(0, dtype=np.int64)
     )  # cells last received as social reports (candidates for relaying)
     recent_residence: dict[int, int] = field(default_factory=dict)  # cell -> last year lived there
-    familiarity: dict[int, float] = field(default_factory=dict)
+    familiarity: FamiliarityMap = field(default_factory=FamiliarityMap)  # practiced skill per cell
     groups: int = 1  # social groups represented by this unit
     # Knowledge and technology (MVP 2).
     knowledge: FloatArray = field(default_factory=lambda: np.zeros(0))  # level per domain

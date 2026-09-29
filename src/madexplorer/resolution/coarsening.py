@@ -17,6 +17,7 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray
 from madexplorer.population.composition import MergeMode, absorb
+from madexplorer.population.familiarity import familiarity_rule
 
 
 @model_rule(
@@ -45,7 +46,8 @@ class Coalesce:
         """Merge the units and record the approximation."""
         source, target = state.units[self.source_id], state.units[self.target_id]
         merged = source.population
-        absorb(state.units, self.source_id, self.target_id, MergeMode.AGGREGATION)
+        rule = familiarity_rule(ctx.species(target.species_id), ctx.mechanisms)
+        absorb(state.units, self.source_id, self.target_id, MergeMode.AGGREGATION, state.year, rule)
         ctx.ledger.resolution_merges += 1
         ctx.events.emit(
             state.year,

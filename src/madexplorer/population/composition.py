@@ -19,6 +19,7 @@ from enum import Enum
 import numpy as np
 
 from madexplorer.core.types import IntArray
+from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.unit import PopulationUnit
 
 
@@ -49,7 +50,11 @@ FIELD_RULES: dict[str, tuple[str, str]] = {
     "food_log_signal_var": ("population-weighted mean", "copy"),
     "report_cells": ("union", "copy"),
     "recent_residence": ("latest year per cell", "copy"),
-    "familiarity": ("max per cell", "copy"),
+    "familiarity": (
+        "population-weighted mean of values decayed to the merge year (max per cell when "
+        "familiarity_decay is off)",
+        "copy of the values decayed to the split year",
+    ),
     "groups": ("sum (aggregation) / keep target (fusion)", "one group leaves a multi-group unit"),
     "knowledge": ("population-weighted mean", "copy"),
     "technologies": ("union", "copy"),
@@ -102,7 +107,13 @@ def _weighted(a: float, n_a: int, b: float, n_b: int) -> float:
     return (a * n_a + b * n_b) / total if total else a
 
 
-def merge_state(target: PopulationUnit, source: PopulationUnit, mode: MergeMode) -> None:
+def merge_state(
+    target: PopulationUnit,
+    source: PopulationUnit,
+    mode: MergeMode,
+    year: int,
+    familiarity: FamiliarityRule,
+) -> None:
     """Fold ``source``'s state into ``target`` (network rewiring is :func:`absorb`'s job)."""
     if target.species_id != source.species_id or target.cell != source.cell:
         raise ValueError("only co-located units of one species can merge")
@@ -134,8 +145,7 @@ def merge_state(target: PopulationUnit, source: PopulationUnit, mode: MergeMode)
     target.report_cells = np.union1d(target.report_cells, source.report_cells)
     for cell, year in source.recent_residence.items():
         target.recent_residence[cell] = max(year, target.recent_residence.get(cell, year))
-    for cell, value in source.familiarity.items():
-        target.familiarity[cell] = max(value, target.familiarity.get(cell, 0.0))
+    target.familiarity.merge(source.familiarity, n_t, n_s, year, familiarity)
 
 
 def rewire_ties(units: MutableMapping[str, PopulationUnit], source_id: str, target_id: str) -> None:
@@ -155,11 +165,16 @@ def rewire_ties(units: MutableMapping[str, PopulationUnit], source_id: str, targ
 
 
 def absorb(
-    units: MutableMapping[str, PopulationUnit], source_id: str, target_id: str, mode: MergeMode
+    units: MutableMapping[str, PopulationUnit],
+    source_id: str,
+    target_id: str,
+    mode: MergeMode,
+    year: int,
+    familiarity: FamiliarityRule,
 ) -> None:
     """Merge ``source_id`` into ``target_id``, rewire the network, and remove the source."""
     rewire_ties(units, source_id, target_id)
-    merge_state(units[target_id], units[source_id], mode)
+    merge_state(units[target_id], units[source_id], mode, year, familiarity)
     del units[source_id]
 
 
@@ -169,6 +184,7 @@ def split_off(
     leave_m: IntArray,
     daughter_id: str,
     year: int,
+    familiarity: FamiliarityRule,
 ) -> PopulationUnit:
     """Detach the people in ``leave_f``/``leave_m`` from ``parent`` as a new unit.
 
@@ -197,7 +213,7 @@ def split_off(
         food_log_signal_var=parent.food_log_signal_var,
         report_cells=parent.report_cells.copy(),
         recent_residence=dict(parent.recent_residence),
-        familiarity=dict(parent.familiarity),
+        familiarity=parent.familiarity.materialized(year, familiarity),
         knowledge=parent.knowledge.copy(),
         technologies=parent.technologies,
         ever_cultivated=parent.ever_cultivated,

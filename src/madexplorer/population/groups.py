@@ -16,6 +16,7 @@ from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import IntArray
 from madexplorer.population.composition import MergeMode, absorb, split_off
+from madexplorer.population.familiarity import familiarity_rule
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import SocialBehavior
 
@@ -122,7 +123,8 @@ class Fission:
         moved = int(leave_f.sum() + leave_m.sum())
         if moved == 0 or moved == source_population:
             return
-        daughter = split_off(parent, leave_f, leave_m, ctx.ids.next("u"), state.year)
+        rule = familiarity_rule(ctx.species(parent.species_id), ctx.mechanisms)
+        daughter = split_off(parent, leave_f, leave_m, ctx.ids.next("u"), state.year, rule)
         state.units[daughter.id] = daughter
         ctx.ledger.fissions += 1
         ctx.events.emit(
@@ -152,7 +154,8 @@ class Fusion:
         """Absorb the source unit into the target."""
         source, target = state.units[self.source_id], state.units[self.target_id]
         merged = source.population
-        absorb(state.units, self.source_id, self.target_id, MergeMode.FUSION)
+        rule = familiarity_rule(ctx.species(target.species_id), ctx.mechanisms)
+        absorb(state.units, self.source_id, self.target_id, MergeMode.FUSION, state.year, rule)
         ctx.ledger.fusions += 1
         ctx.events.emit(
             state.year,

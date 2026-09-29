@@ -5,6 +5,7 @@ import numpy as np
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
 from madexplorer.population.composition import MergeMode, merge_state
+from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.unit import PopulationUnit
 from tests.conftest import ROOT, mvp2_scenario_dict
 
@@ -30,7 +31,7 @@ def _unit(uid: str, n: int, groups: int = 1) -> PopulationUnit:
 def test_merge_conserves_people_food_and_fields() -> None:
     a, b = _unit("u1", 30), _unit("u2", 10)
     b.knowledge = np.array([3.0, 2.0])
-    merge_state(a, b, MergeMode.AGGREGATION)
+    merge_state(a, b, MergeMode.AGGREGATION, 0, FamiliarityRule(0.6, 20.0))
     assert a.population == 40 and a.groups == 2
     assert a.stores_kcal == 100.0 and a.fields_ha == 6.0
     assert a.total_reserve_kcal == 40 * 100.0

@@ -147,6 +147,10 @@ class MechanismsConfig(FrozenModel):
     # MVP 2 stabilization: shrink single noisy direct observations toward the prior by
     # precision (tau^2 / (tau^2 + sigma^2)); relayed reports are always shrunk.
     direct_observation_shrinkage: bool = True
+    # MVP 2 stabilization (P4b, under evaluation, hence off): unpracticed foraging familiarity
+    # decays toward the unknown-cell level on the memory timescale, and merges average it by
+    # population instead of keeping the maximum. Off = the pre-reform rules exactly.
+    familiarity_decay: bool = False
 
 
 class OutputConfig(FrozenModel):

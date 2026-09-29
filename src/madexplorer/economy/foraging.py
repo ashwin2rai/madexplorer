@@ -16,6 +16,7 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray
 from madexplorer.population.energetics import annual_need_kcal
+from madexplorer.population.familiarity import FamiliarityRule, familiarity_rule
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import Foraging
 from madexplorer.world.grid import WorldGrid
@@ -204,7 +205,7 @@ class CellHarvest:
     plant_removed_kcal: float
     game_removed_kcal: float
     learning_rate: float
-    initial_familiarity: float
+    familiarity: FamiliarityRule
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Deplete stocks, credit harvests, and grow local familiarity (learning by doing)."""
@@ -231,8 +232,7 @@ class CellHarvest:
             unit.forage_plant_share = plant_share
             unit.harvest_kcal = unit.farm_harvest_kcal + harvest
             unit.labor_debt_hours = 0.0
-            known = unit.familiarity.get(self.cell, self.initial_familiarity)
-            unit.familiarity[self.cell] = known + self.learning_rate * (1.0 - known)
+            unit.familiarity.practice(self.cell, state.year, self.learning_rate, self.familiarity)
             ctx.ledger.harvest_kcal += unit.harvest_kcal
 
 
@@ -247,6 +247,10 @@ class ForagingSubsystem:
         access = {sid: forage.as_tuple() for sid, forage in ctx.forage.items()}
         plant_left = state.ecology.plant_stock_kcal.copy()
         game_left = state.ecology.game_stock_kcal.copy()
+        rules = {
+            sid: familiarity_rule(profile, ctx.mechanisms)
+            for sid, profile in ctx.scenario.species.items()
+        }
         for cell, units in state.units_by_cell().items():
             by_species: dict[str, list[PopulationUnit]] = {}
             for unit in units:
@@ -274,7 +278,7 @@ class ForagingSubsystem:
                 )
                 efficiency = np.array(
                     [
-                        u.familiarity.get(cell, profile.cognition.initial_familiarity)
+                        u.familiarity.effective(cell, state.year, rules[species_id])
                         * (
                             ctx.knowledge.efficiency(u.knowledge, "ecology")
                             if ctx.knowledge
@@ -308,7 +312,7 @@ class ForagingSubsystem:
                         plant_removed_kcal=float(outcome.removal[0]),
                         game_removed_kcal=float(outcome.removal[1]),
                         learning_rate=profile.cognition.familiarity_learning_rate,
-                        initial_familiarity=profile.cognition.initial_familiarity,
+                        familiarity=rules[species_id],
                     )
                 )
         return proposals
