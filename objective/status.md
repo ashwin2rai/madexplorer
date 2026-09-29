@@ -756,6 +756,85 @@ ensembles):
 5. Scenario B (intensification pressure) and matched cultivation on/off ablation, replacing
    the strict xfail.
 
+**Step 1: audit (done 2026-09-29; measurement only, model unchanged).**
+- Method: seeds 0-7, 1,000 years, reference mode (with P4b). Probe not in git.
+  - It wraps `FieldPlanningSubsystem.evaluate` every 5th year for units holding a crop
+    technology: 778k unit-decisions.
+  - It records the yield components, clearing hours, marginal forage return, past
+    residence, and this year's move hazard (from `MigrationSubsystem.decide` with a private
+    RNG).
+  - Realized future tenure comes from recorded relocations.
+  - A 300-year check confirmed the probe leaves seeded output bit-identical.
+  - Data: `ensembles/p5_audit/audit_seed*.npz` (not in git).
+- **Ecology is not the constraint.** Potential yield median 1.05 Mkcal/ha (p10 0.62, p90
+  1.56). With a mature crop and full skill (capability 0.9, efficiency 1), farming new land
+  would beat marginal foraging × 1.1 in 97.5% of decisions.
+- **Yield decomposition.** Capability median 0.5 (`plant_cultivation`); knowledge K median
+  3.05 (2.25 before year 400), so efficiency K/(K+2) is 0.60 (0.53 early). Realized yield is
+  0.25-0.35 of potential: median 3.6 × 10^5 kcal/ha, 602 kcal/h on existing fields, against
+  median marginal foraging 520 kcal/h (647 before year 400).
+- **Static decision shares** (farming beats foraging × 1.1; counterfactuals ignore feedback):
+
+  | Variant | all years | years ≤ 400 | years > 700 |
+  |---|---|---|---|
+  | existing fields (clearing sunk) | 0.56 | 0.35 | 0.61 |
+  | new land, current rule (past-residence tenure) | 0.29 | 0.08 | 0.35 |
+  | tenure expected from hazard `p(1−p^H)/(1−p)` | 0.32 | 0.12 | 0.37 |
+  | realized tenure (oracle) | 0.29 | 0.09 | 0.33 |
+  | tenure = horizon (10) | 0.44 | 0.22 | 0.49 |
+  | knowledge efficiency = 1 | 0.76 | 0.75 | 0.77 |
+  | efficiency `0.5 + 0.5·K/(K+2)` (illustrative e_min) | 0.55 | 0.43 | 0.58 |
+  | capability 0.9 | 0.72 | 0.65 | 0.71 |
+
+  Where expansion wins, foraging is depleted: marginal forage return median 276 vs 584
+  kcal/h where it loses, and cells are twice as populated (48 vs 23 people). This is the
+  intended mechanism: cultivation becomes rational under local crowding and depletion.
+- **Tenure proxy.** Past residence under-states expected tenure for recent arrivals and
+  over-states it for long residents. Realized future tenure (capped at 10), by current
+  residence:
+  - 1-4 years: assumed 1.9, hazard-based 3.6, realized 3.35;
+  - 5-9 years: assumed 6.7, hazard-based 6.1, realized 5.3;
+  - 10 or more: assumed 10, hazard-based 7.0, realized 6.2.
+
+  The hazard-based form tracks realized tenure much better (slightly optimistic), but it
+  moves the decision share only from 0.29 to 0.32.
+- **The binding constraint is field scale-up, not whether farming pays.**
+  - Units with fields: 24% of decisions. Median field 0.36 ha, covering **0.6% of need**
+    (p90 13 ha).
+  - Crops reach a material share only for groups resident 50+ years (median 37% of need).
+    Residence median is 5 years, p90 24.
+  - Cause: `adjusted_fields_ha` grows fields by `rate × gap × (fields + initial_plot)`:
+    - the first plot is `0.3 × gap × 2 ha` (median 0.15 ha);
+    - then growth is ~7% a year (median gap 0.25);
+    - so reaching the need cap (median 55 ha) takes ~80 years of uninterrupted residence,
+      and every relocation abandons the fields.
+  - Labor is not what limits this: a median group could clear ~7.6 ha a year with 20% of its
+    labor.
+  - So even where farming out-earns foraging, the adjustment rule (a placeholder
+    partial-adjustment law) keeps it marginal for most of a group's stay. The rule, not
+    ecology, technology or knowledge, is the main reason farming stays rare.
+- Experimental cultivation (step 4) is not needed: groups already try farming (24% hold
+  fields). What fails is scale-up.
+
+**Options for step 2 (model changes; decision pending):**
+- A. **Field adjustment toward a target** (recommended first):
+  `fields += rate × (target − fields)` while farming wins, with target = min(need cap, labor
+  cap, arable share). The existing rate 0.3 then closes ~95% of the gap in ~9 years. It keeps
+  the existing return comparison, which self-corrects: as foraging effort falls, its
+  marginal return rises. Clearing labor stays a real cost (labor debt) and could be bounded
+  by an existing labor share. No yield change.
+  - A2 (more exact, more code): choose fields where marginal farm and forage returns are
+    equal, using the foraging harvest curve.
+- B. **Hazard-based expected tenure** (recommended on correctness grounds, small effect):
+  store last year's move hazard per unit and use `p(1 − p^H)/(1 − p)`.
+- C. **Technology × knowledge** (defer): efficiency is the largest static factor, but its
+  "double penalty" is partly conceptual. `crop_yield` 0.5 = undomesticated crops;
+  K/(K+2) = practitioner skill; the invention threshold K = 2.2 means inventors realize
+  52%. Re-evaluate after A, since the static counterfactuals ignore the dynamics, and a
+  frontier formulation risks acting as a disguised yield increase.
+- Then step 5: scenario B and a matched cultivation on/off ablation.
+
+
 #### Performance outlook (assessment after P0-P4 profiling, 2026-09-25)
 
 Question asked: can the simulation become much faster, and would model simplifications help?
