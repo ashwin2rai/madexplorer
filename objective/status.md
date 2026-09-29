@@ -3,7 +3,9 @@
 **Last updated:** 2026-09-29
 **Code at time of writing:** `c27630e` plus uncommitted P4 changes (light-recorder tests, CLI
 `--full-recorder`); the benchmark manifests record `source_tree_sha256`.
-**Current phase:** MVP 2 final stabilization pass (Section 0), P4 at a checkpoint: TODOs of
+**Current phase:** MVP 2 final stabilization pass (Section 0). P4b (familiarity decay) was
+**accepted** on 2026-09-29: on by default, golden fixtures re-recorded. Next: P5 (agriculture).
+P4 is at a checkpoint: TODOs of
 items 7-8, the current-state benchmark and the inherited-familiarity investigation are done;
 a familiarity model decision and the next hotspots remain (Section 0, "P4" entry). The earlier cleanup items 1-11
 are done (Section 4); the frozen MVP 2 baseline has not been recorded (Section 9) and is now
@@ -86,6 +88,9 @@ Read this first when resuming in a new session or VM. Nothing outside this repos
 | P3 | Aggregation population test: temporary **strict** xfail linked to P6; tolerance not loosened |
 | P4 | Newton foraging solver accepted as a documented numerical approximation (golden re-recorded for it only) |
 | P4 | Inherited familiarity: investigate first; any bounded/decaying reformulation is a separate model change, not part of P4 |
+| P4b | Familiarity reform, options 1 + 3: exponential decay toward F0 = 0.6 with tau = `memory_years`, evaluated lazily; "idle" = years *without practice* (a cell used every year does not decay); population-weighted merge of decayed values; fission copies effective values. **Accepted** after the paired experiment; not to be tuned to recover the old trajectory |
+| P4b | The 1e-6 pruning threshold is a storage threshold (numerically equivalent to baseline familiarity), not a forgetting parameter |
+| P4b | Lower farming after the reform is not a reason to change it: agriculture adoption is a separate problem for P5 |
 
 ---
 
@@ -127,7 +132,8 @@ network; distributional state: later strata) in every new data structure.
 | P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation (exact on all golden fixtures and the 1,000-year seed 0) | **done** |
 | P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** (small measured effect) | **done** |
 | P3 | Revised after P2 (reachability already bounds candidates to ~20): no hard attention cap for humans (`max_considered_destinations: null`, utility-blind nearest-cells cap available for future species); switchable precision-weighted shrinkage of direct observations `q = tau^2/(tau^2 + sigma^2)`; perception-noise experiment with and without it; then review of the capped food utility | **model changes** (shrinkage on; food utility `log1p`) | **done** |
-| P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | **in progress (checkpoint 2026-09-29)** |
+| P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | **checkpoint 2026-09-29**: items 1-8 done; remaining hotspots deferred (user moved on to P5) |
+| P4b | Familiarity reform (after the P4 investigation): lazy exponential decay of unpracticed familiarity, population-weighted merges | **model change** (accepted; golden re-recorded) | **done** |
 | P5 | Agriculture (20-25): expected future tenure `p(1-p^H)/(1-p)` from the unit's current stay probability; review tech × knowledge (candidate: knowledge sets distance to the technology frontier, `e_min + (1-e_min)K/(K+K_half)`, with `e_min` justified behaviorally, not fitted); small experimental cultivation share (2-5% labor) when crop returns are within a band of foraging, as generic subsistence exploration; scenarios A (abundant frontier) and B (intensification pressure); paired cultivation on/off ablation on B as a statistical test replacing the strict xfail | **model changes** + validation | planned |
 | P6 | Aggregation rerun (26): off / moderate / aggressive, paired seeds, documented approximation errors | experiment | planned |
 | P7 | Freeze (31): canonical scenarios, 32-seed × 1,000-year baseline under `baselines/mvp2`, final status, accepted limitations, git tag `mvp2` (tag only on the user's approval) | release | planned |
@@ -546,7 +552,8 @@ year each unit's lineage last foraged each cell, copied / max-merged with the sa
 - *Interpretation.* This is immortal lineage map memory rather than practiced local skill. It
   is inconsistent with the 20-year `memory_years` horizon that bounds beliefs. It also
   plausibly biases the farm-vs-forage comparison toward foraging for groups re-entering old
-  lineage ranges (open issue 1). That last point is untested.
+  lineage ranges (open issue 1). That last point was untested at the time; P4b's experiment
+  did not support it (marginal foraging returns unchanged).
 - *Reformulation options* (a separate model change, not part of P4; for the user to decide):
   1. **Decay toward the unfamiliar level when not practiced** (recommended):
      `f = f0 + (f_last − f0)·exp(−Δt/τ)`. Evaluate it lazily from a stored last-practiced year,
@@ -561,8 +568,8 @@ year each unit's lineage last foraged each cell, copied / max-merged with the sa
   Any of options 1-3 needs a paired dev ensemble and re-recorded golden fixtures.
 
 **Remaining P4 work, in order:**
-1. User decision on inherited familiarity (options above). If a change is adopted, it goes
-   in as its own model-change step with a paired ensemble, not mixed with optimizations.
+1. Inherited familiarity: options 1 + 3 chosen, implemented and measured as P4b below;
+   awaiting acceptance (then flip the default and re-record the golden fixtures once).
 2. Next hotspots, in order of items 1-8 CPU time (seed 0):
    - sharing's remaining per-unit work (26.8 s);
    - migration (20.2 s);
@@ -577,7 +584,43 @@ The scratch artifacts used during P4 (recorded solver inputs, a pickled late-run
 not in the repository. To regenerate solver inputs, wrap `economy.foraging.cell_harvest` to
 record every 20th call's arguments during a 600-year seed-0 run (about 6,300 samples).
 
-#### P4b. Practiced familiarity reform (MODEL CHANGE, separate from P4; in progress)
+#### P4b. Practiced familiarity reform (MODEL CHANGE, separate from P4; ACCEPTED 2026-09-29)
+
+**Scope.** P4 itself was behavior-preserving or numerically controlled: only the Newton solver
+(item 6) changed seeded output, as a measured approximation. The familiarity decay reform is a
+later, *intentional* model reform, kept separate from the P4 performance results. P4b is
+complete:
+- `mechanisms.familiarity_decay: true` is the default;
+- golden fixtures were re-recorded once for it (all five changed, including MVP 1, since
+  familiarity is a foraging mechanism);
+- `make check` is green (165 tests).
+
+**Conceptual distinction (documented in `population/familiarity.py` and `species/human.yaml`).**
+- *Beliefs / geographic information*: knowledge that a place exists and approximate
+  information about it (the belief map, social reports, memory horizon).
+- *Familiarity*: practiced ability to exploit that local ecology efficiently. It is a
+  foraging-efficiency multiplier per cell.
+
+A lineage can therefore remember a valley for generations, through beliefs and reports, while
+losing its practical foraging familiarity with it.
+
+**Accepted consequences (intentional, not regressions).** The reform changes the reference
+trajectory materially:
+- lower population at year 600 (−18%) and year 1,000 (−23%);
+- fewer occupied cells;
+- lower sedentism.
+
+Long-distance movement and recolonization now carry a real relearning cost; the previous model
+gave lineages near-perfect competence in places they had not used for a century. All numbers
+cited in Sections 0-P4 and earlier that predate this change are from the pre-reform model.
+
+**Agriculture.** Marginal foraging returns (the field-planning input) are unchanged, and
+farming at comparable population or density is similar. Aggregate farming declines because
+growth and colonization slow. This is evidence that the agriculture-adoption problem (open
+issue 1) is **independent of the familiarity issue**. It is addressed in P5, without
+weakening decay or raising yields to compensate.
+
+**Plan and record as carried out:**
 
 User decision 2026-09-29: options 1 + 3 from the P4 familiarity investigation. P4 itself stays
 behavior-preserving / numerically controlled; this is a later, intentional model reform.
@@ -604,6 +647,114 @@ Plan:
    runs for agriculture, with the requested diagnostics (familiarity on arrival, time since
    practice, foraging returns, cultivation, sedentism, milestones). Checkpoint. On
    acceptance: flip the default, re-record golden fixtures once, update this file.
+
+**Implementation (done, switch off by default).**
+- `population/familiarity.py`: `FamiliarityMap` (stored value and last-practiced year per
+  cell), `FamiliarityRule` (F0, tau or None), rule `familiarity_decay` v1.0 (governance
+  registry, 44 rules).
+- Foraging reads `effective(cell, year)` and practice goes through `practice()`.
+  `merge_state` / `absorb` / `split_off` take the merge/split year and the rule; fusion,
+  fission and coarsening pass them. Founders' homeland entry is stamped with the start year.
+- Materialization (merge, split) folds the decay into the value and re-stamps the year to
+  `max(last, year − 1)`, so the idle clock continues unchanged (tested). Merged stamp = the
+  latest of the two sides' stamps.
+- Switch off: `make check` green and golden fixtures unchanged, so the old rules are
+  reproduced exactly.
+- Tests: `tests/test_familiarity.py`, 14 tests covering the spec list:
+  - no decay at Δt = 0, nor while practiced every year;
+  - monotone approach to F0;
+  - excess 1/e after tau idle years;
+  - never below F0 (Hypothesis);
+  - practice starts from the decayed value;
+  - population-weighted merge, with a missing cell counted as F0;
+  - merge uses values decayed to the merge year;
+  - the merge keeps the idle clock;
+  - fission gives the daughter the parent's effective values, and the lineages then diverge;
+  - pruning only near F0;
+  - decayed familiarity leaves beliefs intact;
+  - the old rules when off;
+  - foraging reads and practices the decayed value, end to end, both switch settings.
+
+**Experiment.** One matched ensemble instead of the planned 600-year dev run plus 1,000-year
+runs: seeds 0-7 paired, 1,000 years (the 600-year checkpoints are inside it),
+`mvp2_neolithic` reference mode, decay off vs on (`ensembles/p4b_familiarity_1000y/{off,on}`,
+not in git). Ensemble rows plus a probe that only observes. The probe keeps its own record of
+the lineage's true last-practice year, because the model's stamps are re-based on merge and
+split. Probe script not in git: wrap `CellHarvest.apply`, `groups.split_off` and
+`composition.merge_state` as in the P4 investigation. Paired mean difference, on − off (se):
+
+| Measure | off | on | diff (se) |
+|---|---|---|---|
+| Familiarity at arrival, 2nd half: mean / median | 0.92 / 0.998 | 0.69 / 0.63 | −0.23 (0.007) / −0.37 (0.002) |
+| ... arrivals after >100 idle years: mean | 0.97 | 0.600 | −0.37 (0.003) |
+| People-weighted familiarity, all foraging, 2nd half | 0.97 | 0.89 | −0.084 (0.005) |
+| Arrivals: new cell / return ≤20 y / 21-100 y / >100 y | 14 / 44 / 21 / 21% | 15 / 46 / 19 / 20% | similar |
+| Median idle years of returns | 18.5 | 14 | −4.5 (0.8) |
+| Familiarity entries per unit, year 600 / 1,000 | 83 / 640 | 45 / 97 | −38 / −543 |
+| Forage kcal per hour, year 400 / 1,000 | 736 / 633 | 714 / 624 | −23 (7) / −10 (5) |
+| Marginal forage return (field planning input), year 600 / 1,000 | 498 / 468 | 507 / 468 | +8 (7) / −0.1 (13) |
+| Population, year 400 / 600 / 1,000 | 3.47k / 17.7k / 37.7k | 2.84k / 14.5k / 29.0k | −0.63k (0.25) / −3.2k (1.2) / −8.7k (3.5) |
+| Occupied cells, year 300 / 600 / 1,000 | 53 / 637 / 1,007 | 44 / 548 / 944 | −9 (4) / −89 (41) / −63 (26) |
+| Migration rate | 0.263 | 0.252 | −0.011 (0.010) |
+| Crude death rate, last 50 y (per 1,000) | 38.3 | 38.9 | +0.56 (0.15) |
+| First cultivation / storage pits (year) | 173 / 141 | 161 / 132 | −12 (10) / −9 (23) |
+| Farm share of food, last 50 y | 0.166 | 0.055 | −0.11 (0.057) |
+| Farming population share, year 1,000 | 0.75 | 0.47 | −0.28 (0.10) |
+| Sedentary share, last 50 y | 0.49 | 0.36 | −0.13 (0.065) |
+| Inventions | 20.3 | 13.5 | −6.8 (2.4) |
+| Final share seed selection / fallow rotation | 1.00 / 0.99 | 0.49 / 0.39 | −0.51 (0.17) / −0.60 (0.17) |
+| Run time per seed | 255 s | 211 s | −44 s (fewer units) |
+
+Interpretation:
+- **Familiarity now has its intended meaning.** A lineage returning after a century
+  forages like newcomers (0.60), where before it kept 0.97. Continuously resident groups
+  are unaffected (people-weighted familiarity falls only 0.97 → 0.89). Stored entries per
+  unit stay bounded (≈100 instead of 640 and growing).
+- **Growth and range expansion slow down.** Every relocation now costs a real relearning
+  period (arrival efficiency 0.69 instead of 0.92). Colonization is slower (−14% cells at
+  year 600), mortality slightly higher, and population is −18% to −23% from year 400 on.
+  The earlier permanent familiarity subsidized moving within the ancestral range.
+- **Agriculture: the prediction from the P4 investigation is not supported.** Mean marginal
+  foraging returns, the input field planning compares with crop returns, are the same in
+  both models. Farming at year 1,000 is lower with decay (farm share −0.11, 1.9 se;
+  farming population −0.28). At matched population or density (pooling 50-year trajectory
+  points), farming is similar in both models or slightly higher with decay:
+  - density 30-34 people per cell: farm share 0.042 off vs 0.094 on (few points on);
+  - density 34-38: 0.16 vs 0.23.
+  So the lower year-1,000 farming follows the smaller and slower-growing population, in
+  line with farming in this model emerging late, where population is densest. It is not a
+  direct effect of familiarity on the farm-vs-forage choice. This is observational
+  (trajectory points pooled across seeds, not a causal decomposition), and the high-density
+  bins have few points in the decay model. Nothing was tuned.
+- Accepting the reform makes the year-1,000 reference slower-growing and less agricultural.
+  Open issue 1 (farming rarely takes hold) is, if anything, sharper.
+
+
+#### P5. Agriculture (IN PROGRESS, started 2026-09-29)
+
+Guiding question (user): *under what ecological and demographic conditions should cultivation
+become rational under the current equations, and does it emerge there?* Not: how to restore
+an earlier farm share. No weakening of familiarity decay and no yield increases to
+compensate.
+
+Plan (checkpoint after each step; model changes only with user approval and paired
+ensembles):
+1. **Audit (measurement only).** Record the field-planning decision inputs in reference runs:
+   - the yield decomposition: potential × `crop_yield` capability × agricultural efficiency
+     `K/(K+2)`;
+   - clearing hours, and the tenure assumed (`min(max(residence, 1), horizon)`) against
+     realized future tenure;
+   - farm return vs marginal foraging × 1.1.
+   From these, static counterfactuals show which factor binds: knowledge efficiency,
+   technology capability, tenure, clearing. Then options with a recommendation.
+2. Tenure: expected future tenure `p(1 − p^H)/(1 − p)` from the unit's stay probability, if
+   the audit shows the past-residence proxy is biased.
+3. Technology × knowledge: whether `crop_yield` 0.5 × `K/(K+2)` double-penalizes early
+   cultivation (candidate `e_min + (1 − e_min)·K/(K + K_half)`, `e_min` justified
+   behaviorally).
+4. Experimental cultivation share: only if the mechanism requires it.
+5. Scenario B (intensification pressure) and matched cultivation on/off ablation, replacing
+   the strict xfail.
 
 #### Performance outlook (assessment after P0-P4 profiling, 2026-09-25)
 
