@@ -10,6 +10,7 @@ per-candidate noise draw, so identical options do not make moving likelier just
 because there are more of them (no best-of-many-noise bias).
 """
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 
@@ -353,6 +354,7 @@ class Relocation:
         ctx.ledger.abandoned_stores_kcal += abandoned
         unit.fields_ha = 0.0
         unit.residence_years = 0
+        unit.move_hazard = math.nan  # the hazard was for leaving the old cell
         ctx.ledger.migrations += 1
         if ctx.scenario.config.output.log_migrations:
             ctx.events.emit(
@@ -365,6 +367,22 @@ class Relocation:
                 path_cost_km=round(self.path_cost_km, 2),
                 hazard=round(self.hazard, 4),
             )
+
+
+@dataclass(frozen=True)
+class MoveHazards:
+    """Record this year's move hazard of every unit (applied before any relocation).
+
+    Units that could not evaluate staying get NaN (unknown). Field planning reads the value
+    in the following year, so there is no same-year loop between investment and moving.
+    """
+
+    hazards: dict[str, float]
+
+    def apply(self, state: SimulationState, ctx: StepContext) -> None:
+        """Store each unit's hazard; NaN for units without a decision."""
+        for unit_id, unit in state.units.items():
+            unit.move_hazard = self.hazards.get(unit_id, math.nan)
 
 
 @dataclass(frozen=True)
@@ -578,7 +596,9 @@ class MigrationSubsystem:
         ((scores, _),) = self._scores([prepared], state.year, state.world.water_access)
         return self._finish(prepared, scores, state, ctx, rng)
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Relocation]:
+    def evaluate(
+        self, state: SimulationState, ctx: StepContext
+    ) -> Sequence[MoveHazards | Relocation]:
         """Decide which units move where this year (all units scored and chosen at once).
 
         Equivalent to deciding unit by unit in order: the best destination is the first
@@ -590,7 +610,7 @@ class MigrationSubsystem:
         rng = ctx.rng.stream(Streams.MIGRATION)
         prepared = [p for u in state.units.values() if (p := self._prepare(u, state, ctx))]
         if not prepared:
-            return []
+            return [MoveHazards({})]
         blocks = self._scores(prepared, state.year, state.world.water_access)
         counts = np.array([p.candidates.size for p in prepared])
         starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
@@ -610,11 +630,13 @@ class MigrationSubsystem:
         chosen = np.flatnonzero(decided)
         gains = scores[best_rows] - scores[home_rows[chosen]]
         draws = rng.random(chosen.size)
-        proposals: list[Relocation] = []
+        hazards = {p.unit.id: 0.0 for p in prepared}  # no alternative destination: 0
+        proposals: list[MoveHazards | Relocation] = [MoveHazards(hazards)]
         for k, index in enumerate(chosen.tolist()):
             item = prepared[index]
             destination = int(cells[best_rows[k]])
             hazard = migration_probability(float(gains[k]), item.behavior)
+            hazards[item.unit.id] = hazard
             if item.unit.id in ctx.trace_units:
                 self._trace(item, destination, hazard, state, ctx)
             if draws[k] < hazard:
@@ -629,15 +651,17 @@ class MigrationSubsystem:
         state: SimulationState,
         ctx: StepContext,
         rng: np.random.Generator,
-    ) -> list[Relocation]:
+    ) -> list[MoveHazards | Relocation]:
         """Unit-by-unit decisions (used when a tie-break draw is needed)."""
-        proposals: list[Relocation] = []
+        hazards = {p.unit.id: 0.0 for p in prepared}
+        proposals: list[MoveHazards | Relocation] = [MoveHazards(hazards)]
         chosen: list[int] = []
         home_ratios: list[float] = []
         for index, (item, (scores, ratios)) in enumerate(zip(prepared, blocks, strict=True)):
             decision = self._finish(item, scores, state, ctx, rng)
             if decision is None:
                 continue
+            hazards[item.unit.id] = decision.hazard
             chosen.append(index)
             home_ratios.append(float(ratios[item.candidates == item.unit.cell][0]))
             if rng.random() < decision.hazard:

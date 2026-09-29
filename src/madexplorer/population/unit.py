@@ -278,6 +278,9 @@ class PopulationUnit:
     clearing_hours: float = 0.0  # spent clearing last planning step
     stored_kcal: float = 0.0  # put into storage this year
     residence_years: int = 0  # consecutive years in the current cell
+    # Last migration decision's annual move probability in the current cell: 0 without any
+    # alternative destination, NaN when unknown (never evaluated here, or just arrived).
+    move_hazard: float = math.nan
     harvest_history: deque[float] = field(
         default_factory=lambda: deque(maxlen=HARVEST_MEMORY_YEARS)
     )  # per-capita harvest, most recent last

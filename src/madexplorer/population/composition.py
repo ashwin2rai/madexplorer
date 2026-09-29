@@ -13,6 +13,7 @@ additively (tie strength is accumulated exchange), and the edge between the two
 merging units disappears rather than becoming a self-edge.
 """
 
+import math
 from collections.abc import MutableMapping
 from enum import Enum
 
@@ -72,6 +73,7 @@ FIELD_RULES: dict[str, tuple[str, str]] = {
     "clearing_hours": ("sum", "proportional to people"),
     "stored_kcal": ("sum", "proportional to people"),
     "residence_years": ("keep target (the larger unit)", "copy"),
+    "move_hazard": ("population-weighted mean of known values (NaN if neither known)", "copy"),
     "harvest_history": ("population-weighted mean of aligned recent years", "copy"),
     "trade_ties": (
         "additive union, rewired network",
@@ -123,6 +125,11 @@ def merge_state(
         setattr(target, name, _weighted(getattr(target, name), n_t, getattr(source, name), n_s))
     for name in _SUMMED:
         setattr(target, name, getattr(target, name) + getattr(source, name))
+    if math.isnan(target.move_hazard) or math.isnan(source.move_hazard):
+        known = [h for h in (target.move_hazard, source.move_hazard) if not math.isnan(h)]
+        target.move_hazard = known[0] if known else math.nan
+    else:
+        target.move_hazard = _weighted(target.move_hazard, n_t, source.move_hazard, n_s)
     if target.knowledge.size and n_t + n_s > 0:
         target.knowledge = (target.knowledge * n_t + source.knowledge * n_s) / (n_t + n_s)
     target.technologies = target.technologies | source.technologies
@@ -221,6 +228,7 @@ def split_off(
         forage_plant_share=parent.forage_plant_share,
         crop_yield_kcal_per_ha=parent.crop_yield_kcal_per_ha,
         residence_years=parent.residence_years,
+        move_hazard=parent.move_hazard,
     )
     daughter.harvest_history.extend(parent.harvest_history)
     for name in _SUMMED:

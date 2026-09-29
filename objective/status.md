@@ -834,6 +834,35 @@ ensembles):
   frontier formulation risks acting as a disguised yield increase.
 - Then step 5: scenario B and a matched cultivation on/off ablation.
 
+**Step 2: A and B implemented (2026-09-29), behind temporary switches, both off.** User
+decision: do A and B, run a matched 2×2; no experimental cultivation; technology ×
+knowledge untouched.
+- A, `mechanisms.field_growth_to_target`, rule `field_growth_to_target` v1.0:
+  - It applies when new land pays under the unchanged return comparison.
+  - Step = min(`field_adjustment_rate` × (need area − fields), labor-feasible area).
+    - Need area: requirement × (1 + surplus target) / expected yield; the existing cap, no
+      new parameter.
+    - Labor-feasible area follows from next year's budget
+      `(L − ΔF·clearing)·s ≥ (F + ΔF)·cultivation`, so ongoing cultivation counts first and
+      clearing is still paid as labor debt.
+  - Per-cell arable scaling as before. Shrinking unchanged. `initial_plot_ha` is unused
+    under A.
+  - `FieldPlan.limit` records the binding limit (target, labor, arable) for diagnostics.
+- B, `mechanisms.expected_tenure`, rule `expected_tenure` v1.0:
+  - Tenure = `p(1 − p^H)/(1 − p)` with p = 1 − last year's move hazard (H when p ≈ 1).
+  - The new unit field `move_hazard` is written by a `MoveHazards` proposal in migration
+    (before relocations):
+    - 0 when there is no alternative destination;
+    - NaN when the unit cannot evaluate staying;
+    - reset to NaN on relocation.
+    - Merge: population-weighted mean of known values. Split: copy.
+  - An unknown hazard falls back to the existing proxy `min(max(residence, 1), H)`. It only
+    changes how clearing is amortized.
+- Tests: `tests/test_field_growth.py` (12). With both switches off, golden fixtures are
+  unchanged; `make check` green (177).
+- 2×2 matched experiment (seeds 0-7, 1,000 years, arms base / A / B / AB): script ready,
+  **not yet run**. Estimated ~60-70 min on this 2-core machine: 32 runs of ~4 min, 2 jobs.
+
 
 #### Performance outlook (assessment after P0-P4 profiling, 2026-09-25)
 

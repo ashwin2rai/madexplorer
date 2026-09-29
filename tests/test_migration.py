@@ -11,6 +11,7 @@ from madexplorer.core.simulation import Simulator
 from madexplorer.mobility.exploration import food_prior
 from madexplorer.mobility.migration import (
     MigrationSubsystem,
+    Relocation,
     attention_set,
     choose_destination,
     destination_components,
@@ -114,7 +115,11 @@ def test_moves_are_stochastic_with_frequency_matching_the_hazard(k: int) -> None
     decision = subsystem.decide(unit, sim.state, ctx, np.random.default_rng(0))
     assert decision is not None and 0.1 < decision.hazard < 0.9
     trials = 4000
-    moves = sum(len(subsystem.evaluate(sim.state, ctx)) for _ in range(trials))
+    moves = sum(
+        isinstance(proposal, Relocation)
+        for _ in range(trials)
+        for proposal in subsystem.evaluate(sim.state, ctx)
+    )
     se = np.sqrt(decision.hazard * (1 - decision.hazard) / trials)
     assert abs(moves / trials - decision.hazard) < 4 * se
 
