@@ -134,6 +134,7 @@ def cmd_ensemble(args: argparse.Namespace) -> int:
         settings=settings,
         save_runs=args.save_runs,
         progress=None if args.quiet else progress,
+        light=not args.full_recorder,
     )
     summary = aggregate(rows)
     for key in args.show:
@@ -314,6 +315,12 @@ def build_parser() -> argparse.ArgumentParser:
         "species.human.cognition.observation_noise_sigma=0.1 (repeatable)",
     )
     p.add_argument("--save-runs", action="store_true", help="also write every run's outputs")
+    p.add_argument(
+        "--full-recorder",
+        action="store_true",
+        help="record every metric and the event log (default: the light recorder, which keeps "
+        "only the fields ensemble summaries use; --save-runs always records in full)",
+    )
     p.add_argument(
         "--show",
         nargs="*",

@@ -266,12 +266,13 @@ def timed_ensemble(
     settings: Mapping[str, Any] | None = None,
     save_runs: bool = False,
     progress: Callable[[Row], None] | None = None,
+    light: bool = True,
 ) -> tuple[list[Row], Path]:
     """Apply ``settings``, run the ensemble, and write its outputs to ``out``."""
     variant = scenario.with_settings(settings) if settings else scenario
     started = time.perf_counter()
     rows = run_ensemble(
-        variant, seeds, jobs, n_years, out / "runs" if save_runs else None, progress
+        variant, seeds, jobs, n_years, out / "runs" if save_runs else None, progress, light
     )
     wall = time.perf_counter() - started
     return rows, write_ensemble(out, variant, seeds, rows, settings, wall)

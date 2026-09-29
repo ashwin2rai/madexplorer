@@ -1,10 +1,11 @@
 # Implementation Status
 
-**Last updated:** 2026-09-24
-**Code at time of writing:** `adc1a09` plus uncommitted MVP 2 cleanup changes (the baseline
-manifest records `source_tree_sha256`, which identifies the exact sources).
-**Current phase:** MVP 2 final stabilization pass (Section 0), paused in the middle of P4
-(Section 0, "P4" entry lists what is done and what remains). The earlier cleanup items 1-11
+**Last updated:** 2026-09-29
+**Code at time of writing:** `c27630e` plus uncommitted P4 changes (light-recorder tests, CLI
+`--full-recorder`); the benchmark manifests record `source_tree_sha256`.
+**Current phase:** MVP 2 final stabilization pass (Section 0), P4 at a checkpoint: TODOs of
+items 7-8, the current-state benchmark and the inherited-familiarity investigation are done;
+a familiarity model decision and the next hotspots remain (Section 0, "P4" entry). The earlier cleanup items 1-11
 are done (Section 4); the frozen MVP 2 baseline has not been recorded (Section 9) and is now
 the last step of the stabilization pass.
 
@@ -126,7 +127,7 @@ network; distributional state: later strata) in every new data structure.
 | P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation (exact on all golden fixtures and the 1,000-year seed 0) | **done** |
 | P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** (small measured effect) | **done** |
 | P3 | Revised after P2 (reachability already bounds candidates to ~20): no hard attention cap for humans (`max_considered_destinations: null`, utility-blind nearest-cells cap available for future species); switchable precision-weighted shrinkage of direct observations `q = tau^2/(tau^2 + sigma^2)`; perception-noise experiment with and without it; then review of the capped food utility | **model changes** (shrinkage on; food utility `log1p`) | **done** |
-| P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | **in progress (paused 2026-09-25)** |
+| P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | **in progress (checkpoint 2026-09-29)** |
 | P5 | Agriculture (20-25): expected future tenure `p(1-p^H)/(1-p)` from the unit's current stay probability; review tech × knowledge (candidate: knowledge sets distance to the technology frontier, `e_min + (1-e_min)K/(K+K_half)`, with `e_min` justified behaviorally, not fitted); small experimental cultivation share (2-5% labor) when crop returns are within a band of foraging, as generic subsistence exploration; scenarios A (abundant frontier) and B (intensification pressure); paired cultivation on/off ablation on B as a statistical test replacing the strict xfail | **model changes** + validation | planned |
 | P6 | Aggregation rerun (26): off / moderate / aggressive, paired seeds, documented approximation errors | experiment | planned |
 | P7 | Freeze (31): canonical scenarios, 32-seed × 1,000-year baseline under `baselines/mvp2`, final status, accepted limitations, git tag `mvp2` (tag only on the user's approval) | release | planned |
@@ -425,7 +426,7 @@ validation, remaining concerns.)
   approximation range or documents aggregation as performance-only for MVP 2. The
   cultivation-timing case of the same test still passes and is not marked.
 
-#### P4. Remaining hotspots (IN PROGRESS, paused 2026-09-25)
+#### P4. Remaining hotspots (IN PROGRESS, checkpoint 2026-09-29)
 
 **Rules for P4 (user):**
 - Behavior-preserving unless a change is isolated and experimentally justified.
@@ -461,8 +462,8 @@ test run, so compare CPU time there.
 | 4b | Perception batched: one `standard_normal` call for all units (verified identical to sequential draws); food prior per segment (`food_prior_batch`) | rounding-level: batched mean/var differ from per-unit `np.mean`/`np.var` by ≤ 2e-14 relative in about half of cases (pairwise vs sequential summation) | golden unchanged; 1,000-year seed 0 identical |
 | 5 | Sharing partner draws: `candidate_encounters` builds all (receiver, partner) pairs in the nested-loop order with array operations, then draws **one independent uniform per pair** in one `rng.random(n_pairs)` call (same law, same draws) | exact | golden unchanged; `test_candidate_encounters_follow_the_nested_loop_order`. Not benchmarked separately yet |
 | 6 | Foraging effort solver: safeguarded Newton from zero effort (monotone on the concave harvest curve), tolerance `abs(H - T) ≤ 1e-12·T`, falls back to the old 40-step bisection | **numerical approximation** | On 4,280 recorded real solves: max difference from 40-step bisection 2.3e-12 (fraction) and 1.9e-12 (harvest), about bisection's own resolution; 2.5× faster per solve (9.7 vs 24.5 µs); 12-step bisection would err by 5e-4. Hypothesis test against a 60-step bisection. Paired ensemble vs bisection (seeds 0-7, 600 years; `ensembles/p4_newton_dev` vs `p3_food_log1p_s0.3`): statistically equivalent (details below the table). **Golden fixtures re-recorded for this change** |
-| 7 | Light recorder: `MetricsRecorder(light=True)` / `Simulator.run(light=True)` computes only `LIGHT_FIELDS` plus tech shares, no snapshots; `Simulator(record_events=False)` discards events. Ensembles default to light unless runs are saved | exact (model untouched) | **TODO:** a test that light rows equal the same fields of full rows; a CLI `--full-recorder` switch |
-| 8 | `run_ensemble`: explicit `spawn` context; `OMP/OPENBLAS/MKL/VECLIB/NUMEXPR_NUM_THREADS=1` for workers (unless the user set them); persistent workers reuse the static context across seeds | implementation | **TODO:** benchmark ensemble wall time before/after; check that `timed_ensemble`/CLI pass `light` |
+| 7 | Light recorder: `MetricsRecorder(light=True)` / `Simulator.run(light=True)` computes only `LIGHT_FIELDS` plus tech shares, no snapshots; `Simulator(record_events=False)` discards events. Ensembles default to light unless runs are saved | exact (model untouched) | `test_light_recorder_rows_equal_the_same_fields_of_full_rows` (farming run, every light field bit-identical to the full row, NaN included; no events or snapshots); `test_ensemble_summary_is_the_same_from_light_and_full_recorders`. CLI `madexplorer ensemble --full-recorder` (`timed_ensemble(light=...)`), tested to give identical `runs.csv` rows. `bench runs` keeps the full recorder, for comparability with earlier reports |
+| 8 | `run_ensemble`: explicit `spawn` context; `OMP/OPENBLAS/MKL/VECLIB/NUMEXPR_NUM_THREADS=1` for workers (unless the user set them); persistent workers reuse the static context across seeds | implementation | `timed_ensemble` and the CLI now pass `light`. Ensemble timing below |
 
 Item 6 paired ensemble in detail: identical milestones and colonization to year 300; final
 population −219 (se 145); occupied cells −4.4 (se 3.0); migration +0.0004 (se 0.0005).
@@ -474,25 +475,102 @@ population −219 (se 145); occupied cells −4.4 (se 3.0); migration +0.0004 (s
 - Middle window 167 → 127 ms/tick; late window 490 → 445 ms/tick.
 - Dev ensemble per-run time (items 1-6): 49.8 → 40.1 s.
 
+**Ensemble timing, items 1-8** (`bench-dev` shape: 8 seeds × 600 years, `--jobs 2`; child
+CPU time from the shell's `times`; pre-P4 = a git worktree at `2746232`, set up with `uv sync`):
+
+| Configuration | Wall | Child CPU |
+|---|---|---|
+| pre-P4 (`2746232`) | 222 s | 355 s |
+| items 1-8, `--full-recorder` | 165 s | 270 s (−24%) |
+| items 1-8, light recorder (default) | 161 s | 264 s (−26%) |
+
+The light recorder alone saves ≈2%. Its ensemble rows are identical to the full recorder's
+for every measure (`madexplorer compare`: all differences 0). The spawn / thread-limit /
+persistent-worker changes (item 8) cannot be switched off separately, so their own share is
+not isolated. The pre-P4 and items 1-8 runs differ slightly in outputs (the Newton solver,
+item 6), so this is a timing comparison, not a replay.
+
+**Current state, items 1-8** (`p4_items1to8_seed0_1000y.json`, `p4_items1to8_synthetic.json`):
+
+| Subsystem, seed 0, 1,000 y (CPU s) | P4 start | items 1-4 | items 1-8 |
+|---|---|---|---|
+| knowledge_sharing | 37.4 | 39.0 | 26.8 |
+| migration | 37.0 | 25.7 | 20.2 |
+| diffusion | 21.4 | 22.6 | 18.9 |
+| foraging | 28.5 | 29.1 | 18.0 |
+| demography | 16.5 | 17.4 | 14.4 |
+| field_planning | 11.9 | 12.1 | 9.6 |
+| learning | 10.7 | 11.4 | 9.4 |
+| perception | 32.5 | 9.5 | 7.6 |
+| fusion | 7.4 | 7.7 | 7.0 |
+| **total CPU** | **227.8** | **198.7** | **159.0** |
+
+- 1.43× faster than P4 start, against a 2× stretch target of ≈114 s. The run is not identical to
+  P4 start: the Newton solver (item 6) changed it, and it now ends with 35,953 people and 1,393
+  units instead of 35,010 and 1,376. Peak RSS 196 MB (unchanged).
+- Windows (ms/tick): early 6.0, middle 110 (was 167 at P4 start), late 364 (was 490). The
+  late window is 0.27 ms/unit/tick (was 0.37).
+- **Caveat on noise.** Subsystems whose code did not change between items 1-4 and 1-8 also
+  measured 12-18% faster (learning 11.4 → 9.4, demography 17.4 → 14.4, diffusion 22.6 → 18.9).
+  So part of the 199 → 159 s drop is machine variation on the shared codespace, not the code.
+  The attributable gains are foraging −11 s (Newton, item 6) and sharing −12 s (item 5); both
+  are well beyond the ≈15% background shift.
+- Synthetic (ms/tick CPU, P4 start → now): see the two JSON reports. Per-unit cost at 2,000
+  requested units is 0.25 ms/unit/tick (P2: 0.30). Sharing (82 ms), migration (66), diffusion
+  (56) and demography (38) lead.
+
+**Inherited familiarity investigation** (probe, not in the repository: a shadow record of the
+year each unit's lineage last foraged each cell, copied / max-merged with the same rules as
+`familiarity`, keys verified identical at every checkpoint; 1,000-year seed 0):
+
+- *Mechanism.* Familiarity f starts at 0.6 in an unknown cell and rises `f += 0.3(1 − f)` per
+  year foraged there (0.9 after ~4 years). It never decays. Fission copies it; fusion takes the
+  per-cell maximum.
+- *What it affects.* It multiplies foraging effort, which sets harvest when labor limits it
+  and each group's share of a shared cell. It also enters `forage_marginal_kcal_per_hour`,
+  which is used by field planning (farm vs forage) and by the agriculture need signal in
+  innovation. It does **not** enter migration utility, beliefs or social reports (since P2).
+- *Growth.* Cells per unit: 12 (year 100), 57 (500), 103 (600), 394 (800), 772 (1,000; p90
+  976). Share of entries last practiced by the lineage more than 100 years earlier: 44%
+  (year 200), 78% (600), 96% (1,000).
+- *Behavioral reach.* In the second half of the run, 160k foraging years were a group's first
+  year in a cell (arrivals, not continuing residence). For those, **mean familiarity was 0.93
+  and 89% started above the 0.6 of a truly unknown cell.** By lineage staleness: 11% truly new;
+  44% re-entered within 20 years; 22% after 21-100 years; **23% after more than 100 years**,
+  still at mean familiarity 0.98. So a group arriving where an ancestral band foraged four or
+  more generations earlier forages as if it had never left.
+- *Cost.* Direct runtime is small: fission dict copies 0.09 s, fusion max-merge loops 0.75 s
+  (<1% of the run). Memory grows about quadratically late in the run: ≈1.08M entries ≈
+  100 MB estimated at year 1,000, a large share of the 196 MB peak RSS. That estimate is from
+  entry counts, not measured.
+- *Interpretation.* This is immortal lineage map memory rather than practiced local skill. It
+  is inconsistent with the 20-year `memory_years` horizon that bounds beliefs. It also
+  plausibly biases the farm-vs-forage comparison toward foraging for groups re-entering old
+  lineage ranges (open issue 1). That last point is untested.
+- *Reformulation options* (a separate model change, not part of P4; for the user to decide):
+  1. **Decay toward the unfamiliar level when not practiced** (recommended):
+     `f = f0 + (f_last − f0)·exp(−Δt/τ)`. Evaluate it lazily from a stored last-practiced year,
+     as belief expiry already works, and prune entries once within ε of f0. Taking
+     τ = `memory_years` adds no new parameter. Smooth, and it bounds memory.
+  2. Hard horizon: forget entries not practiced within `memory_years`. Simplest; a step
+     change at the horizon.
+  3. Independently of 1 or 2: fusion takes the population-weighted mean instead of the
+     maximum (the maximum assumes the most skilled member's knowledge is shared by everyone).
+  4. Keep it as is, documented as cultural geographic knowledge.
+
+  Any of options 1-3 needs a paired dev ensemble and re-recorded golden fixtures.
+
 **Remaining P4 work, in order:**
-1. The item 7-8 TODOs above.
-2. Benchmark the current state (items 1-8): `madexplorer bench runs ... --seeds 0 --years 1000`
-   and `bench synthetic`, using CPU time. Report subsystem CPU shares before/after, the
-   windows, and RSS.
-3. Next hotspots, from the P4-start profile:
-   - foraging (per-cell Python, now with Newton);
-   - diffusion (`contacts` per unit);
-   - sharing's remaining per-unit work;
-   - demography and the `weighted_count` calls;
-   - fusion (`merge_state`, `rewire_ties`).
-4. **Inherited familiarity investigation** (not pruning):
-   - its runtime and memory share;
-   - whether familiar cells affect migration, beliefs or reports (since P2 they no longer
-     feed report pools, only foraging efficiency);
-   - why it is inherited (fission copies it, fusion takes the max);
-   - whether it acts as cultural geographic knowledge or as immortal map memory. If the
-     latter, propose a bounded or decaying reformulation as a separate model change.
-5. Write up P4 (speedup, and whether each change is exact, approximate or behavioral), then
+1. User decision on inherited familiarity (options above). If a change is adopted, it goes
+   in as its own model-change step with a paired ensemble, not mixed with optimizations.
+2. Next hotspots, in order of items 1-8 CPU time (seed 0):
+   - sharing's remaining per-unit work (26.8 s);
+   - migration (20.2 s);
+   - diffusion, `contacts` per unit (18.9 s);
+   - foraging, per-cell Python around the Newton solver (18.0 s);
+   - demography and the `weighted_count` calls (14.4 s);
+   - fusion, `merge_state` / `rewire_ties` (7.0 s).
+3. Write up P4 (speedup, and whether each change is exact, approximate or behavioral), then
    checkpoint.
 
 The scratch artifacts used during P4 (recorded solver inputs, a pickled late-run state) are
