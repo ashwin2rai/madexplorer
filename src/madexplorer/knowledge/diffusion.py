@@ -10,7 +10,7 @@ a technology when the supporting knowledge decays below a fraction of the
 requirement.
 """
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -26,7 +26,7 @@ from madexplorer.population.unit import PopulationUnit
 def contacts(
     unit: PopulationUnit,
     state: SimulationState,
-    by_cell: dict[int, list[PopulationUnit]],
+    by_cell: Mapping[int, list[PopulationUnit]],
     model: KnowledgeModel,
 ) -> dict[str, float]:
     """Contact strength with every other unit this unit interacts with."""
@@ -145,7 +145,7 @@ class DiffusionSubsystem:
         """All units read pre-diffusion knowledge (staged update)."""
         rng = ctx.rng.stream(Streams.TECHNOLOGY_ADOPTION)
         spec = self.model.system.diffusion
-        by_cell = state.units_by_cell()
+        by_cell = ctx.spatial(state).by_cell
         units = list(state.units.values())
         if not units:
             return []

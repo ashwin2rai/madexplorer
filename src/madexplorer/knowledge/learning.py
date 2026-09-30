@@ -10,15 +10,16 @@ with the log number of practitioners, so a shrinking or disengaged population
 loses knowledge without any explicit "collapse" rule.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
 
+from madexplorer.core.exactsum import python_sum_columns
 from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray
-from madexplorer.economy.agriculture import unit_labor_hours
+from madexplorer.economy.agriculture import labor_hours_batch
 from madexplorer.knowledge.system import KnowledgeModel
 from madexplorer.population.unit import PopulationUnit
 
@@ -91,6 +92,43 @@ class KnowledgeLevels:
         state.units[self.unit_id].knowledge = self.knowledge
 
 
+@dataclass(frozen=True, eq=False)
+class KnowledgeMatrix:
+    """New knowledge vectors of many units (rows in unit order)."""
+
+    units: tuple[PopulationUnit, ...]
+    knowledge: FloatArray  # (units, domains)
+
+    def apply(self, state: SimulationState, ctx: StepContext) -> None:
+        """Commit the new levels (each unit gets its own row copy)."""
+        for unit, row in zip(self.units, self.knowledge, strict=True):
+            unit.knowledge = row.copy()
+
+
+def activity_shares_batch(
+    units: Sequence[PopulationUnit], labor_hours: FloatArray
+) -> dict[str, FloatArray]:
+    """:func:`activity_shares` for many units; 0 where the unit has no labor (bit-identical)."""
+    forage_hours = np.array([u.forage_hours for u in units], dtype=np.float64)
+    plant = np.array([u.forage_plant_share for u in units], dtype=np.float64)
+    farm_hours = np.array([u.farm_hours for u in units], dtype=np.float64)
+    clearing = np.array([u.clearing_hours for u in units], dtype=np.float64)
+    stored = np.array([u.stored_kcal for u in units], dtype=np.float64)
+    harvest = np.array([u.harvest_kcal for u in units], dtype=np.float64)
+    working = labor_hours > 0
+    safe = np.where(working, labor_hours, 1.0)
+    forage = forage_hours / safe
+    storing = np.minimum(np.divide(stored, np.where(harvest > 0, harvest, 1.0)), 1.0)
+    shares = {
+        "plant_foraging": forage * plant,
+        "game_foraging": forage * (1.0 - plant),
+        "farming": farm_hours / safe,
+        "clearing": np.minimum(clearing / safe, 1.0),
+        "storing": np.where(harvest > 0, storing, 0.0),
+    }
+    return {a: np.where(working, v, 0.0) for a, v in shares.items()}
+
+
 class LearningSubsystem:
     """Practice-based learning and forgetting."""
 
@@ -99,24 +137,43 @@ class LearningSubsystem:
     def __init__(self, model: KnowledgeModel) -> None:
         self.model = model
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[KnowledgeLevels]:
-        """Update every unit's knowledge from this year's activities."""
-        updates: list[KnowledgeLevels] = []
-        for unit in state.units.values():
-            cognition = ctx.species(unit.species_id).cognition
-            shares: Mapping[str, float] = activity_shares(unit, unit_labor_hours(unit, ctx))
-            practice = self.model.practice_weights(shares)
-            updates.append(
-                KnowledgeLevels(
-                    unit.id,
-                    learn(
-                        unit.knowledge,
-                        practice,
-                        unit.population,
-                        self.model,
-                        cognition.learning_speed,
-                        cognition.knowledge_retention,
-                    ),
-                )
-            )
-        return updates
+    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[KnowledgeMatrix]:
+        """Update every unit's knowledge from this year's activities (one batched proposal).
+
+        Practice weights reproduce ``practice_weights`` (a Python ``sum`` over each
+        domain's activities, compensated since Python 3.12) with
+        :func:`~madexplorer.core.exactsum.python_sum_columns`.
+        """
+        units = tuple(state.units.values())
+        if not units:
+            return []
+        compiled = ctx.compiled
+        assert compiled is not None
+        model = self.model
+        shares = activity_shares_batch(units, labor_hours_batch(units, ctx))
+        zeros = np.zeros(len(units))
+        columns = []
+        for domain in model.domains:
+            practice = model.system.domains[domain].practice
+            terms = [w * shares.get(a, zeros) for a, w in practice.items()]
+            columns.append(python_sum_columns(terms) if terms else zeros + 0)
+        practice_matrix = np.stack(columns, axis=1)
+        species = compiled.species_of([u.species_id for u in units])
+        speed = np.array(
+            [ctx.species(sid).cognition.learning_speed for sid in compiled.species_ids]
+        )[species]
+        retention = np.array(
+            [ctx.species(sid).cognition.knowledge_retention for sid in compiled.species_ids]
+        )[species]
+        population = np.array([u.population for u in units], dtype=np.int64)
+        knowledge = np.stack([u.knowledge for u in units])
+        practitioners = population[:, None] * practice_matrix
+        gain = (
+            speed[:, None]
+            * model.learning_rate[None, :]
+            * practice_matrix
+            * np.log1p(practitioners / model.practitioner_scale[None, :])
+        )
+        loss = model.decay_rate[None, :] / retention[:, None] * knowledge
+        updated = np.maximum(knowledge + gain - loss, 0.0)
+        return [KnowledgeMatrix(units, updated)]

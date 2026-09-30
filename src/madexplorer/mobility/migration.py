@@ -385,6 +385,7 @@ class Relocation:
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Relocate the unit: pay travel energy, carry what stores it can, abandon fields."""
+        ctx.invalidate_spatial()
         unit = state.units[self.unit_id]
         unit.cell = self.destination
         unit.energy_debt_kcal += self.travel_kcal

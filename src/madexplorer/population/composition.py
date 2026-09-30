@@ -162,13 +162,19 @@ def rewire_ties(units: MutableMapping[str, PopulationUnit], source_id: str, targ
         if partner != target_id:
             target.trade_ties[partner] = target.trade_ties.get(partner, 0.0) + tie
     target.trade_ties.pop(source_id, None)
+    # Ties are symmetric among live units (trade adds both directions, decay and pruning
+    # treat both alike, rewiring preserves it), so the units holding a tie to the source
+    # are its own live partners: O(degree) rather than a scan of every unit. Each holder's
+    # dictionary is updated independently, so the visiting order does not matter.
+    holders = [
+        units[p]
+        for p in source.trade_ties
+        if p != target_id and p in units and source_id in units[p].trade_ties
+    ]
     source.trade_ties = {}
-    for unit in units.values():
-        if unit is source or unit is target:
-            continue
-        if source_id in unit.trade_ties:
-            tie = unit.trade_ties.pop(source_id)
-            unit.trade_ties[target_id] = unit.trade_ties.get(target_id, 0.0) + tie
+    for unit in holders:
+        tie = unit.trade_ties.pop(source_id)
+        unit.trade_ties[target_id] = unit.trade_ties.get(target_id, 0.0) + tie
 
 
 def absorb(

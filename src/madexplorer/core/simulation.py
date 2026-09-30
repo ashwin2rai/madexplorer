@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from madexplorer.config.loader import Scenario
+from madexplorer.core.compiled import CompiledScenario
 from madexplorer.core.events import EventLog
 from madexplorer.core.ids import IdAllocator
 from madexplorer.core.invariants import check_nonnegative, check_population_accounting, check_units
@@ -128,6 +129,7 @@ class Simulator:
         self.movement = static.movement
         self.capability_cache: dict[frozenset[str], CapabilityMap] = {}
         self.knowledge = KnowledgeModel(scenario.knowledge) if scenario.knowledge else None
+        self.compiled = CompiledScenario.build(scenario, self.knowledge)
         self.pipeline = build_pipeline(scenario, self.knowledge)
         climate = ClimateYear.base(self.world)
         self.state = SimulationState(
@@ -179,6 +181,7 @@ class Simulator:
             trace_units=self.trace_units,
             knowledge=self.knowledge,
             capability_cache=self.capability_cache,
+            compiled=self.compiled,
         )
 
     def step(self) -> StepContext:

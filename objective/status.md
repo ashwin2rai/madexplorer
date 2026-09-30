@@ -394,9 +394,54 @@ fixtures).
 
 ### 9.3 Accepted optimizations
 
-| # | Area | Class | Benchmark (before → after) | Fixtures |
+Exactness oracle for all Level A work: `uv run python scripts/perf/exactness_oracle.py
+benchmarks/perf/oracle_ph0.json`. It hashes metrics, events and final unit state of
+`mvp2_neolithic` seed 0 over 400 years, `mvp2_pressure` seed 1 over 300 years and a
+200-unit synthetic state; it complements the golden fixtures. Both must be unchanged.
+
+| # | Area | Class | Effect | Fixtures and oracle |
 |---|---|---|---|---|
-| — | Benchmark tooling: storage report, Python calls per tick, resized-world founders, `bench-quick` / `bench-scale` | tooling | — | unchanged |
+| — | Benchmark tooling: storage report, Python calls per tick, resized-world founders, `bench-quick`, `bench-scale`, `bench-scale-units` (fixed density), `bench-scale-density` | tooling | — | unchanged |
+| PH1.1 | `CompiledScenario` (`core/compiled.py`): per-species parameter arrays, technology bit positions, prerequisite masks, minimum-knowledge and capability matrices; built once per `Simulator` and exposed as `ctx.compiled` | A | infrastructure | unchanged |
+| PH1.2 | Shared `SpatialIndex` (`core/spatial.py`): reproduces `units_by_cell()` order exactly; `ctx.spatial(state)` is built once per phase and `ctx.invalidate_spatial()` is called by relocation, fission, fusion, extinction and coarsening applies; used by foraging, field planning, trade, fusion, diffusion, innovation, coarsening | A | one grouping per phase instead of one per subsystem | unchanged |
+| PH1.3 | Energetics: batched need (`annual_need_batch`) and `energy_balance_batch`; one proposal, applied in unit order | A | energetics 0.97 → 0.64 s (seed 0, 600 y) | unchanged |
+| PH1.4 | Demography: `crowding_hazard_array`, vectorized mate availability, one proposal per species | A | 3.86 → 2.71 s | unchanged |
+| PH1.5 | Foraging: per-unit labor, efficiency and target shares batched; per-cell Newton solver unchanged; cell targets keep Python `sum()` | A | small | unchanged |
+| PH1.6 | Farming (fully batched, one proposal) and field planning (batched yields, labor, need; the scalar investment rule only for units with a positive yield) | A | farming 0.87 → 0.60, field planning 2.73 → 2.34 s | unchanged |
+| PH1.7 | Trade: batched offers; donors indexed per cell (offering units only) instead of scanning every unit in reachable cells | A | 10k units: 668 → < 180 ms/tick (no longer in the top five) | unchanged |
+| PH1.8 | Fusion tie rewiring O(degree): holders of the source's ties are its own live partners (ties are symmetric among live units; invariant tested) | A | 10k units: fusion 805 ms → out of the top five | unchanged |
+| PH1.9 | Learning: batched activity shares and learning law; practice weights reproduce Python's compensated `sum()` via `core/exactsum.py` (tested against the builtin) | A | 2.59 → 0.62 s | unchanged |
+
+Differential tests (`tests/test_performance_layer.py`): the spatial index against
+`units_by_cell()`, invalidation, compiled data against the configuration, energy balance,
+compensated sums, batched need, labor, crop yield and learning against their per-unit
+references on a warmed farming state, and tie symmetry.
+
+**PH1 results** (CPU time; same machine; PH0 = committed revision `3bda489` in a
+worktree). Seeded output is identical: seed 0 over 600 years ends with 33,070 people and
+1,212 units in both.
+
+| Benchmark | PH0 | PH1 | Change |
+|---|---:|---:|---:|
+| Seed 0, 600 y: CPU / late window ms/tick / µs per unit-year | 41.9 s / 328 / 293 | 35.8 s / 273 / 245 | −15% / −17% / −16% |
+| Synthetic 1k units, 40×40: CPU ms/tick; calls/unit/tick | 264; 509 | 210; 435 | −20%; −15% |
+| Synthetic 10k units, 40×40: CPU ms/tick; calls/unit/tick | 5,092; 1,064 | 3,589; 799 | −30%; −25% |
+| Fixed density (~0.42 units per land cell), 500 / 1k / 2k / 4k units: µs/unit/tick | 234 / 221 / 246 / 263 | 230 / 190 / 216 / 227 | −2 to −14% |
+| ... calls/unit/tick | 479-493 | 414-425 | −13% |
+| Varied density on 40×40, 250 / 1k / 4k units: µs/unit/tick | 228 / 251 / 291 | 185 / 202 / 246 | −15 to −20% |
+| ... calls/unit/tick | 475 / 500 / 754 | 411 / 426 / 586 | −13 to −22% |
+| Peak RSS / dense beliefs (4k units at fixed density) | 787 / 689 MB | 785 / 689 MB | unchanged |
+
+Readings:
+- **At fixed density the frozen implementation is already close to linear in unit count**
+  (µs/unit/tick varies within ±10% from 500 to 4k units). The superlinearity in the PH0
+  40×40 cases is local density: pairwise sharing and diffusion contacts, and before PH1
+  the trade donor scan and fusion rewiring.
+- PH1 removed ~13-25% of Python calls. The remaining ~415 calls/unit/tick are dominated by
+  subsystems not yet converted: sharing, migration, perception, diffusion, innovation,
+  fission, and the per-cell foraging solver and apply. Those are PH2/PH3 targets.
+- Memory is unchanged; dense beliefs dominate (689 of 785 MB at 4k units on 113×113).
+- Wall-clock variance on the shared 2-core machine is ±5-10%; compare CPU time and calls.
 
 ## 10. Current engineering objective: MVP 2 Performance Hardening
 

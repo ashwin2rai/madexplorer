@@ -1,0 +1,94 @@
+{
+  "scenario_name": "mvp2_neolithic",
+  "world_seed": 7,
+  "config_hash": "e8bc0077e521fb6354de1a29cfbdcece0ffaffdace8b4eb2d89a0f73ce0dfd93",
+  "git_commit": "3bda489be701626350d121d03f601c742c393086",
+  "git_dirty": true,
+  "source_tree_sha256": "16ebe087ec8f50f3c17cc6c193504050710905006b79c8ccfd242bd2d922f9c3",
+  "numeric_platform": "numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3",
+  "cpu_count": 2,
+  "timestamp_utc": "2026-09-30T03:11:58+00:00",
+  "kind": "timed_runs",
+  "runs": [
+    {
+      "seed": 0,
+      "years": 600,
+      "runtime_seconds": 36.64,
+      "cpu_seconds": 35.77,
+      "final_population": 33070,
+      "final_units": 1212,
+      "unit_years": 149587,
+      "ms_per_unit_year": 0.2449,
+      "subsystem_seconds": {
+        "knowledge_sharing": 6.47,
+        "migration": 5.22,
+        "foraging": 4.95,
+        "diffusion": 4.4,
+        "demography": 2.71,
+        "field_planning": 2.34,
+        "perception": 1.87,
+        "innovation": 0.99,
+        "fusion": 0.87,
+        "invariants": 0.81,
+        "fission": 0.77,
+        "energetics": 0.64,
+        "learning": 0.62,
+        "farming": 0.6,
+        "trade": 0.6,
+        "extinction": 0.37,
+        "ecology": 0.29,
+        "climate": 0.18
+      },
+      "subsystem_share": {
+        "knowledge_sharing": 0.1865,
+        "migration": 0.1504,
+        "foraging": 0.1426,
+        "diffusion": 0.1269,
+        "demography": 0.078,
+        "field_planning": 0.0674,
+        "perception": 0.0539,
+        "innovation": 0.0287,
+        "fusion": 0.025,
+        "invariants": 0.0233,
+        "fission": 0.0223,
+        "energetics": 0.0185,
+        "learning": 0.018,
+        "farming": 0.0172,
+        "trade": 0.0172,
+        "extinction": 0.0106,
+        "ecology": 0.0083,
+        "climate": 0.0052
+      },
+      "windows": {
+        "early": {
+          "years": [
+            61,
+            90
+          ],
+          "ms_per_tick": 5.48,
+          "mean_units": 8.3,
+          "ms_per_unit_tick": 0.6632
+        },
+        "middle": {
+          "years": [
+            271,
+            300
+          ],
+          "ms_per_tick": 20.14,
+          "mean_units": 82.1,
+          "ms_per_unit_tick": 0.2453
+        },
+        "late": {
+          "years": [
+            571,
+            600
+          ],
+          "ms_per_tick": 273.21,
+          "mean_units": 1085.5,
+          "ms_per_unit_tick": 0.2517
+        }
+      },
+      "peak_rss_mb": 121.7
+    }
+  ]
+}

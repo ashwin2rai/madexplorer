@@ -44,6 +44,7 @@ class Coalesce:
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Merge the units and record the approximation."""
+        ctx.invalidate_spatial()
         source, target = state.units[self.source_id], state.units[self.target_id]
         merged = source.population
         rule = familiarity_rule(ctx.species(target.species_id), ctx.mechanisms)
@@ -72,7 +73,7 @@ class CoarseningSubsystem:
         """Plan merges cell by cell, updating a lightweight shadow of merged units."""
         config = ctx.scenario.config.resolution
         proposals: list[Coalesce] = []
-        for units in state.units_by_cell().values():
+        for units in ctx.spatial(state).by_cell.values():
             by_species: dict[str, list[tuple[str, int, FloatArray, frozenset[str]]]] = {}
             for u in units:
                 if u.id not in ctx.trace_units:

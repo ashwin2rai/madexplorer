@@ -19,7 +19,7 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray
 from madexplorer.ecology.resources import miami_npp
-from madexplorer.population.energetics import annual_need_kcal
+from madexplorer.population.energetics import annual_need_batch
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
@@ -300,6 +300,38 @@ def unit_crop_yield(unit: PopulationUnit, potential: FloatArray, ctx: StepContex
     )
 
 
+def labor_hours_batch(units: Sequence[PopulationUnit], ctx: StepContext) -> FloatArray:
+    """:func:`unit_labor_hours` for many units (same operation order, bit-identical)."""
+    compiled = ctx.compiled
+    assert compiled is not None
+    species = compiled.species_of([u.species_id for u in units])
+    adults = np.array(
+        [u.weighted_count(ctx.tables[u.species_id].labor) for u in units], dtype=np.float64
+    )
+    hours: FloatArray = (
+        adults * compiled.parameter("foraging.foraging_hours_per_day")[species] * 365.0
+    )
+    return hours
+
+
+def crop_yield_batch(
+    units: Sequence[PopulationUnit], potential: FloatArray, ctx: StepContext
+) -> FloatArray:
+    """:func:`unit_crop_yield` for many units (bit-identical)."""
+    n_units = len(units)
+    capability = np.array([ctx.capabilities(u)["crop_yield"] for u in units], dtype=np.float64)
+    knowledge = ctx.knowledge
+    if knowledge is not None and "agriculture" in knowledge.index:
+        domain = knowledge.index["agriculture"]
+        level = np.array([float(u.knowledge[domain]) for u in units], dtype=np.float64)
+        efficiency = level / (level + float(knowledge.half_efficiency[domain]))
+    else:
+        efficiency = np.ones(n_units)
+    cells = np.array([u.cell for u in units], dtype=np.int64)
+    realized: FloatArray = potential[cells] * np.maximum(capability, 0.0) * efficiency
+    return realized
+
+
 @dataclass(frozen=True)
 class FarmHarvest:
     """This year's crop harvest for one unit."""
@@ -319,31 +351,64 @@ class FarmHarvest:
         ctx.ledger.farm_harvest_kcal += self.harvest_kcal
 
 
+@dataclass(frozen=True, eq=False)
+class FarmHarvests:
+    """This year's crop harvest of many units, committed in unit order."""
+
+    units: tuple[PopulationUnit, ...]
+    harvest_kcal: FloatArray
+    hours: FloatArray
+    yield_kcal_per_ha: FloatArray
+
+    def apply(self, state: SimulationState, ctx: StepContext) -> None:
+        """Record the harvests (as :class:`FarmHarvest` does, unit by unit)."""
+        ledger = ctx.ledger
+        for unit, harvest, hours, yield_per_ha in zip(
+            self.units,
+            self.harvest_kcal.tolist(),
+            self.hours.tolist(),
+            self.yield_kcal_per_ha.tolist(),
+            strict=True,
+        ):
+            unit.farm_harvest_kcal = harvest
+            unit.farm_hours = hours
+            unit.crop_yield_kcal_per_ha = yield_per_ha
+            unit.clearing_hours = 0.0
+            ledger.farm_harvest_kcal += harvest
+
+
 class FarmingSubsystem:
     """Harvests existing fields; field work takes priority over foraging (crops are committed)."""
 
     name = "farming"
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[FarmHarvest]:
-        """Compute crop harvests for every unit."""
+    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[FarmHarvests]:
+        """Compute crop harvests for every unit (one batched proposal)."""
+        units = tuple(state.units.values())
+        if not units:
+            return []
         config = ctx.scenario.config.agriculture
-        potential = ctx.crop_potential(state)
-        proposals: list[FarmHarvest] = []
-        for unit in state.units.values():
-            yield_per_ha = unit_crop_yield(unit, potential, ctx)
-            if unit.fields_ha <= 0:
-                proposals.append(FarmHarvest(unit.id, 0.0, 0.0, yield_per_ha))
-                continue
-            share = ctx.species(unit.species_id).subsistence.max_farm_labor_share
-            available = max(unit_labor_hours(unit, ctx) - unit.labor_debt_hours, 0.0) * share
-            required = unit.fields_ha * config.cultivation_hours_per_ha
-            worked = min(1.0, available / required) if required > 0 else 0.0
-            proposals.append(
-                FarmHarvest(
-                    unit.id, unit.fields_ha * yield_per_ha * worked, required * worked, yield_per_ha
-                )
-            )
-        return proposals
+        compiled = ctx.compiled
+        assert compiled is not None
+        n_units = len(units)
+        yield_per_ha = crop_yield_batch(units, ctx.crop_potential(state), ctx)
+        fields = np.array([u.fields_ha for u in units], dtype=np.float64)
+        farming = fields > 0
+        debt = np.array([u.labor_debt_hours for u in units], dtype=np.float64)
+        species = compiled.species_of([u.species_id for u in units])
+        share = compiled.parameter("subsistence.max_farm_labor_share")[species]
+        available = np.maximum(labor_hours_batch(units, ctx) - debt, 0.0) * share
+        required = fields * config.cultivation_hours_per_ha
+        worked = np.where(
+            required > 0,
+            np.minimum(
+                1.0, np.divide(available, required, out=np.zeros(n_units), where=required > 0)
+            ),
+            0.0,
+        )
+        harvest = np.where(farming, fields * yield_per_ha * worked, 0.0)
+        hours = np.where(farming, required * worked, 0.0)
+        return [FarmHarvests(units, harvest, hours, yield_per_ha)]
 
 
 @dataclass(frozen=True)
@@ -399,13 +464,18 @@ class FieldPlanningSubsystem:
         arable = ctx.arable_ha
         mechanisms = ctx.mechanisms
         desired: dict[str, tuple[float, float, float, float, str]] = {}
-        for unit in state.units.values():
-            behavior = ctx.species(unit.species_id).subsistence
-            yield_per_ha = unit_crop_yield(unit, potential, ctx)
+        units = tuple(state.units.values())
+        if not units:
+            return []
+        yields = crop_yield_batch(units, potential, ctx).tolist()
+        labor = labor_hours_batch(units, ctx).tolist()
+        needs = annual_need_batch(units, state, ctx).tolist()
+        for unit, yield_per_ha, labor_hours, need in zip(units, yields, labor, needs, strict=True):
             farm_return = yield_per_ha / config.cultivation_hours_per_ha
             if yield_per_ha <= 0 or unit.population == 0:
                 desired[unit.id] = (0.0, farm_return, unit.forage_marginal_kcal_per_hour, -1.0, "")
                 continue
+            behavior = ctx.species(unit.species_id).subsistence
             clearing = clearing_hours_per_ha(
                 float(state.world.vegetation_density[unit.cell]),
                 config,
@@ -416,12 +486,10 @@ class FieldPlanningSubsystem:
                 tenure = expected_tenure_years(unit.move_hazard, horizon, unit.residence_years)
             else:
                 tenure = min(max(unit.residence_years, 1), horizon)
-            farm_labor = behavior.max_farm_labor_share * unit_labor_hours(unit, ctx)
+            farm_labor = behavior.max_farm_labor_share * labor_hours
             labor_cap = farm_labor / config.cultivation_hours_per_ha
             profile = ctx.species(unit.species_id)
-            temperature = float(state.climate.temperature_c[unit.cell])
-            target = annual_need_kcal(unit, profile, ctx.tables[unit.species_id], temperature)
-            need_cap = target * (1.0 + profile.foraging.surplus_target) / yield_per_ha
+            need_cap = need * (1.0 + profile.foraging.surplus_target) / yield_per_ha
             limit = ""
             if mechanisms.field_growth_to_target:
                 fields, gap, limit = fields_toward_target(
@@ -457,10 +525,10 @@ class FieldPlanningSubsystem:
                 limit,
             )
         proposals: list[FieldPlan] = []
-        for cell, units in state.units_by_cell().items():
-            total = sum(desired[u.id][0] for u in units)
+        for cell, members in ctx.spatial(state).by_cell.items():
+            total = sum(desired[u.id][0] for u in members)
             scale = min(1.0, float(arable[cell]) / total) if total > 0 else 1.0
-            for unit in units:
+            for unit in members:
                 fields, farm_return, forage_marginal, gap, limit = desired[unit.id]
                 if scale < 1.0 and fields > unit.fields_ha:
                     limit = "arable"

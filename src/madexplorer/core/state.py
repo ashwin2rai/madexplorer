@@ -23,6 +23,8 @@ from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
 
 if TYPE_CHECKING:
+    from madexplorer.core.compiled import CompiledScenario
+    from madexplorer.core.spatial import SpatialIndex
     from madexplorer.core.static import StaticContext
     from madexplorer.economy.foraging import ForageAccess
 
@@ -106,7 +108,28 @@ class StepContext:
     ledger: TickLedger = field(default_factory=TickLedger)
     # Immutable capability maps per technology set, shared across steps of a run.
     capability_cache: dict[frozenset[str], CapabilityMap] = field(default_factory=dict)
+    compiled: "CompiledScenario | None" = None
     _crop_potential: FloatArray | None = None
+    _spatial: "SpatialIndex | None" = None
+
+    def spatial(self, state: "SimulationState") -> "SpatialIndex":
+        """The shared cell -> unit index, built on first use in a phase.
+
+        Valid until :meth:`invalidate_spatial`, which every apply that changes which units
+        exist or where they are must call (migration, fission, fusion, extinction,
+        coarsening).
+        """
+        index = self._spatial
+        if index is None:
+            from madexplorer.core.spatial import SpatialIndex
+
+            index = SpatialIndex.build(tuple(state.units.values()))
+            self._spatial = index
+        return index
+
+    def invalidate_spatial(self) -> None:
+        """Drop the spatial index after a change of unit membership or location."""
+        self._spatial = None
 
     @property
     def tables(self) -> Mapping[str, LifeTables]:

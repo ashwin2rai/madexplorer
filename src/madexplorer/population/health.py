@@ -22,7 +22,7 @@ The total annual hazard is ``h_baseline + h_starvation + h_crowding``.
 """
 
 import math
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 
 import numpy as np
 
@@ -99,15 +99,15 @@ def crowding_mortality_hazard(pressure: Real, sedentism_level: Real, per_log_con
     return per_log_contact * sedentism_level * pressure
 
 
-def crowding_hazards(
-    units: Iterable[PopulationUnit],
+def crowding_hazard_array(
+    units: Sequence[PopulationUnit],
     species: Mapping[str, Health],
     cell_area_km2: float,
-) -> dict[str, float]:
-    """Adult crowding hazard for every unit, from co-located same-species settled people."""
-    units = list(units)
+) -> FloatArray:
+    """Adult crowding hazard of every unit (in ``units`` order), from co-located
+    same-species settled people."""
     if not units:
-        return {}
+        return np.zeros(0)
     species_ids = sorted(species)
     kind = np.array([species_ids.index(u.species_id) for u in units])
     timescale, weight, reference, per_log = np.array(
@@ -129,5 +129,16 @@ def crowding_hazards(
     _, pool = np.unique(cells * len(species_ids) + kind, return_inverse=True)  # (cell, species)
     others = np.bincount(pool, weights=settled)[pool] - settled + (people - village) * s
     pressure = settlement_crowding_pressure(village * s + weight * others, reference)
-    hazard = crowding_mortality_hazard(pressure, s, per_log)
-    return dict(zip((u.id for u in units), np.asarray(hazard).tolist(), strict=True))
+    hazard: FloatArray = np.asarray(crowding_mortality_hazard(pressure, s, per_log), dtype=float)
+    return hazard
+
+
+def crowding_hazards(
+    units: Iterable[PopulationUnit],
+    species: Mapping[str, Health],
+    cell_area_km2: float,
+) -> dict[str, float]:
+    """:func:`crowding_hazard_array` keyed by unit id."""
+    units = list(units)
+    hazard = crowding_hazard_array(units, species, cell_area_km2)
+    return dict(zip((u.id for u in units), hazard.tolist(), strict=True))

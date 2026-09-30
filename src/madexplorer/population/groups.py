@@ -115,6 +115,7 @@ class Fission:
 
         A multi-group unit buds off exactly one of its social groups.
         """
+        ctx.invalidate_spatial()
         parent = state.units[self.parent_id]
         rng = ctx.rng.stream(Streams.FISSION)
         source_population = parent.population
@@ -152,6 +153,7 @@ class Fusion:
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Absorb the source unit into the target."""
+        ctx.invalidate_spatial()
         source, target = state.units[self.source_id], state.units[self.target_id]
         merged = source.population
         rule = familiarity_rule(ctx.species(target.species_id), ctx.mechanisms)
@@ -179,6 +181,7 @@ class Extinction:
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Delete the unit and record the event."""
+        ctx.invalidate_spatial()
         unit = state.units.pop(self.unit_id)
         ctx.ledger.extinctions += 1
         ctx.events.emit(
@@ -231,7 +234,7 @@ class FusionSubsystem:
         """The smallest group in each cell may join the largest other group there."""
         rng = ctx.rng.stream(Streams.FUSION)
         proposals: list[Fusion] = []
-        for units in state.units_by_cell().values():
+        for units in ctx.spatial(state).by_cell.values():
             by_species: dict[str, list[PopulationUnit]] = {}
             for unit in units:
                 by_species.setdefault(unit.species_id, []).append(unit)

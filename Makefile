@@ -3,7 +3,7 @@ export UV_LINK_MODE ?= copy
 
 .DEFAULT_GOAL := help
 .PHONY: help install sync lint format typecheck test test-stat test-stat-long golden cov check run sim pre-commit clean \
-	bench-perf bench-quick bench-scale bench-smoke bench-dev bench-rc baseline
+	bench-perf bench-quick bench-scale bench-scale-units bench-scale-density bench-smoke bench-dev bench-rc baseline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -60,6 +60,20 @@ bench-perf: ## Synthetic per-unit benchmark (100-2000 units, 30 ticks) -> benchm
 
 bench-quick: ## Engineering loop: 1,000 synthetic units, 10 ticks (~15 s; not saved)
 	uv run madexplorer bench synthetic $(MVP2) --units 1000 --ticks 10
+
+# Two scaling families (status.md 9.1): fixed local density (~0.4 units per land cell; units
+# grow with the world) versus fixed world (40x40; units per cell grow). Dense beliefs cap the
+# fixed-density family at ~4k units on this 7 GB machine.
+SCALE_TICKS ?= 5
+bench-scale-units: ## Unit scaling at fixed density: 500/1k/2k/4k units on 40/57/80/113 grids
+	@for pair in 40:500 57:1000 80:2000 113:4000; do w=$${pair%%:*}; n=$${pair##*:}; \
+		uv run madexplorer bench synthetic $(MVP2) --units $$n --ticks $(SCALE_TICKS) \
+		--set world.topology.width=$$w --set world.topology.height=$$w \
+		--out benchmarks/perf/$(BENCH_LABEL)_density_fixed_$${n}u.json || exit 1; done
+
+bench-scale-density: ## Density scaling on the fixed 40x40 world: 250/1k/4k units
+	uv run madexplorer bench synthetic $(MVP2) --units 250,1000,4000 --ticks $(SCALE_TICKS) \
+		--out benchmarks/perf/$(BENCH_LABEL)_density_varied.json
 
 bench-scale: ## Scaling: 100/1k/10k units on 40x40, 1k units on 100x100 -> benchmarks/perf/
 	uv run madexplorer bench synthetic $(MVP2) --units 100,1000,10000 --ticks 10 \

@@ -175,7 +175,7 @@ class InnovationSubsystem:
         """Evaluate hazards against the current state."""
         rng = ctx.rng.stream(Streams.INNOVATION)
         spec = self.model.system.innovation
-        by_cell = state.units_by_cell()
+        by_cell = ctx.spatial(state).by_cell
         proposals: list[Invention] = []
         for unit in state.units.values():
             candidates = sorted(

@@ -14,9 +14,9 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray, IntArray
-from madexplorer.population.health import crowding_hazards
+from madexplorer.population.health import crowding_hazard_array
+from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.life_history import LifeTables
-from madexplorer.species.profile import SpeciesProfile
 
 
 @model_rule(
@@ -114,7 +114,7 @@ def demographic_step(
 
 @dataclass(frozen=True)
 class DemographicUpdate:
-    """New cohort vectors for one unit."""
+    """New cohort vectors for one unit (reference form of :class:`DemographicUpdates`)."""
 
     unit_id: str
     females: IntArray
@@ -132,21 +132,49 @@ class DemographicUpdate:
         ctx.ledger.crowding_deaths_expected += self.crowding_deaths_expected
 
 
-def _mate_available(
-    state: SimulationState, profile: SpeciesProfile, tables: LifeTables
-) -> dict[str, bool]:
-    """Whether a fertile male exists in each unit's own or co-located same-species groups."""
-    if not profile.life_history.sexual_reproduction:
-        return {u.id: True for u in state.units.values() if u.species_id == profile.id}
-    has_male_in_cell: dict[int, bool] = {}
-    for unit in state.units.values():
-        if unit.species_id == profile.id and (unit.males * tables.male_reproductive).sum() > 0:
-            has_male_in_cell[unit.cell] = True
-    return {
-        u.id: has_male_in_cell.get(u.cell, False)
-        for u in state.units.values()
-        if u.species_id == profile.id
-    }
+@dataclass(frozen=True, eq=False)
+class DemographicUpdates:
+    """New cohorts of one species' units (rows in unit order), committed in that order."""
+
+    units: tuple[PopulationUnit, ...]
+    females: IntArray  # (units, ages)
+    males: IntArray
+    births: IntArray
+    deaths: IntArray
+    crowding_deaths_expected: FloatArray
+
+    def apply(self, state: SimulationState, ctx: StepContext) -> None:
+        """Replace every unit's cohorts (own row copies) and record flows in unit order."""
+        ledger = ctx.ledger
+        for i, (unit, births, deaths, crowding) in enumerate(
+            zip(
+                self.units,
+                self.births.tolist(),
+                self.deaths.tolist(),
+                self.crowding_deaths_expected.tolist(),
+                strict=True,
+            )
+        ):
+            unit.females, unit.males = self.females[i].copy(), self.males[i].copy()
+            ledger.births += births
+            ledger.deaths += deaths
+            ledger.crowding_deaths_expected += crowding
+
+
+def mate_available(
+    males: IntArray, cells: IntArray, n_cells: int, tables: LifeTables, sexual: bool
+) -> FloatArray:
+    """1.0 where a unit's own or a co-located same-species group has a fertile male.
+
+    ``males`` and ``cells`` are one species' units (rows in unit order).
+    """
+    if not sexual:
+        return np.ones(cells.size)
+    capable = (males * tables.male_reproductive[None, :]).sum(axis=1) > 0
+    has_male = np.zeros(n_cells, dtype=bool)
+    has_male[cells[capable]] = True
+    available: FloatArray = has_male[cells].astype(np.float64)
+    return available
 
 
 class DemographySubsystem:
@@ -154,40 +182,45 @@ class DemographySubsystem:
 
     name = "demography"
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[DemographicUpdate]:
-        """Draw one year of demographic events."""
+    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[DemographicUpdates]:
+        """Draw one year of demographic events (one batched proposal per species)."""
         rng = ctx.rng.stream(Streams.DEMOGRAPHY)
-        updates: list[DemographicUpdate] = []
-        crowding_by_unit = (
-            crowding_hazards(
-                state.units.values(),
+        updates: list[DemographicUpdates] = []
+        everyone = tuple(state.units.values())
+        crowding_all = (
+            crowding_hazard_array(
+                everyone,
                 {sid: p.health for sid, p in ctx.scenario.species.items()},
                 state.world.cell_area_km2,
             )
             if ctx.mechanisms.crowding_mortality
-            else {}
+            else np.zeros(len(everyone))
         )
         for species_id in sorted(ctx.scenario.species):
-            units = [u for u in state.units.values() if u.species_id == species_id]
-            if not units:
+            rows = [i for i, u in enumerate(everyone) if u.species_id == species_id]
+            if not rows:
                 continue
+            units = tuple(everyone[i] for i in rows)
+            len(units)
             profile, tables = ctx.species(species_id), ctx.tables[species_id]
             metabolism, lh = profile.metabolism, profile.life_history
-            deficit = np.array([u.energy_deficit for u in units])
+            deficit = np.array([u.energy_deficit for u in units], dtype=np.float64)
             sensitivity = metabolism.starvation_mortality_sensitivity
             if not ctx.mechanisms.starvation_mortality:
                 sensitivity = 0.0
-            food = np.array([u.food_ratio for u in units])
-            mates = _mate_available(state, profile, tables)
+            food = np.array([u.food_ratio for u in units], dtype=np.float64)
+            females = np.stack([u.females for u in units])
+            males = np.stack([u.males for u in units])
+            cells = np.array([u.cell for u in units], dtype=np.int64)
             fert = fertility_multiplier(
                 food, metabolism.fertility_food_midpoint, metabolism.fertility_food_scale
             )
-            fert = fert * np.array([mates[u.id] for u in units], dtype=np.float64)
-            crowding = np.array([crowding_by_unit.get(u.id, 0.0) for u in units])
+            fert = fert * mate_available(
+                males, cells, state.world.n_cells, tables, lh.sexual_reproduction
+            )
+            crowding = crowding_all[np.array(rows, dtype=np.int64)]
             hazard, crowd = mortality_hazards(tables, deficit, sensitivity, crowding)
             probability = 1.0 - np.exp(-hazard)
-            females = np.stack([u.females for u in units])
-            males = np.stack([u.males for u in units])
             # Expected deaths from crowding: cause share of each cohort's death probability.
             share = np.divide(crowd, hazard, out=np.zeros_like(crowd), where=hazard > 0)
             crowding_deaths = ((females + males) * probability * share).sum(axis=1)
@@ -200,15 +233,14 @@ class DemographySubsystem:
                 lh.offspring_per_birth,
                 rng,
             )
-            for i, unit in enumerate(units):
-                updates.append(
-                    DemographicUpdate(
-                        unit.id,
-                        outcome.females[i].copy(),
-                        outcome.males[i].copy(),
-                        int(outcome.births[i]),
-                        int(outcome.deaths[i]),
-                        float(crowding_deaths[i]),
-                    )
+            updates.append(
+                DemographicUpdates(
+                    units,
+                    outcome.females,
+                    outcome.males,
+                    outcome.births,
+                    outcome.deaths,
+                    crowding_deaths,
                 )
+            )
         return updates
