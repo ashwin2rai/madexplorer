@@ -11,6 +11,8 @@ Use this file to answer: **What exists now? What is frozen? What is still limite
 
 ## 1. Current phase
 
+> **Resume point:** PH3b is in progress; see Section 9, "PH3b: authoritative `UnitTable` — IN PROGRESS".
+
 **MVP 1:** complete.  
 **MVP 2:** complete and scientifically frozen.  
 **Current milestone:** **MVP 2 Performance Hardening**.  
@@ -494,6 +496,62 @@ the in-place +25% policy fixed it (918 MB, versus 788 MB in PH2).
   belief memory problem is not solved**; the sparse backend is later work.
 - Migration and sharing lost their per-unit belief loops. Calls per unit barely changed:
   those loops were numpy-heavy rather than call-heavy.
+
+### PH3b: authoritative `UnitTable` — IN PROGRESS (paused 2026-09-30; resume here)
+
+State at pause: `make check` green (208 tests), exactness oracle IDENTICAL, golden
+fixtures unchanged. Everything below is Level A. Nothing has been benchmarked beyond
+`bench-quick`.
+
+Done:
+- PH3a sanity check: no attached unit keeps a private belief array; no `BeliefRowView`
+  outlives a tick; the store matrix has a single reference (in-place growth works; no
+  copy fallback in any benchmark); traced memory grows only with unit count. The remaining
+  PH3a RSS excess is store capacity overshoot (≤ 25%) plus allocator behaviour; not
+  investigated further.
+- `population/table.py` `UnitTable`: authoritative slot-aligned scalar columns
+  (`FLOAT_FIELDS`, `INT_FIELDS`, `BOOL_FIELDS`), cohort matrices with an exactly
+  maintained `population` column, the knowledge matrix, technology sets plus bitmasks, and
+  species codes. One slot per unit, shared with the belief store; the registry allocates
+  slots, keeps the ordered slot array (`UnitRegistry.slots()`, registry insertion order)
+  and resets rows on release.
+- `PopulationUnit` is a view while registered: table fields are descriptors that read and
+  write the row (no copy on the object); detached units keep plain values. External state
+  (familiarity, residence, report cells, trade ties, harvest history) stays on the object.
+- `core/columns.py`: coarse column access per phase (`ctx.columns(state)`), with
+  `TableColumns` (production) and `ObjectColumns` (object-authoritative reference,
+  `Simulator(unit_table=False)`).
+- Converted to columns: energetics, demography (cohort matrices authoritative), farming,
+  field planning, foraging, learning, diffusion, innovation, perception, sharing,
+  migration (including a batched `MoveHazards`), fission, fusion, trade evaluate,
+  extinction, ecology soil management, the recorder, the state aggregates and the per-tick
+  invariants (now also checking cached population against cohort sums). Ledger float
+  totals stay sequential Python accumulations (bit-identical).
+- `tests/test_unit_table.py`: whole-engine differential tests (table vs object
+  reference; pressure 160 y, neolithic 220 y, MVP 1 120 y, Hypothesis synthetic states
+  with farming): complete unit state, beliefs, familiarity, ties, residence, events, every
+  RNG stream.
+
+Quick benchmark (1k synthetic units, CPU): PH3a 130 ms/tick, 296 calls/unit/tick → now
+116 ms/tick, ~200-207 calls/unit/tick.
+
+Remaining PH3b work (in order):
+1. Centralized lifecycle API (`create_unit` / `remove_unit` / `split_unit` /
+   `merge_units`) operating on table rows. Fission and fusion applies still go through
+   `composition.split_off` / `merge_state` via descriptors (fission apply ~16 and fusion
+   apply ~11 calls/unit/tick at 1k). Relocation and trade transfers also write through
+   descriptors.
+2. Lifecycle stress tests (random create / split / move / merge / extinguish / slot
+   reuse against the object reference: no stale cohorts, technology bits, knowledge,
+   scalars or beliefs; order unchanged).
+3. Remaining per-unit costs: foraging familiarity (`effective` / `practice`), trade tie
+   decay (dictionary per unit), diffusion's trade merge loop, the innovation per-candidate
+   path (descriptor reads), fusion's `has_reproductive_pair`.
+4. Measure the object↔batch sync (the PH2 ~25 ms/tick) with
+   `scratchpad`-style access counting: expected near zero for normal ticks.
+5. Full PH3b benchmark (canonical 600 y, `bench-scale`, both families, 100×100),
+   bytes/unit excluding beliefs, UnitTable memory; report PH0 → PH3b; then stop before
+   Numba (PH4 decision from the new profile).
 
 Differential tests (`tests/test_performance_layer.py`): the spatial index against
 `units_by_cell()`, invalidation, compiled data against the configuration, energy balance,

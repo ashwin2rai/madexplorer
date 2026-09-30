@@ -14,7 +14,7 @@ cost of an encounter is proportional to the number of reports, not map cells.
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -38,6 +38,9 @@ from madexplorer.population.unit import (
     belief_slot,
 )
 from madexplorer.species.profile import Cognition, SocialInformation
+
+if TYPE_CHECKING:
+    from madexplorer.core.columns import UnitColumns
 
 
 @model_rule(
@@ -68,7 +71,8 @@ class PerceptionSubsystem:
         food observations also set the unit's prior (:func:`food_prior`). All units are
         processed in one pass; the noise draws are the same sequence as drawing unit by unit.
         """
-        units = list(state.units.values())
+        cols = ctx.columns(state)
+        units = cols.units
         if not units:
             return []
         rng = ctx.rng.stream(Streams.PERCEPTION)
@@ -77,33 +81,37 @@ class PerceptionSubsystem:
             sid: accessible_food_kcal(state, access) for sid, access in ctx.forage.items()
         }
         cognition = {sid: ctx.species(sid).cognition for sid in ctx.scenario.species}
+        unit_cells = cols.get("cell")
+        cells_list = unit_cells.tolist()
+        species_ids = [u.species_id for u in units]
+        perceived = ctx.static.perceived_cells
         per_unit = [
-            ctx.static.perceived_cells(u.species_id, u.cell, cognition[u.species_id]) for u in units
+            perceived(sid, c, cognition[sid])
+            for sid, c in zip(species_ids, cells_list, strict=True)
         ]
         sizes = np.array([c.size for c in per_unit], dtype=np.int64)
         starts = np.concatenate([[0], np.cumsum(sizes)[:-1]])
         owner = np.repeat(np.arange(len(units)), sizes)
         cells = np.concatenate(per_unit)
-        sigma = np.array([cognition[u.species_id].observation_noise_sigma for u in units])
+        sigma = np.array([cognition[sid].observation_noise_sigma for sid in species_ids])
         noise = np.exp(sigma[owner] * rng.standard_normal(cells.size))
-        species = [u.species_id for u in units]
-        if len(set(species)) == 1:
-            food = food_by_species[species[0]][cells] * noise
+        if len(set(species_ids)) == 1:
+            food = food_by_species[species_ids[0]][cells] * noise
         else:
             food = np.empty(cells.size)
-            unit_species = np.array(species)[owner]
+            unit_species = np.array(species_ids)[owner]
             for sid, stock in food_by_species.items():
                 rows = unit_species == sid
                 food[rows] = stock[cells[rows]] * noise[rows]
         log_prior, signal_var = food_prior_batch(food, starts, sizes, sigma)
         others = cell_population[cells]
-        own_cell = np.array([u.cell for u in units])[owner]
-        own_population = np.array([u.population for u in units])[owner]
+        own_cell = unit_cells[owner]
+        own_population = cols.population()[owner]
         population = np.where(cells == own_cell, others - own_population, others)
         return [
             Perceptions(
-                tuple(units),
-                np.repeat(np.array([belief_slot(u) for u in units], dtype=np.int64), sizes),
+                cols,
+                np.repeat(cols.slots, sizes),
                 np.concatenate([starts, [cells.size]]).astype(np.int64),
                 cells,
                 food,
@@ -122,7 +130,7 @@ class Perceptions:
     observed this year), in unit order.
     """
 
-    units: tuple[PopulationUnit, ...]
+    cols: "UnitColumns"
     slots: IntArray  # belief-store row of each observation
     bounds: IntArray  # (units + 1,)
     cells: IntArray
@@ -135,7 +143,8 @@ class Perceptions:
         """The reference form: one perception :class:`BeliefPatch` per unit."""
         bounds = self.bounds.tolist()
         patches = []
-        for k, unit in enumerate(self.units):
+        cells = self.cols.get("cell").tolist()
+        for k, unit in enumerate(self.cols.units):
             rows = slice(bounds[k], bounds[k + 1])
             size = bounds[k + 1] - bounds[k]
             patches.append(
@@ -148,7 +157,7 @@ class Perceptions:
                     np.zeros(size, dtype=HOPS_DTYPE),
                     food_log_prior=float(self.log_prior[k]),
                     food_log_signal_var=float(self.signal_var[k]),
-                    resident_cell=unit.cell,
+                    resident_cell=cells[k],
                 )
             )
         return patches
@@ -160,13 +169,12 @@ class Perceptions:
             self.slots, self.cells, state.year, self.food_kcal, self.population, 0
         )
         year = state.year
+        cols = self.cols
+        cols.set("food_log_prior", self.log_prior)
+        cols.set("food_log_signal_var", self.signal_var)
         memory = {sid: ctx.species(sid).cognition.memory_years for sid in ctx.scenario.species}
-        for unit, prior, variance in zip(
-            self.units, self.log_prior.tolist(), self.signal_var.tolist(), strict=True
-        ):
-            unit.food_log_prior = prior
-            unit.food_log_signal_var = variance
-            unit.note_residence(unit.cell, year, memory[unit.species_id])
+        for unit, cell in zip(cols.units, cols.get("cell").tolist(), strict=True):
+            unit.note_residence(cell, year, memory[unit.species_id])
 
 
 @model_rule(
@@ -637,7 +645,10 @@ def receive_reports(
 
 
 def candidate_encounters(
-    units: Sequence[PopulationUnit], neighborhoods: IntArray
+    units: Sequence[PopulationUnit],
+    neighborhoods: IntArray,
+    cell: IntArray | None = None,
+    species_code: IntArray | None = None,
 ) -> tuple[IntArray, IntArray]:
     """All ``(receiver, partner)`` index pairs that may meet this year, in draw order.
 
@@ -650,9 +661,13 @@ def candidate_encounters(
     if n == 0:
         empty = np.zeros(0, dtype=np.int64)
         return empty, empty
-    cell = np.array([u.cell for u in units], dtype=np.int64)
-    species = {sid: k for k, sid in enumerate(sorted({u.species_id for u in units}))}
-    code = np.array([species[u.species_id] for u in units])
+    if cell is None:
+        cell = np.array([u.cell for u in units], dtype=np.int64)
+    if species_code is None:
+        species = {sid: k for k, sid in enumerate(sorted({u.species_id for u in units}))}
+        code = np.array([species[u.species_id] for u in units])
+    else:
+        code = species_code
     by_cell = np.argsort(cell, kind="stable")  # unit order within each cell
     sorted_cells = cell[by_cell]
     n_cells = neighborhoods.shape[0]
@@ -709,7 +724,11 @@ class KnowledgeSharingSubsystem:
         receiver, sender = index.local_pairs(ctx.static.neighborhood_table(1))
         if receiver.size == 0:
             return []
-        species = compiled.species_of([u.species_id for u in units])
+        species = (
+            index.species_code
+            if index.species_code is not None
+            else compiled.species_of([u.species_id for u in units])
+        )
         p = compiled.parameter
         probability = p("social.knowledge_sharing_probability")[species]
         met = rng.random(receiver.size) < probability[receiver]
@@ -723,26 +742,29 @@ class KnowledgeSharingSubsystem:
         position[sender_ids] = np.arange(sender_ids.size)
         pair_sender = position[sender]
         senders = [units[i] for i in sender_ids.tolist()]
+        cols = ctx.columns(state)
+        all_cells = cols.get("cell")
+        sender_cells = all_cells[sender_ids]
         cognition = {sid: ctx.species(sid).cognition for sid in compiled.species_ids}
         perceived = ctx.static.perceived_cells
         pools = [
             np.concatenate(
                 [
-                    perceived(u.species_id, u.cell, cognition[u.species_id]),
+                    perceived(u.species_id, c, cognition[u.species_id]),
                     np.array(list(u.recent_residence), dtype=np.int64),
                     u.report_cells,
                 ]
             )
-            for u in senders
+            for u, c in zip(senders, sender_cells.tolist(), strict=True)
         ]
         sender_species = species[sender_ids]
         store = state.belief_store
         table = select_reports_packed(
             store,
-            np.array([belief_slot(u) for u in senders], dtype=np.int64),
+            cols.slots[sender_ids],
             pools,
-            np.array([u.cell for u in senders], dtype=np.int64),
-            np.array([u.food_log_prior for u in senders], dtype=np.float64),
+            sender_cells,
+            cols.get("food_log_prior")[sender_ids],
             p("cognition.memory_years")[sender_species],
             p("social_information.max_report_age_years")[sender_species],
             p("social_information.transmission_confidence_decay")[sender_species],
@@ -750,11 +772,10 @@ class KnowledgeSharingSubsystem:
             state.year,
             world.n_cells,
         )
-        receiving = [units[i] for i in receiver_ids.tolist()]
         return [
             receive_reports_packed(
-                [u.id for u in receiving],
-                np.array([belief_slot(u) for u in receiving], dtype=np.int64),
+                [units[i].id for i in receiver_ids.tolist()],
+                cols.slots[receiver_ids],
                 store,
                 pair_receiver,
                 pair_sender,

@@ -6,13 +6,14 @@ keeps the same fields, dtypes and sentinel as four global ``(capacity, cells)`` 
 one row per *storage slot*, so hot subsystems gather and scatter beliefs for all units in
 one indexing operation instead of visiting thousands of separate arrays.
 
-Slots are storage only. Processing order stays the unit registry's insertion order
-(``state.units``); a slot is allocated when a unit enters the registry and released when
-it leaves, and a reused slot is reset to "never observed" so no stale belief can leak into
-a later unit. Units outside a registry (test fixtures, a daughter before insertion) keep a
-detached :class:`~madexplorer.population.unit.BeliefMap`.
+Slots are storage only and are allocated by the unit registry (shared with the unit
+table). Processing order stays the registry's insertion order (``state.units``); a slot
+is claimed when a unit enters the registry and released when it leaves, and a claimed row
+is reset to "never observed" so no stale belief can leak into a later unit. Units outside
+a registry (test fixtures, a daughter before insertion) keep a detached
+:class:`~madexplorer.population.unit.BeliefMap`.
 
-The interface (``gather``/``scatter``/``assign``/``copy_row``/``view``) is what a later
+The interface (``claim``/``release``/``gather``/``scatter``/``assign``/``view``) is what a later
 sparse backend must provide; see objective/status.md (PH3a).
 """
 
@@ -76,7 +77,7 @@ class DenseBeliefStore:
     food_kcal: FoodArray
     population: CountArray
     hops: HopsArray
-    free: list[int]
+    active: int = 0  # rows claimed by registered units
     resizes: int = 0
     peak_resize_bytes: int = 0  # largest transient old + new footprint of a copying resize
 
@@ -89,7 +90,6 @@ class DenseBeliefStore:
             np.zeros((capacity, n_cells), dtype=FOOD_DTYPE),
             np.zeros((capacity, n_cells), dtype=POPULATION_DTYPE),
             np.zeros((capacity, n_cells), dtype=HOPS_DTYPE),
-            list(range(capacity - 1, -1, -1)),  # pop() hands out low slots first
         )
         return store
 
@@ -97,11 +97,6 @@ class DenseBeliefStore:
     def capacity(self) -> int:
         """Allocated rows."""
         return int(self.year.shape[0])
-
-    @property
-    def active(self) -> int:
-        """Rows in use."""
-        return self.capacity - len(self.free)
 
     @property
     def nbytes(self) -> int:
@@ -132,21 +127,19 @@ class DenseBeliefStore:
                 del array
                 setattr(self, name, copied)
             getattr(self, name)[old:] = fill
-        self.free.extend(range(new - 1, old - 1, -1))
         self.resizes += 1
 
-    def allocate(self) -> int:
-        """A free slot, reset to never observed."""
-        if not self.free:
+    def claim(self, slot: int) -> None:
+        """Take ``slot`` for a registered unit (growing as needed), reset to never observed."""
+        while slot >= self.capacity:
             self._grow()
-        slot = self.free.pop()
         self.reset(slot)
-        return slot
+        self.active += 1
 
     def release(self, slot: int) -> None:
-        """Return a slot (its row is cleared so nothing leaks into a later unit)."""
+        """Give ``slot`` back (its row is cleared so nothing leaks into a later unit)."""
         self.reset(slot)
-        self.free.append(slot)
+        self.active -= 1
 
     def reset(self, slot: int) -> None:
         """Mark every cell of ``slot`` as never observed."""

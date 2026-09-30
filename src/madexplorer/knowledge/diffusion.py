@@ -12,6 +12,7 @@ requirement.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -21,6 +22,9 @@ from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.knowledge.system import KnowledgeModel
 from madexplorer.population.unit import PopulationUnit
+
+if TYPE_CHECKING:
+    from madexplorer.core.columns import UnitColumns
 
 
 def contacts(
@@ -118,6 +122,16 @@ def _commit_diffusion(
     ctx: StepContext,
 ) -> None:
     unit.knowledge = unit.knowledge + gain
+    _commit_technologies(unit, adopted, lost, state, ctx)
+
+
+def _commit_technologies(
+    unit: PopulationUnit,
+    adopted: tuple[tuple[str, str], ...],
+    lost: tuple[str, ...],
+    state: SimulationState,
+    ctx: StepContext,
+) -> None:
     held = set(unit.technologies) - set(lost)
     for tech in lost:
         ctx.ledger.technology_losses += 1
@@ -273,15 +287,15 @@ class DiffusionSubsystem:
             (np.concatenate([position, np.array(extra_position, dtype=np.int64)]), receivers)
         )
         receivers, sources, weights = receivers[order], sources[order], weights[order]
-        knowledge = np.stack([u.knowledge for u in units])
-        teaching = compiled.parameter("cognition.teaching_efficiency")[
-            compiled.species_of([u.species_id for u in units])
-        ]
+        cols = ctx.columns(state)
+        knowledge = cols.knowledge()
+        teaching = compiled.parameter("cognition.teaching_efficiency")[cols.species()]
         gains = diffusion_gains(
             knowledge, receivers, sources, weights, self.model.transmissibility, teaching
         )
         supported = self.model.knowledge_supported(knowledge, spec.loss_knowledge_fraction)
-        masks = table.masks([u.technologies for u in units])
+        masks = cols.technology_masks()
+        tech_sets = cols.technologies()
         held = table.holds(masks)
         # Losses need the scalar rule only where a held technology is unsupported or its
         # required technologies are not all held (the rule then iterates to a fixed point).
@@ -300,29 +314,25 @@ class DiffusionSubsystem:
         maybe_lost_list = maybe_lost.tolist()
         candidate_units = (contact_union & ~masks) != 0
         for i in np.flatnonzero(maybe_lost | candidate_units).tolist():
-            unit = units[i]
-            lost = (
-                self.model.unsupported_given(unit.technologies, supported[i])
-                if maybe_lost_list[i]
-                else ()
-            )
-            held_now = unit.technologies - frozenset(lost)
+            techs = tech_sets[i]
+            lost = self.model.unsupported_given(techs, supported[i]) if maybe_lost_list[i] else ()
+            held_now = techs - frozenset(lost)
             lo, hi = edge_bounds[i], edge_bounds[i + 1]
             strength = {
-                units[j].id: w
+                units[j].id: (j, w)
                 for j, w in zip(sources[lo:hi].tolist(), weights[lo:hi].tolist(), strict=True)
             }
             adopted: list[tuple[str, str]] = []
             candidates: dict[str, str] = {}
             for j in sorted(strength):
-                for tech in sorted(live[j].technologies - held_now):
+                for tech in sorted(tech_sets[strength[j][0]] - held_now):
                     candidates.setdefault(tech, j)
             for tech, source in sorted(candidates.items()):
                 spec_t = self.model.technologies[tech]
-                probability = spec.adoption_probability * min(1.0, strength[source])
+                probability = spec.adoption_probability * min(1.0, strength[source][1])
                 ok = self.model.prerequisites_met(
                     spec_t,
-                    unit.knowledge,
+                    knowledge[i],
                     held_now | {t for t, _ in adopted},
                     spec.adoption_knowledge_fraction,
                 )
@@ -340,7 +350,8 @@ class DiffusionSubsystem:
         rows = np.flatnonzero(update)
         return [
             DiffusionBatch(
-                tuple(units[i].id for i in rows.tolist()),
+                cols,
+                rows,
                 gains[rows],
                 tuple(adopted_by.get(i, ()) for i in rows.tolist()),
                 tuple(lost_by.get(i, ()) for i in rows.tolist()),
@@ -352,16 +363,23 @@ class DiffusionSubsystem:
 class DiffusionBatch:
     """Knowledge gains, adoptions and losses of many units, committed in unit order.
 
-    Equivalent to one :class:`DiffusionUpdate` per listed unit, applied in that order
-    (events included).
+    Equivalent to one :class:`DiffusionUpdate` per listed row in that order: gains are
+    added to the knowledge matrix, then technology changes and their events follow in row
+    order (events do not depend on knowledge).
     """
 
-    unit_ids: tuple[str, ...]
-    gains: FloatArray  # (listed units, domains)
+    cols: "UnitColumns"
+    rows: IntArray
+    gains: FloatArray  # (listed rows, domains)
     adopted: tuple[tuple[tuple[str, str], ...], ...]
     lost: tuple[tuple[str, ...], ...]
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Apply each unit's update exactly as :meth:`DiffusionUpdate.apply` does."""
-        for k, unit_id in enumerate(self.unit_ids):
-            DiffusionUpdate(unit_id, self.gains[k], self.adopted[k], self.lost[k]).apply(state, ctx)
+        """Apply every listed row's update (see the class docstring)."""
+        cols, rows = self.cols, self.rows
+        rows_cols = cols.subset(rows)
+        rows_cols.set_knowledge(rows_cols.knowledge() + self.gains)
+        for k, (adopted, lost) in enumerate(zip(self.adopted, self.lost, strict=True)):
+            if adopted or lost:
+                unit = rows_cols.units[k]
+                _commit_technologies(unit, adopted, lost, state, ctx)

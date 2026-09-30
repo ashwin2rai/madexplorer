@@ -1,11 +1,15 @@
 """Conservation and integrity checks (spec §28.8, §38)."""
 
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from madexplorer.core.types import FloatArray
 from madexplorer.population.unit import PopulationUnit
+
+if TYPE_CHECKING:
+    from madexplorer.core.state import SimulationState
 
 
 class InvariantViolation(RuntimeError):
@@ -38,3 +42,37 @@ def check_nonnegative(name: str, values: FloatArray, year: int) -> None:
     """Resource stocks and similar fields never go negative or NaN."""
     if not np.isfinite(values).all() or (values < 0).any():
         raise InvariantViolation(f"year {year}: {name} contains negative or non-finite values")
+
+
+def check_state_units(state: "SimulationState", year: int) -> None:
+    """:func:`check_units` for a state; vectorized over the unit table in table mode, where
+    it also checks that cached population counts equal the cohort sums."""
+    table = state.table
+    units = state.units
+    if table is None or not hasattr(units, "slots"):
+        check_units(units.values(), state.world.n_cells, year)
+        return
+    slots = units.slots()
+    if slots.size == 0:
+        return
+    order = list(units)
+    bad_cohort = (table.females[slots] < 0).any(axis=1) | (table.males[slots] < 0).any(axis=1)
+    if bad_cohort.any():
+        raise InvariantViolation(
+            f"year {year}: negative cohort count in {order[int(np.argmax(bad_cohort))]}"
+        )
+    reserve = table.reserve_kcal_per_capita[slots]
+    if (reserve < 0).any():
+        raise InvariantViolation(
+            f"year {year}: negative reserve in {order[int(np.argmax(reserve < 0))]}"
+        )
+    cell = table.cell[slots]
+    invalid = (cell < 0) | (cell >= state.world.n_cells)
+    if invalid.any():
+        k = int(np.argmax(invalid))
+        raise InvariantViolation(f"year {year}: {order[k]} on invalid cell {int(cell[k])}")
+    stale = ~table.check_population(slots)
+    if stale.any():
+        raise InvariantViolation(
+            f"year {year}: cached population of {order[int(np.argmax(stale))]} != cohort sums"
+        )

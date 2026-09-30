@@ -12,7 +12,8 @@ because there are more of them (no best-of-many-noise bias).
 
 import math
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -22,10 +23,17 @@ from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.economy.agriculture import clearing_hours_per_ha
 from madexplorer.mobility.exploration import report_confidence
-from madexplorer.population.energetics import annual_need_batch, annual_need_kcal
+from madexplorer.population.energetics import (
+    annual_need_columns,
+    annual_need_kcal,
+    capability_column,
+)
 from madexplorer.population.groups import sigmoid
-from madexplorer.population.unit import Observation, PopulationUnit, belief_slot
+from madexplorer.population.unit import Observation, PopulationUnit
 from madexplorer.species.profile import MigrationBehavior
+
+if TYPE_CHECKING:
+    from madexplorer.core.columns import UnitColumns
 
 FOOD_RATIO_FLOOR = 0.05  # numerical guard: log of an empty cell
 FOOD_RATIO_CEILING = 1000.0  # numerical guard for the unbounded forms (1,000 years of need)
@@ -418,9 +426,15 @@ class MoveHazards:
     """
 
     hazards: dict[str, float]
+    # Batched form: the phase's columns and each row's hazard (NaN without a decision).
+    cols: "UnitColumns | None" = field(default=None, compare=False)
+    values: FloatArray | None = field(default=None, compare=False)
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Store each unit's hazard; NaN for units without a decision."""
+        if self.cols is not None and self.values is not None:
+            self.cols.set("move_hazard", self.values)
+            return
         for unit_id, unit in state.units.items():
             unit.move_hazard = self.hazards.get(unit_id, math.nan)
 
@@ -710,10 +724,11 @@ class MigrationSubsystem:
         one uniform per deciding unit in unit order. Exact ties (a tie-break draw), traced
         units and attention caps go through the reference path, before any draw.
         """
-        units_all = ctx.spatial(state).units
+        everyone = ctx.columns(state)
+        units_all = everyone.units
         compiled = ctx.compiled
         assert compiled is not None
-        species_all = compiled.species_of([u.species_id for u in units_all])
+        species_all = everyone.species()
         profiles = [ctx.species(sid) for sid in compiled.species_ids]
         if any(
             p.migration.max_considered_destinations is not None for p in profiles
@@ -724,18 +739,21 @@ class MigrationSubsystem:
         reach = [ctx.movement[sid].reachable_arrays for sid in compiled.species_ids]
         # Per unit: reachable cells with a current belief, and their belief fields, gathered
         # from the belief store for all units at once.
-        rows = [i for i, u in enumerate(units_all) if u.population > 0]
+        all_cells_by_unit = everyone.get("cell")
+        rows = np.flatnonzero(everyone.population() > 0).tolist()
         if not rows:
             return [MoveHazards({})]
         store = state.belief_store
         reachable = [
-            reach[code](units_all[i].cell)
-            for i, code in zip(rows, species_all[rows].tolist(), strict=True)
+            reach[code](cell)
+            for cell, code in zip(
+                all_cells_by_unit[rows].tolist(), species_all[rows].tolist(), strict=True
+            )
         ]
         sizes = np.array([len(r[0]) for r in reachable], dtype=np.int64)
         all_cells = np.concatenate([r[0] for r in reachable])
         all_costs = np.concatenate([r[1] for r in reachable])
-        slots = np.array([belief_slot(units_all[i]) for i in rows], dtype=np.int64)
+        slots = everyone.slots[rows]
         horizon = year - np.array(memory, dtype=np.int64)[species_all[rows]]
         slot_rep = np.repeat(slots, sizes)
         known = store.year[slot_rep, all_cells] > np.repeat(horizon, sizes)
@@ -743,7 +761,7 @@ class MigrationSubsystem:
         owner = np.repeat(np.arange(len(rows)), sizes)[known]
         counts = np.bincount(owner, minlength=len(rows)).astype(np.int64)
         index = np.array(rows, dtype=np.int64)
-        home_cell = np.array([units_all[i].cell for i in rows], dtype=np.int64)
+        home_cell = all_cells_by_unit[rows]
         staying = cells == home_cell[owner]
         has_home = np.bincount(owner, weights=staying, minlength=index.size) > 0
         path_costs = all_costs[known]
@@ -763,18 +781,17 @@ class MigrationSubsystem:
             home_cell = home_cell[keep_units]
             if index.size == 0:
                 return [MoveHazards({})]
-        units = [units_all[i] for i in index.tolist()]
+        cols = everyone.subset(index)
+        units = cols.units
         species = species_all[index]
         # Per-unit scalars (the operations of _prepare, elementwise).
         p_ = compiled.parameter
-        need = annual_need_batch(units, state, ctx) - np.array(
-            [u.energy_debt_kcal for u in units], dtype=np.float64
-        )
-        population = np.array([u.population for u in units], dtype=np.int64)
-        fields = np.array([u.fields_ha for u in units], dtype=np.float64)
-        farm_kcal = fields * np.array([u.crop_yield_kcal_per_ha for u in units], dtype=np.float64)
+        need = annual_need_columns(cols, state, ctx) - cols.get("energy_debt_kcal")
+        population = cols.population()
+        fields = cols.get("fields_ha")
+        farm_kcal = fields * cols.get("crop_yield_kcal_per_ha")
         carry = population * p_("movement.carry_kcal_per_capita")[species]
-        stores = np.array([u.stores_kcal for u in units], dtype=np.float64)
+        stores = cols.get("stores_kcal")
         abandoned = np.maximum(stores - carry, 0.0)
         positive = need > 0
         safe_need = np.where(positive, need, 1.0)
@@ -786,27 +803,23 @@ class MigrationSubsystem:
         else:
             config = ctx.scenario.config.agriculture
             farming = (fields > 0) & positive
-            efficiency = np.array(
-                [ctx.capabilities(u)["clearing_efficiency"] if f else 1.0
-                 for u, f in zip(units, farming.tolist(), strict=True)],
-                dtype=np.float64,
-            )  # fmt: skip
+            efficiency = np.where(farming, capability_column(cols, ctx, "clearing_efficiency"), 1.0)
             vegetation = state.world.vegetation_density[home_cell].astype(np.float64)
             clearing = (
                 config.clearing_hours_per_ha
                 * (1.0 + config.clearing_vegetation_multiplier * vegetation)
             ) / np.maximum(efficiency, 1e-6)
-            marginal = np.array([u.forage_marginal_kcal_per_hour for u in units], dtype=np.float64)
+            marginal = cols.get("forage_marginal_kcal_per_hour")
             replacement = fields * clearing * np.maximum(marginal, 0.0) / safe_need
             fields_cost = np.where(farming, stores_weight * replacement, 0.0)
-        signal = np.array([u.food_log_signal_var for u in units], dtype=np.float64)
+        signal = cols.get("food_log_signal_var")
         noise = np.array([p.cognition.observation_noise_sigma**2 for p in profiles])[species]
         if ctx.mechanisms.direct_observation_shrinkage:
             direct = np.where(noise == 0, 1.0, signal / np.where(noise == 0, 1.0, signal + noise))
         else:
             direct = np.ones(index.size)
         decay = p_("social_information.transmission_confidence_decay")[species]
-        log_prior = np.array([u.food_log_prior for u in units], dtype=np.float64)
+        log_prior = cols.get("food_log_prior")
         # Candidate utilities (the operations of _scores).
         confidence = direct[owner] * np.power(decay[owner], hops.astype(np.float64))
         food = shrunk_food_kcal(believed_food.astype(np.float64), confidence, log_prior[owner])
@@ -860,7 +873,9 @@ class MigrationSubsystem:
         gains = (scores[best_rows] - scores[home_rows[chosen]]).tolist()
         draws = rng.random(chosen.size).tolist()
         hazards = {u.id: 0.0 for u in units}
-        proposals: list[MoveHazards | Relocation] = [MoveHazards(hazards)]
+        values = np.full(len(everyone), math.nan)
+        values[index] = 0.0  # evaluated units without a decision: no alternative
+        proposals: list[MoveHazards | Relocation] = [MoveHazards(hazards, everyone, values)]
         behaviors = [p.migration for p in profiles]
         travel = p_("movement.travel_kcal_per_km")[species]
         for k, i in enumerate(chosen.tolist()):
@@ -868,6 +883,7 @@ class MigrationSubsystem:
             behavior = behaviors[species[i]]
             hazard = migration_probability(gains[k], behavior)
             hazards[unit.id] = hazard
+            values[index[i]] = hazard
             if draws[k] < hazard:
                 row = int(best_rows[k])
                 destination = int(cells[row])
@@ -875,10 +891,10 @@ class MigrationSubsystem:
                 proposals.append(
                     Relocation(
                         unit.id,
-                        unit.cell,
+                        int(home_cell[i]),
                         destination,
                         cost,
-                        float(unit.population * travel[i]) * cost,
+                        float(population[i] * travel[i]) * cost,
                         hazard,
                         float(carry[i]),
                     )

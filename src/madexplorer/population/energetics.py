@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -11,6 +12,9 @@ from madexplorer.core.types import BoolArray, FloatArray
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import Metabolism, SpeciesProfile
+
+if TYPE_CHECKING:
+    from madexplorer.core.columns import UnitColumns
 
 
 @model_rule(
@@ -46,19 +50,17 @@ def annual_need_kcal(
     return need + unit.energy_debt_kcal
 
 
-def annual_need_batch(
-    units: Sequence[PopulationUnit], state: SimulationState, ctx: StepContext
+def annual_need_columns(
+    cols: "UnitColumns", state: SimulationState, ctx: StepContext
 ) -> FloatArray:
-    """:func:`annual_need_kcal` for many units at once (same operations, bit-identical)."""
+    """:func:`annual_need_kcal` for the rows of ``cols`` (same operations, bit-identical)."""
     compiled = ctx.compiled
     assert compiled is not None
-    len(units)
-    species = compiled.species_of([u.species_id for u in units])
-    adults = np.array(
-        [u.weighted_count(ctx.tables[u.species_id].need_fraction) for u in units], dtype=np.float64
+    species = cols.species()
+    adults = cols.weighted(
+        {k: ctx.tables[sid].need_fraction for k, sid in enumerate(compiled.species_ids)}
     )
-    cells = np.array([u.cell for u in units], dtype=np.int64)
-    temperature = state.climate.temperature_c[cells].astype(np.float64)
+    temperature = state.climate.temperature_c[cols.get("cell")].astype(np.float64)
     p = compiled.parameter
     cold = (
         np.maximum(0.0, p("metabolism.comfort_temp_low_c")[species] - temperature)
@@ -68,11 +70,22 @@ def annual_need_batch(
         np.maximum(0.0, temperature - p("metabolism.comfort_temp_high_c")[species])
         * p("metabolism.heat_cost_per_c")[species]
     )
-    debt = np.array([u.energy_debt_kcal for u in units], dtype=np.float64)
-    need: FloatArray = (
-        adults * p("metabolism.adult_daily_kcal")[species] * 365.0 * (1.0 + cold + heat) + debt
-    )
+    need: FloatArray = adults * p("metabolism.adult_daily_kcal")[species] * 365.0 * (
+        1.0 + cold + heat
+    ) + cols.get("energy_debt_kcal")
     return need
+
+
+def annual_need_batch(
+    units: Sequence[PopulationUnit], state: SimulationState, ctx: StepContext
+) -> FloatArray:
+    """:func:`annual_need_columns` for given unit objects (reference and tests)."""
+    from madexplorer.core.columns import ObjectColumns
+
+    compiled = ctx.compiled
+    assert compiled is not None
+    cols = ObjectColumns(units, compiled.species_index, compiled.technologies)
+    return annual_need_columns(cols, state, ctx)
 
 
 @dataclass(frozen=True)
@@ -232,9 +245,13 @@ def _commit_energy(
 
 @dataclass(frozen=True, eq=False)
 class EnergyUpdates:
-    """Energy state of many units, committed in unit order (one proposal per step)."""
+    """Energy state of many units, committed as columns (one proposal per step).
 
-    units: tuple[PopulationUnit, ...]
+    Equivalent to one :class:`EnergyUpdate` per row in row order: ledger totals are
+    accumulated sequentially in that order.
+    """
+
+    cols: "UnitColumns"
     need_kcal: FloatArray
     food_ratio: FloatArray
     deficit: FloatArray
@@ -245,20 +262,29 @@ class EnergyUpdates:
     retention: FloatArray
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Commit every unit's energy state, in the order the per-unit updates used."""
-        for unit, *values in zip(
-            self.units,
-            self.need_kcal.tolist(),
-            self.food_ratio.tolist(),
-            self.deficit.tolist(),
-            self.reserve_kcal.tolist(),
-            self.stores_kcal.tolist(),
-            self.stored_kcal.tolist(),
-            self.spoiled_kcal.tolist(),
-            self.retention.tolist(),
-            strict=True,
-        ):
-            _commit_energy(unit, ctx, *values)
+        """Commit every row's energy state; stores spoil at the end of the year."""
+        cols = self.cols
+        n = cols.population()
+        cols.set("food_ratio", self.food_ratio)
+        cols.set("energy_deficit", self.deficit)
+        cols.set("reserve_kcal_per_capita", self.reserve_kcal / n)
+        retained = self.stores_kcal * self.retention
+        ledger = ctx.ledger
+        total = ledger.spoilage_kcal
+        for spoiled in (self.spoiled_kcal + (self.stores_kcal - retained)).tolist():
+            total += spoiled
+        ledger.spoilage_kcal = total
+        cols.set("stores_kcal", retained)
+        cols.set("stored_kcal", self.stored_kcal)
+        cols.set("energy_debt_kcal", 0.0)
+        cols.set("residence_years", cols.get("residence_years") + 1)
+        per_capita = (cols.get("harvest_kcal") / n).tolist()
+        for unit, value in zip(cols.units, per_capita, strict=True):
+            unit.harvest_history.append(value)
+        total = ledger.need_kcal
+        for need in self.need_kcal.tolist():
+            total += need
+        ledger.need_kcal = total
 
 
 class EnergeticsSubsystem:
@@ -268,25 +294,42 @@ class EnergeticsSubsystem:
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[EnergyUpdates]:
         """Compute energy balance for every unit, as one batched proposal."""
-        units = tuple(u for u in state.units.values() if u.population > 0)
-        if not units:
+        everyone = ctx.columns(state)
+        populated = np.flatnonzero(everyone.population() > 0)
+        if populated.size == 0:
             return []
+        cols = everyone.subset(populated) if populated.size < len(everyone) else everyone
         compiled = ctx.compiled
         assert compiled is not None
-        len(units)
-        species = compiled.species_of([u.species_id for u in units])
-        people = np.array([u.population for u in units], dtype=np.float64)
-        need = annual_need_batch(units, state, ctx)
+        species = cols.species()
+        people = cols.population()
+        need = annual_need_columns(cols, state, ctx)
         p = compiled.parameter
         daily = p("metabolism.adult_daily_kcal")[species]
-        cap = people * p("metabolism.reserve_days_max")[species] * daily
-        reserve = np.array([u.reserve_kcal_per_capita for u in units], dtype=np.float64) * np.array(
-            [u.population for u in units], dtype=np.int64
+        cap = people.astype(np.float64) * p("metabolism.reserve_days_max")[species] * daily
+        reserve = cols.get("reserve_kcal_per_capita") * people
+        retention = capability_column(cols, ctx, "storage_retention")
+        outcome = energy_balance_batch(
+            need,
+            cols.get("harvest_kcal"),
+            reserve,  # type: ignore[arg-type]
+            cap,
+            cols.get("stores_kcal"),
+            retention > 0,
         )
-        retention = np.array(
-            [ctx.capabilities(u)["storage_retention"] for u in units], dtype=np.float64
-        )
-        harvest = np.array([u.harvest_kcal for u in units], dtype=np.float64)
-        stores = np.array([u.stores_kcal for u in units], dtype=np.float64)
-        outcome = energy_balance_batch(need, harvest, reserve, cap, stores, retention > 0)
-        return [EnergyUpdates(units, need, *outcome, retention)]
+        return [EnergyUpdates(cols, need, *outcome, retention)]
+
+
+def capability_column(cols: "UnitColumns", ctx: StepContext, name: str) -> FloatArray:
+    """One capability for every row, from each distinct technology set's cached capability
+    map (the values ``ctx.capabilities(unit)[name]`` returns)."""
+    sets = cols.technologies()
+    distinct: dict[frozenset[str], float] = {}
+    values = np.empty(len(sets))
+    for i, techs in enumerate(sets):
+        value = distinct.get(techs)
+        if value is None:
+            value = ctx.capabilities_of(techs)[name]  # type: ignore[index]
+            distinct[techs] = value
+        values[i] = value
+    return values

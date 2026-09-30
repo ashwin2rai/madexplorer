@@ -11,7 +11,11 @@ from madexplorer.config.loader import Scenario
 from madexplorer.core.compiled import CompiledScenario
 from madexplorer.core.events import EventLog
 from madexplorer.core.ids import IdAllocator
-from madexplorer.core.invariants import check_nonnegative, check_population_accounting, check_units
+from madexplorer.core.invariants import (
+    check_nonnegative,
+    check_population_accounting,
+    check_state_units,
+)
 from madexplorer.core.provenance import run_manifest
 from madexplorer.core.rng import RngManager, Streams
 from madexplorer.core.state import CapabilityMap, SimulationState, StepContext
@@ -110,6 +114,7 @@ class Simulator:
         trace_units: Sequence[str] = (),
         static: StaticContext | None = None,
         record_events: bool = True,
+        unit_table: bool = True,
     ) -> None:
         self.scenario = scenario
         config = scenario.config
@@ -138,6 +143,9 @@ class Simulator:
             climate=climate,
             ecology=initial_ecology(self.world, climate, config.ecology),
             units={},
+            table_mode=unit_table,
+            technology_table=self.compiled.technologies,
+            species_index=self.compiled.species_index,
         )
         self._found_initial_units()
 
@@ -203,7 +211,7 @@ class Simulator:
             check_population_accounting(
                 before, ctx.ledger.births, ctx.ledger.deaths, state.total_population(), state.year
             )
-            check_units(state.units.values(), self.world.n_cells, state.year)
+            check_state_units(state, state.year)
             check_nonnegative("plant_stock_kcal", state.ecology.plant_stock_kcal, state.year)
             check_nonnegative("game_stock_kcal", state.ecology.game_stock_kcal, state.year)
         if timings is not None:

@@ -17,14 +17,16 @@ from madexplorer.ecology.resources import EcologyState
 from madexplorer.knowledge.system import Capability, KnowledgeModel, default_capabilities
 from madexplorer.mobility.movement import MovementModel
 from madexplorer.population.beliefs import DenseBeliefStore
-from madexplorer.population.unit import PopulationUnit, attach_beliefs, detach_beliefs
+from madexplorer.population.table import UnitTable
+from madexplorer.population.unit import PopulationUnit, attach_unit, belief_slot, detach_unit
 from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import SpeciesProfile
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
 
 if TYPE_CHECKING:
-    from madexplorer.core.compiled import CompiledScenario
+    from madexplorer.core.columns import UnitColumns
+    from madexplorer.core.compiled import CompiledScenario, TechnologyTable
     from madexplorer.core.spatial import SpatialIndex
     from madexplorer.core.static import StaticContext
     from madexplorer.economy.foraging import ForageAccess
@@ -33,57 +35,99 @@ CapabilityMap = Mapping[Capability, float]
 
 
 class UnitRegistry(dict[str, PopulationUnit]):
-    """``state.units``: units in stable insertion order (the semantic processing order),
-    whose beliefs live in the state's belief store while they are registered.
+    """``state.units``: units in stable insertion order (the semantic processing order).
 
-    Inserting a unit allocates a store slot for its beliefs; removing one copies its
-    beliefs back out and frees the slot. Reads are plain dict operations. Slots are
-    storage only and never define iteration order.
+    Inserting a unit gives it a storage slot: its beliefs move into the belief store and,
+    with a unit table (the production mode), its hot numeric fields into the table.
+    Removing it copies that state back onto the object and frees the slot, which is reset
+    before reuse. Reads are plain dict operations. Slots never define iteration order;
+    :meth:`slots` gives the slots in insertion order.
     """
 
     def __init__(
         self,
         store: DenseBeliefStore | None = None,
         units: Mapping[str, PopulationUnit] | None = None,
+        table: UnitTable | None = None,
+        species_index: Mapping[str, int] | None = None,
     ) -> None:
         super().__init__()
         self.store = store
+        self.table = table
+        self.species_index = dict(species_index or {})
+        self._free: list[int] = []
+        self._next_slot = 0
+        self._slots: IntArray | None = None
         for unit_id, unit in (units or {}).items():
             self[unit_id] = unit
+
+    def _allocate(self) -> int:
+        if self._free:
+            return self._free.pop()
+        slot = self._next_slot
+        self._next_slot += 1
+        return slot
+
+    def _attach(self, unit: PopulationUnit) -> None:
+        if self.store is None:
+            return
+        state = unit.__dict__
+        if state.get("_belief_store") is self.store and state.get("_table") is self.table:
+            return  # already ours (e.g. restored by deepcopy together with this registry)
+        detach_unit(unit)  # from any other registry's stores
+        code = self.species_index.get(unit.species_id, 0)
+        attach_unit(unit, self._allocate(), self.store, self.table, code)
+
+    def _detach(self, unit: PopulationUnit) -> None:
+        slot = detach_unit(unit)
+        if slot >= 0:
+            self._free.append(slot)
+
+    def slots(self) -> IntArray:
+        """Storage slots of the registered units, in insertion (processing) order."""
+        cached = self._slots
+        if cached is None:
+            cached = np.array([belief_slot(u) for u in self.values()], dtype=np.int64)
+            self._slots = cached
+        return cached
 
     def __setitem__(self, unit_id: str, unit: PopulationUnit) -> None:
         previous = self.get(unit_id)
         if previous is not None and previous is not unit:
-            detach_beliefs(previous)
-        if self.store is not None:
-            attach_beliefs(unit, self.store)
+            self._detach(previous)
+        self._attach(unit)
+        self._slots = None
         super().__setitem__(unit_id, unit)
 
     def __delitem__(self, unit_id: str) -> None:
         unit = self[unit_id]
         super().__delitem__(unit_id)
-        detach_beliefs(unit)
+        self._slots = None
+        self._detach(unit)
 
     def pop(self, unit_id: str, *default: PopulationUnit) -> PopulationUnit:  # type: ignore[override]
-        """Remove and return a unit (its beliefs are detached)."""
+        """Remove and return a unit (its state is copied back onto the object)."""
         if unit_id not in self:
             if default:
                 return default[0]
             raise KeyError(unit_id)
         unit = super().pop(unit_id)
-        detach_beliefs(unit)
+        self._slots = None
+        self._detach(unit)
         return unit
 
     def popitem(self) -> tuple[str, PopulationUnit]:
-        """Remove and return the last unit (its beliefs are detached)."""
+        """Remove and return the last unit."""
         unit_id, unit = super().popitem()
-        detach_beliefs(unit)
+        self._slots = None
+        self._detach(unit)
         return unit_id, unit
 
     def clear(self) -> None:
-        """Remove every unit (beliefs detached)."""
-        for unit in self.values():
-            detach_beliefs(unit)
+        """Remove every unit."""
+        for unit in list(self.values()):
+            self._detach(unit)
+        self._slots = None
         super().clear()
 
     def update(self, *args: Any, **kwargs: PopulationUnit) -> None:
@@ -108,17 +152,26 @@ class SimulationState:
     ecology: EcologyState
     units: dict[str, PopulationUnit]
     beliefs: DenseBeliefStore | None = None
+    # Production: hot unit state lives in a UnitTable. False keeps it on the unit objects
+    # (the object-authoritative reference engine, used by differential tests).
+    table_mode: bool = True
+    technology_table: "TechnologyTable | None" = None
+    species_index: Mapping[str, int] = field(default_factory=dict)
+    table: UnitTable | None = None
 
     def __post_init__(self) -> None:
         if self.beliefs is None:
             self.beliefs = DenseBeliefStore.empty(self.world.n_cells)
-        self.units = self.units  # wrap in a registry bound to the store
+        if self.table is None and self.table_mode:
+            self.table = UnitTable(self.technology_table)
+        self.units = self.units  # wrap in a registry bound to the stores
 
     def __setattr__(self, name: str, value: Any) -> None:
-        store = self.__dict__.get("beliefs")
-        bound = isinstance(value, UnitRegistry) and value.store is store
-        if name == "units" and store is not None and not bound:
-            value = UnitRegistry(store, value)
+        if name == "units" and self.__dict__.get("beliefs") is not None:
+            store, table = self.__dict__["beliefs"], self.__dict__.get("table")
+            bound = isinstance(value, UnitRegistry) and value.store is store
+            if not bound:
+                value = UnitRegistry(store, value, table, self.__dict__.get("species_index"))
         object.__setattr__(self, name, value)
 
     @property
@@ -128,20 +181,40 @@ class SimulationState:
         assert store is not None
         return store
 
+    def _table_slots(self) -> IntArray | None:
+        units = self.units
+        if self.table is not None and isinstance(units, UnitRegistry):
+            return units.slots()
+        return None
+
     def cell_population(self) -> IntArray:
         """People per cell."""
         counts = np.zeros(self.world.n_cells, dtype=np.int64)
+        slots = self._table_slots()
+        if slots is not None:
+            assert self.table is not None
+            np.add.at(counts, self.table.cell[slots], self.table.population[slots])
+            return counts
         for unit in self.units.values():
             counts[unit.cell] += unit.population
         return counts
 
     def total_population(self) -> int:
         """Total number of individuals."""
+        slots = self._table_slots()
+        if slots is not None:
+            assert self.table is not None
+            return int(self.table.population[slots].sum())
         return sum(unit.population for unit in self.units.values())
 
     def cell_fields_ha(self) -> FloatArray:
-        """Cultivated hectares per cell."""
+        """Cultivated hectares per cell (summed in unit order, as the per-unit loop)."""
         fields = np.zeros(self.world.n_cells)
+        slots = self._table_slots()
+        if slots is not None:
+            assert self.table is not None
+            np.add.at(fields, self.table.cell[slots], self.table.fields_ha[slots])
+            return fields
         for unit in self.units.values():
             fields[unit.cell] += unit.fields_ha
         return fields
@@ -198,6 +271,7 @@ class StepContext:
     compiled: "CompiledScenario | None" = None
     _crop_potential: FloatArray | None = None
     _spatial: "SpatialIndex | None" = None
+    _columns: "UnitColumns | None" = None
 
     def spatial(self, state: "SimulationState") -> "SpatialIndex":
         """The shared cell -> unit index, built on first use in a phase.
@@ -210,13 +284,48 @@ class StepContext:
         if index is None:
             from madexplorer.core.spatial import SpatialIndex
 
-            index = SpatialIndex.build(tuple(state.units.values()))
+            units = tuple(state.units.values())
+            table = state.table
+            registry = state.units
+            if table is not None and isinstance(registry, UnitRegistry):
+                slots = registry.slots()
+                index = SpatialIndex.build(units, table.cell[slots], table.species_code[slots])
+            else:
+                index = SpatialIndex.build(units)
             self._spatial = index
         return index
 
     def invalidate_spatial(self) -> None:
-        """Drop the spatial index after a change of unit membership or location."""
+        """Drop the spatial index (and column view) after a change of unit membership or
+        location."""
         self._spatial = None
+        self._columns = None
+
+    def columns(self, state: "SimulationState") -> "UnitColumns":
+        """Column access to the phase's units in processing order (see ``core.columns``).
+
+        Table mode reads the authoritative unit table; object mode (the reference engine)
+        reads unit attributes. Rebuilt after :meth:`invalidate_spatial`.
+        """
+        columns = self._columns
+        if columns is None:
+            from madexplorer.core.columns import ObjectColumns, TableColumns
+
+            units = self.spatial(state).units
+            table = state.table
+            if table is not None:
+                registry = state.units
+                assert isinstance(registry, UnitRegistry)
+                columns = TableColumns(units, registry.slots(), table)
+            else:
+                compiled = self.compiled
+                columns = ObjectColumns(
+                    units,
+                    compiled.species_index if compiled else {},
+                    compiled.technologies if compiled else None,
+                )
+            self._columns = columns
+        return columns
 
     @property
     def tables(self) -> Mapping[str, LifeTables]:
@@ -269,10 +378,14 @@ class StepContext:
 
         Read-only and shared: one mapping per technology set for the whole run.
         """
-        cached = self.capability_cache.get(unit.technologies)
+        return self.capabilities_of(unit.technologies)
+
+    def capabilities_of(self, technologies: frozenset[str]) -> CapabilityMap:
+        """:meth:`capabilities` for a technology set."""
+        cached = self.capability_cache.get(technologies)
         if cached is None:
             caps = (
-                dict(self.knowledge.capabilities(unit.technologies))
+                dict(self.knowledge.capabilities(technologies))
                 if self.knowledge
                 else default_capabilities()
             )
@@ -281,5 +394,5 @@ class StepContext:
             if not self.mechanisms.storage:
                 caps["storage_retention"] = 0.0
             cached = MappingProxyType(caps)
-            self.capability_cache[unit.technologies] = cached
+            self.capability_cache[technologies] = cached
         return cached

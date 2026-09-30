@@ -17,7 +17,6 @@ from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import IntArray
 from madexplorer.population.composition import MergeMode, absorb, split_off
 from madexplorer.population.familiarity import familiarity_rule
-from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import SocialBehavior
 
 
@@ -200,7 +199,9 @@ class ExtinctionSubsystem:
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Extinction]:
         """Find units with zero members."""
-        return [Extinction(u.id) for u in state.units.values() if u.population == 0]
+        cols = ctx.columns(state)
+        empty = np.flatnonzero(cols.population() == 0).tolist()
+        return [Extinction(cols.units[i].id) for i in empty]
 
 
 class FissionSubsystem:
@@ -212,13 +213,15 @@ class FissionSubsystem:
         """Evaluate each group's fission hazard."""
         rng = ctx.rng.stream(Streams.FISSION)
         proposals: list[Fission] = []
-        for unit in state.units.values():
-            if unit.population < 2:
+        cols = ctx.columns(state)
+        population = cols.population().tolist()
+        food = cols.get("food_ratio").tolist()
+        groups = cols.get("groups").tolist()
+        for unit, n, food_ratio, n_groups in zip(cols.units, population, food, groups, strict=True):
+            if n < 2:
                 continue
             social = ctx.species(unit.species_id).social
-            hazard, components = fission_hazard(
-                unit.population, unit.food_ratio, social, unit.groups
-            )
+            hazard, components = fission_hazard(n, food_ratio, social, n_groups)
             if rng.random() < hazard:
                 fraction = rng.uniform(social.fission_fraction_min, social.fission_fraction_max)
                 proposals.append(Fission(unit.id, float(fraction), hazard, components))
@@ -234,24 +237,34 @@ class FusionSubsystem:
         """The smallest group in each cell may join the largest other group there."""
         rng = ctx.rng.stream(Streams.FUSION)
         proposals: list[Fusion] = []
-        for units in ctx.spatial(state).by_cell.values():
-            by_species: dict[str, list[PopulationUnit]] = {}
-            for unit in units:
-                by_species.setdefault(unit.species_id, []).append(unit)
+        index = ctx.spatial(state)
+        cols = ctx.columns(state)
+        population = cols.population().tolist()
+        units = cols.units
+        order, starts = index.order.tolist(), index.starts.tolist()
+        for k in range(len(starts) - 1):
+            members = order[starts[k] : starts[k + 1]]
+            if len(members) < 2:
+                continue
+            by_species: dict[str, list[int]] = {}
+            for r in members:
+                by_species.setdefault(units[r].species_id, []).append(r)
             for species_id in sorted(by_species):
                 group = by_species[species_id]
                 if len(group) < 2:
                     continue
                 tables = ctx.tables[species_id]
-                smallest = min(group, key=lambda u: u.population)
-                target = max((u for u in group if u is not smallest), key=lambda u: u.population)
-                has_f, has_m = smallest.has_reproductive_pair(
+                smallest = min(group, key=lambda r: population[r])  # first minimum, as before
+                target = max((r for r in group if r != smallest), key=lambda r: population[r])
+                has_f, has_m = units[smallest].has_reproductive_pair(
                     tables.female_reproductive, tables.male_reproductive
                 )
                 social = ctx.species(species_id).social
                 hazard, components = fusion_hazard(
-                    smallest.population, not (has_f and has_m), social
+                    population[smallest], not (has_f and has_m), social
                 )
                 if rng.random() < hazard:
-                    proposals.append(Fusion(smallest.id, target.id, hazard, components))
+                    proposals.append(
+                        Fusion(units[smallest].id, units[target].id, hazard, components)
+                    )
         return proposals

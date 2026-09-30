@@ -418,7 +418,8 @@ def test_batched_diffusion_equals_the_reference_evaluate(
         rows = []
         for proposal in method(sim.state, ctx):
             if isinstance(proposal, DiffusionBatch):
-                for k, uid in enumerate(proposal.unit_ids):
+                ids = [proposal.cols.units[r].id for r in proposal.rows.tolist()]
+                for k, uid in enumerate(ids):
                     rows.append((uid, proposal.gains[k].tolist(), proposal.adopted[k],
                                  proposal.lost[k]))  # fmt: skip
             else:
@@ -468,16 +469,16 @@ def test_packed_perception_equals_per_unit_patches() -> None:
     from madexplorer.mobility.exploration import PerceptionSubsystem
 
     sim = _warm_state(70, 3)
-    ctx = step_context(sim)
-    (packed,) = PerceptionSubsystem().evaluate(sim.state, ctx)
-    state_a, state_b = copy.deepcopy(sim.state), copy.deepcopy(sim.state)
-    packed_b = copy.deepcopy(packed)  # the proposal holds unit objects: bind to state_b
-    object.__setattr__(packed_b, "units", tuple(state_b.units[u.id] for u in packed.units))
-    for patch in packed.as_patches(sim.state.year):
-        patch.apply(state_a, ctx)
-    packed_b.apply(state_b, ctx)
-    for uid, a in state_a.units.items():
-        b = state_b.units[uid]
+    sim.capability_cache.clear()
+    sim_a, sim_b = copy.deepcopy(sim), copy.deepcopy(sim)  # same state and RNG streams
+    ctx_a, ctx_b = step_context(sim_a), step_context(sim_b)
+    (packed_a,) = PerceptionSubsystem().evaluate(sim_a.state, ctx_a)
+    (packed_b,) = PerceptionSubsystem().evaluate(sim_b.state, ctx_b)
+    for patch in packed_a.as_patches(sim_a.state.year):
+        patch.apply(sim_a.state, ctx_a)
+    packed_b.apply(sim_b.state, ctx_b)
+    for uid, a in sim_a.state.units.items():
+        b = sim_b.state.units[uid]
         for field in ("year", "food_kcal", "population", "hops"):
             assert np.array_equal(getattr(a.beliefs, field), getattr(b.beliefs, field))
         assert a.food_log_prior == b.food_log_prior or (

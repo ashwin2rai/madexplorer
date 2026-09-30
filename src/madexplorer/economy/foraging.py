@@ -9,17 +9,20 @@ the patch. Groups in the same cell share one pool, so crowding lowers returns.
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
-from madexplorer.core.types import FloatArray
-from madexplorer.population.energetics import annual_need_batch
+from madexplorer.core.types import FloatArray, IntArray
+from madexplorer.population.energetics import annual_need_columns
 from madexplorer.population.familiarity import FamiliarityRule, familiarity_rule
-from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import Foraging
 from madexplorer.world.grid import WorldGrid
+
+if TYPE_CHECKING:
+    from madexplorer.core.columns import UnitColumns
 
 
 @model_rule(
@@ -222,15 +225,17 @@ def single_unit_harvest(
 class CellHarvests:
     """Foraging outcomes of every (cell, species) group, packed; applied in group order.
 
-    Equivalent to one :class:`CellHarvest` per group, applied in that order.
+    Equivalent to one :class:`CellHarvest` per group, applied in that order: stocks per
+    group, then each member's columns; the ledger total is accumulated in member order.
     """
 
+    cols: "UnitColumns"
     cells: tuple[int, ...]
-    bounds: tuple[int, ...]  # (groups + 1,) rows of each group in the unit arrays
-    units: tuple[PopulationUnit, ...]
-    harvest_kcal: tuple[float, ...]
-    hours: tuple[float, ...]
-    marginal_kcal_per_hour: tuple[float, ...]
+    bounds: tuple[int, ...]  # (groups + 1,) positions in ``rows`` of each group's members
+    rows: IntArray  # row positions in cols, grouped
+    harvest_kcal: FloatArray
+    hours: FloatArray
+    marginal_kcal_per_hour: FloatArray
     plant_removed_kcal: tuple[float, ...]
     game_removed_kcal: tuple[float, ...]
     learning_rate: tuple[float, ...]
@@ -240,27 +245,33 @@ class CellHarvests:
         """Deplete stocks, credit harvests, and grow local familiarity (learning by doing)."""
         eco = state.ecology
         plant_stock, game_stock = eco.plant_stock_kcal, eco.game_stock_kcal
-        ledger = ctx.ledger
         year = state.year
         bounds = self.bounds
+        cols, rows = self.cols, self.rows
+        plant_share = np.empty(rows.size)
+        units = cols.units
+        rows_list = rows.tolist()
         for k, cell in enumerate(self.cells):
             plant_removed, game_removed = self.plant_removed_kcal[k], self.game_removed_kcal[k]
             plant_stock[cell] = max(plant_stock[cell] - plant_removed, 0.0)
             game_stock[cell] = max(game_stock[cell] - game_removed, 0.0)
             removed = plant_removed + game_removed
-            plant_share = plant_removed / removed if removed > 0 else 0.0
+            plant_share[bounds[k] : bounds[k + 1]] = plant_removed / removed if removed > 0 else 0.0
             rate, rule = self.learning_rate[k], self.familiarity[k]
-            for r in range(bounds[k], bounds[k + 1]):
-                unit = self.units[r]
-                harvest = self.harvest_kcal[r]
-                unit.forage_harvest_kcal = harvest
-                unit.forage_hours = self.hours[r]
-                unit.forage_marginal_kcal_per_hour = self.marginal_kcal_per_hour[r]
-                unit.forage_plant_share = plant_share
-                unit.harvest_kcal = unit.farm_harvest_kcal + harvest
-                unit.labor_debt_hours = 0.0
-                unit.familiarity.practice(cell, year, rate, rule)
-                ledger.harvest_kcal += unit.harvest_kcal
+            for r in rows_list[bounds[k] : bounds[k + 1]]:
+                units[r].familiarity.practice(cell, year, rate, rule)
+        harvest = cols.get("farm_harvest_kcal")[rows] + self.harvest_kcal
+        cols.set_rows("forage_harvest_kcal", rows, self.harvest_kcal)
+        cols.set_rows("forage_hours", rows, self.hours)
+        cols.set_rows("forage_marginal_kcal_per_hour", rows, self.marginal_kcal_per_hour)
+        cols.set_rows("forage_plant_share", rows, plant_share)
+        cols.set_rows("harvest_kcal", rows, harvest)
+        cols.set_rows("labor_debt_hours", rows, 0.0)
+        ledger = ctx.ledger
+        total = ledger.harvest_kcal
+        for value in harvest.tolist():
+            total += value
+        ledger.harvest_kcal = total
 
 
 @dataclass(frozen=True)
@@ -319,39 +330,43 @@ class ForagingSubsystem:
         the spatial index (cells in first-appearance order, units in unit order).
         """
         index = ctx.spatial(state)
-        units = index.units
+        cols = ctx.columns(state)
+        units = cols.units
         if not units:
             return []
         compiled = ctx.compiled
         assert compiled is not None
-        len(units)
         year = state.year
-        species = compiled.species_of([u.species_id for u in units])
+        species = cols.species()
         p = compiled.parameter
         hours_per_year = p("foraging.foraging_hours_per_day")[species] * 365.0
-        capacity = np.array(
-            [u.weighted_count(ctx.tables[u.species_id].labor) for u in units], dtype=np.float64
+        capacity = cols.weighted(
+            {k: ctx.tables[sid].labor for k, sid in enumerate(compiled.species_ids)}
         )
-        debt = np.array([u.labor_debt_hours for u in units], dtype=np.float64)
-        farm_hours = np.array([u.farm_hours for u in units], dtype=np.float64)
+        debt = cols.get("labor_debt_hours")
+        farm_hours = cols.get("farm_hours")
         labor = np.maximum(capacity * hours_per_year - debt - farm_hours, 0.0)
         rules = {
             sid: familiarity_rule(profile, ctx.mechanisms)
             for sid, profile in ctx.scenario.species.items()
         }
+        cells_list = cols.get("cell").tolist()
         familiarity = np.array(
-            [u.familiarity.effective(u.cell, year, rules[u.species_id]) for u in units],
+            [
+                u.familiarity.effective(c, year, rules[u.species_id])
+                for u, c in zip(units, cells_list, strict=True)
+            ],
             dtype=np.float64,
         )
         knowledge = ctx.knowledge
         if knowledge is not None and "ecology" in knowledge.index:
             domain = knowledge.index["ecology"]
-            level = np.array([float(u.knowledge[domain]) for u in units], dtype=np.float64)
+            level = cols.knowledge()[:, domain].astype(np.float64)
             efficiency = familiarity * (level / (level + float(knowledge.half_efficiency[domain])))
         else:
             efficiency = familiarity * 1.0
-        farm_harvest = np.array([u.farm_harvest_kcal for u in units], dtype=np.float64)
-        need = annual_need_batch(units, state, ctx)
+        farm_harvest = cols.get("farm_harvest_kcal")
+        need = annual_need_columns(cols, state, ctx)
         target_share = np.maximum(
             need * (1.0 + p("foraging.surplus_target")[species]) - farm_harvest, 0.0
         ).tolist()
@@ -362,7 +377,7 @@ class ForagingSubsystem:
         single_species = len(compiled.species_ids) == 1
         group_cells: list[int] = []
         bounds = [0]
-        order_units: list[PopulationUnit] = []
+        order_rows: list[int] = []
         harvests: list[float] = []
         hours: list[float] = []
         marginals: list[float] = []
@@ -416,20 +431,21 @@ class ForagingSubsystem:
                 plant_left[cell] -= plant
                 game_left[cell] -= game
                 group_cells.append(cell)
-                order_units.extend(units[r] for r in members)
-                bounds.append(len(order_units))
+                order_rows.extend(members)
+                bounds.append(len(order_rows))
                 plant_removed.append(plant)
                 game_removed.append(game)
                 rates.append(profile.cognition.familiarity_learning_rate)
                 rules_used.append(rules[species_id])
         return [
             CellHarvests(
+                cols,
                 tuple(group_cells),
                 tuple(bounds),
-                tuple(order_units),
-                tuple(harvests),
-                tuple(hours),
-                tuple(marginals),
+                np.array(order_rows, dtype=np.int64),
+                np.array(harvests, dtype=np.float64),
+                np.array(hours, dtype=np.float64),
+                np.array(marginals, dtype=np.float64),
                 tuple(plant_removed),
                 tuple(game_removed),
                 tuple(rates),

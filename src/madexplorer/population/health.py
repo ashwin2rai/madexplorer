@@ -27,7 +27,7 @@ from collections.abc import Iterable, Mapping, Sequence
 import numpy as np
 
 from madexplorer.core.governance import model_rule
-from madexplorer.core.types import FloatArray
+from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import Health
 
@@ -99,17 +99,22 @@ def crowding_mortality_hazard(pressure: Real, sedentism_level: Real, per_log_con
     return per_log_contact * sedentism_level * pressure
 
 
-def crowding_hazard_array(
-    units: Sequence[PopulationUnit],
+def crowding_hazard_columns(
+    people: FloatArray,
+    groups: IntArray,
+    residence_years: IntArray,
+    cells: IntArray,
+    kind: IntArray,
     species: Mapping[str, Health],
     cell_area_km2: float,
 ) -> FloatArray:
-    """Adult crowding hazard of every unit (in ``units`` order), from co-located
-    same-species settled people."""
-    if not units:
+    """Adult crowding hazard of every row, from co-located same-species settled people.
+
+    ``kind`` is each row's index in the sorted species ids (the compiled species index).
+    """
+    if people.size == 0:
         return np.zeros(0)
     species_ids = sorted(species)
-    kind = np.array([species_ids.index(u.species_id) for u in units])
     timescale, weight, reference, per_log = np.array(
         [
             (
@@ -121,16 +126,32 @@ def crowding_hazard_array(
             for h in (species[sid] for sid in species_ids)
         ]
     )[kind].T
-    people = np.array([u.population for u in units], dtype=np.float64)
-    village = people / np.array([max(u.groups, 1) for u in units])
-    s = sedentism(np.array([u.residence_years for u in units]), timescale)
+    village = people / np.maximum(groups, 1)
+    s = sedentism(residence_years, timescale)  # type: ignore[arg-type]
     settled = people * s
-    cells = np.array([u.cell for u in units])
     _, pool = np.unique(cells * len(species_ids) + kind, return_inverse=True)  # (cell, species)
     others = np.bincount(pool, weights=settled)[pool] - settled + (people - village) * s
     pressure = settlement_crowding_pressure(village * s + weight * others, reference)
     hazard: FloatArray = np.asarray(crowding_mortality_hazard(pressure, s, per_log), dtype=float)
     return hazard
+
+
+def crowding_hazard_array(
+    units: Sequence[PopulationUnit],
+    species: Mapping[str, Health],
+    cell_area_km2: float,
+) -> FloatArray:
+    """:func:`crowding_hazard_columns` for unit objects (in ``units`` order)."""
+    species_ids = sorted(species)
+    return crowding_hazard_columns(
+        np.array([u.population for u in units], dtype=np.float64),
+        np.array([u.groups for u in units], dtype=np.int64),
+        np.array([u.residence_years for u in units], dtype=np.int64),
+        np.array([u.cell for u in units], dtype=np.int64),
+        np.array([species_ids.index(u.species_id) for u in units], dtype=np.int64),
+        species,
+        cell_area_km2,
+    )
 
 
 def crowding_hazards(

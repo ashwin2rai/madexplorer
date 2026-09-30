@@ -11,18 +11,22 @@ depletion have driven foraging returns down.
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from madexplorer.config.schema import AgricultureConfig
 from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
-from madexplorer.core.types import BoolArray, FloatArray
+from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.ecology.resources import miami_npp
-from madexplorer.population.energetics import annual_need_batch
+from madexplorer.population.energetics import annual_need_columns, capability_column
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
+
+if TYPE_CHECKING:
+    from madexplorer.core.columns import UnitColumns
 
 HECTARES_PER_KM2 = 100.0
 
@@ -300,36 +304,49 @@ def unit_crop_yield(unit: PopulationUnit, potential: FloatArray, ctx: StepContex
     )
 
 
-def labor_hours_batch(units: Sequence[PopulationUnit], ctx: StepContext) -> FloatArray:
-    """:func:`unit_labor_hours` for many units (same operation order, bit-identical)."""
+def labor_hours_columns(cols: "UnitColumns", ctx: StepContext) -> FloatArray:
+    """:func:`unit_labor_hours` for the rows of ``cols`` (same operations, bit-identical)."""
     compiled = ctx.compiled
     assert compiled is not None
-    species = compiled.species_of([u.species_id for u in units])
-    adults = np.array(
-        [u.weighted_count(ctx.tables[u.species_id].labor) for u in units], dtype=np.float64
-    )
+    adults = cols.weighted({k: ctx.tables[sid].labor for k, sid in enumerate(compiled.species_ids)})
     hours: FloatArray = (
-        adults * compiled.parameter("foraging.foraging_hours_per_day")[species] * 365.0
+        adults * compiled.parameter("foraging.foraging_hours_per_day")[cols.species()] * 365.0
     )
     return hours
+
+
+def crop_yield_columns(cols: "UnitColumns", potential: FloatArray, ctx: StepContext) -> FloatArray:
+    """:func:`unit_crop_yield` for the rows of ``cols`` (bit-identical)."""
+    capability = capability_column(cols, ctx, "crop_yield")
+    knowledge = ctx.knowledge
+    if knowledge is not None and "agriculture" in knowledge.index:
+        domain = knowledge.index["agriculture"]
+        level = cols.knowledge()[:, domain].astype(np.float64)
+        efficiency = level / (level + float(knowledge.half_efficiency[domain]))
+    else:
+        efficiency = np.ones(len(cols))
+    realized: FloatArray = potential[cols.get("cell")] * np.maximum(capability, 0.0) * efficiency
+    return realized
+
+
+def _object_columns(units: Sequence[PopulationUnit], ctx: StepContext) -> "UnitColumns":
+    from madexplorer.core.columns import ObjectColumns
+
+    compiled = ctx.compiled
+    assert compiled is not None
+    return ObjectColumns(units, compiled.species_index, compiled.technologies)
+
+
+def labor_hours_batch(units: Sequence[PopulationUnit], ctx: StepContext) -> FloatArray:
+    """:func:`labor_hours_columns` for unit objects (reference and tests)."""
+    return labor_hours_columns(_object_columns(units, ctx), ctx)
 
 
 def crop_yield_batch(
     units: Sequence[PopulationUnit], potential: FloatArray, ctx: StepContext
 ) -> FloatArray:
-    """:func:`unit_crop_yield` for many units (bit-identical)."""
-    n_units = len(units)
-    capability = np.array([ctx.capabilities(u)["crop_yield"] for u in units], dtype=np.float64)
-    knowledge = ctx.knowledge
-    if knowledge is not None and "agriculture" in knowledge.index:
-        domain = knowledge.index["agriculture"]
-        level = np.array([float(u.knowledge[domain]) for u in units], dtype=np.float64)
-        efficiency = level / (level + float(knowledge.half_efficiency[domain]))
-    else:
-        efficiency = np.ones(n_units)
-    cells = np.array([u.cell for u in units], dtype=np.int64)
-    realized: FloatArray = potential[cells] * np.maximum(capability, 0.0) * efficiency
-    return realized
+    """:func:`crop_yield_columns` for unit objects (reference and tests)."""
+    return crop_yield_columns(_object_columns(units, ctx), potential, ctx)
 
 
 @dataclass(frozen=True)
@@ -353,28 +370,25 @@ class FarmHarvest:
 
 @dataclass(frozen=True, eq=False)
 class FarmHarvests:
-    """This year's crop harvest of many units, committed in unit order."""
+    """This year's crop harvest of many units, committed as columns."""
 
-    units: tuple[PopulationUnit, ...]
+    cols: "UnitColumns"
     harvest_kcal: FloatArray
     hours: FloatArray
     yield_kcal_per_ha: FloatArray
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Record the harvests (as :class:`FarmHarvest` does, unit by unit)."""
+        """Record the harvests (as :class:`FarmHarvest` does, row by row)."""
+        cols = self.cols
+        cols.set("farm_harvest_kcal", self.harvest_kcal)
+        cols.set("farm_hours", self.hours)
+        cols.set("crop_yield_kcal_per_ha", self.yield_kcal_per_ha)
+        cols.set("clearing_hours", 0.0)
         ledger = ctx.ledger
-        for unit, harvest, hours, yield_per_ha in zip(
-            self.units,
-            self.harvest_kcal.tolist(),
-            self.hours.tolist(),
-            self.yield_kcal_per_ha.tolist(),
-            strict=True,
-        ):
-            unit.farm_harvest_kcal = harvest
-            unit.farm_hours = hours
-            unit.crop_yield_kcal_per_ha = yield_per_ha
-            unit.clearing_hours = 0.0
-            ledger.farm_harvest_kcal += harvest
+        total = ledger.farm_harvest_kcal
+        for harvest in self.harvest_kcal.tolist():
+            total += harvest
+        ledger.farm_harvest_kcal = total
 
 
 class FarmingSubsystem:
@@ -384,20 +398,19 @@ class FarmingSubsystem:
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[FarmHarvests]:
         """Compute crop harvests for every unit (one batched proposal)."""
-        units = tuple(state.units.values())
-        if not units:
+        cols = ctx.columns(state)
+        if len(cols) == 0:
             return []
         config = ctx.scenario.config.agriculture
         compiled = ctx.compiled
         assert compiled is not None
-        n_units = len(units)
-        yield_per_ha = crop_yield_batch(units, ctx.crop_potential(state), ctx)
-        fields = np.array([u.fields_ha for u in units], dtype=np.float64)
+        n_units = len(cols)
+        yield_per_ha = crop_yield_columns(cols, ctx.crop_potential(state), ctx)
+        fields = cols.get("fields_ha")
         farming = fields > 0
-        debt = np.array([u.labor_debt_hours for u in units], dtype=np.float64)
-        species = compiled.species_of([u.species_id for u in units])
-        share = compiled.parameter("subsistence.max_farm_labor_share")[species]
-        available = np.maximum(labor_hours_batch(units, ctx) - debt, 0.0) * share
+        debt = cols.get("labor_debt_hours")
+        share = compiled.parameter("subsistence.max_farm_labor_share")[cols.species()]
+        available = np.maximum(labor_hours_columns(cols, ctx) - debt, 0.0) * share
         required = fields * config.cultivation_hours_per_ha
         worked = np.where(
             required > 0,
@@ -408,7 +421,7 @@ class FarmingSubsystem:
         )
         harvest = np.where(farming, fields * yield_per_ha * worked, 0.0)
         hours = np.where(farming, required * worked, 0.0)
-        return [FarmHarvests(units, harvest, hours, yield_per_ha)]
+        return [FarmHarvests(cols, harvest, hours, yield_per_ha)]
 
 
 @dataclass(frozen=True)
@@ -452,53 +465,121 @@ class FieldPlan:
         unit.clearing_hours = self.clearing_hours
 
 
+@dataclass(frozen=True, eq=False)
+class FieldPlans:
+    """Next year's field areas of many units, applied in (cell, unit) order.
+
+    Equivalent to one :class:`FieldPlan` per row in that order (events included).
+    """
+
+    cols: "UnitColumns"
+    rows: IntArray  # row positions in cols, in application order
+    fields_ha: FloatArray
+    clearing_hours: FloatArray
+    farm_return: FloatArray
+    forage_marginal: FloatArray
+    gap: FloatArray
+
+    def apply(self, state: SimulationState, ctx: StepContext) -> None:
+        """Commit the plans and record starts and abandonments of cultivation."""
+        cols, rows = self.cols, self.rows
+        if rows.size == 0:
+            return
+        before = cols.get("fields_ha")[rows].tolist()
+        ever = cols.get("ever_cultivated")[rows].tolist()
+        cells = cols.get("cell")[rows].tolist()
+        population = cols.population()[rows].tolist()
+        new = self.fields_ha.tolist()
+        started = []
+        for k, r in enumerate(rows.tolist()):
+            if not ever[k] and new[k] > 0:
+                started.append(r)
+                ctx.events.emit(
+                    state.year,
+                    "cultivation_started",
+                    unit_id=cols.units[r].id,
+                    cell=list(state.world.coords(cells[k])),
+                    fields_ha=round(new[k], 2),
+                    farm_return_kcal_per_hour=round(float(self.farm_return[k]), 1),
+                    forage_marginal_kcal_per_hour=round(float(self.forage_marginal[k]), 1),
+                    population=population[k],
+                )
+            elif before[k] > 0 and new[k] == 0 and self.gap[k] < 0:
+                ctx.events.emit(
+                    state.year,
+                    "cultivation_abandoned",
+                    unit_id=cols.units[r].id,
+                    cell=list(state.world.coords(cells[k])),
+                    farm_return_kcal_per_hour=round(float(self.farm_return[k]), 1),
+                    forage_marginal_kcal_per_hour=round(float(self.forage_marginal[k]), 1),
+                )
+        if started:
+            cols.set_rows("ever_cultivated", np.array(started, dtype=np.int64), True)
+        cols.set_rows("fields_ha", rows, self.fields_ha)
+        cols.set_rows(
+            "labor_debt_hours", rows, cols.get("labor_debt_hours")[rows] + self.clearing_hours
+        )
+        cols.set_rows("clearing_hours", rows, self.clearing_hours)
+
+
 class FieldPlanningSubsystem:
     """Decides next year's field area for every unit."""
 
     name = "field_planning"
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[FieldPlan]:
+    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[FieldPlans]:
         """Compare farming and foraging returns; share limited arable land within cells."""
         config = ctx.scenario.config.agriculture
         potential = ctx.crop_potential(state)
         arable = ctx.arable_ha
         mechanisms = ctx.mechanisms
-        desired: dict[str, tuple[float, float, float, float, str]] = {}
-        units = tuple(state.units.values())
-        if not units:
+        cols = ctx.columns(state)
+        n_units = len(cols)
+        if n_units == 0:
             return []
-        yields = crop_yield_batch(units, potential, ctx).tolist()
-        labor = labor_hours_batch(units, ctx).tolist()
-        needs = annual_need_batch(units, state, ctx).tolist()
-        for unit, yield_per_ha, labor_hours, need in zip(units, yields, labor, needs, strict=True):
+        compiled = ctx.compiled
+        assert compiled is not None
+        yields = crop_yield_columns(cols, potential, ctx).tolist()
+        labor = labor_hours_columns(cols, ctx).tolist()
+        needs = annual_need_columns(cols, state, ctx).tolist()
+        population = cols.population().tolist()
+        fields_now = cols.get("fields_ha").tolist()
+        marginal = cols.get("forage_marginal_kcal_per_hour").tolist()
+        residence = cols.get("residence_years").tolist()
+        hazard = cols.get("move_hazard").tolist()
+        cells = cols.get("cell").tolist()
+        species = cols.species().tolist()
+        clearing_efficiency = capability_column(cols, ctx, "clearing_efficiency").tolist()
+        vegetation = state.world.vegetation_density
+        profiles = [ctx.species(sid) for sid in compiled.species_ids]
+        desired: list[tuple[float, float, float, float, str]] = []
+        for i in range(n_units):
+            yield_per_ha = yields[i]
             farm_return = yield_per_ha / config.cultivation_hours_per_ha
-            if yield_per_ha <= 0 or unit.population == 0:
-                desired[unit.id] = (0.0, farm_return, unit.forage_marginal_kcal_per_hour, -1.0, "")
+            if yield_per_ha <= 0 or population[i] == 0:
+                desired.append((0.0, farm_return, marginal[i], -1.0, ""))
                 continue
-            behavior = ctx.species(unit.species_id).subsistence
+            profile = profiles[species[i]]
+            behavior = profile.subsistence
             clearing = clearing_hours_per_ha(
-                float(state.world.vegetation_density[unit.cell]),
-                config,
-                ctx.capabilities(unit)["clearing_efficiency"],
+                float(vegetation[cells[i]]), config, clearing_efficiency[i]
             )
-            horizon = ctx.species(unit.species_id).cognition.planning_horizon_years
+            horizon = profile.cognition.planning_horizon_years
             if mechanisms.expected_tenure:
-                tenure = expected_tenure_years(unit.move_hazard, horizon, unit.residence_years)
+                tenure = expected_tenure_years(hazard[i], horizon, residence[i])
             else:
-                tenure = min(max(unit.residence_years, 1), horizon)
-            farm_labor = behavior.max_farm_labor_share * labor_hours
+                tenure = min(max(residence[i], 1), horizon)
+            farm_labor = behavior.max_farm_labor_share * labor[i]
             labor_cap = farm_labor / config.cultivation_hours_per_ha
-            profile = ctx.species(unit.species_id)
-            need_cap = need * (1.0 + profile.foraging.surplus_target) / yield_per_ha
-            limit = ""
+            need_cap = needs[i] * (1.0 + profile.foraging.surplus_target) / yield_per_ha
             if mechanisms.field_growth_to_target:
-                fields, gap, limit = fields_toward_target(
-                    unit.fields_ha,
+                fields, gap, _limit = fields_toward_target(
+                    fields_now[i],
                     yield_per_ha,
                     config.cultivation_hours_per_ha,
                     clearing,
                     tenure,
-                    unit.forage_marginal_kcal_per_hour,
+                    marginal[i],
                     behavior.field_adjustment_rate,
                     behavior.return_comparison_margin,
                     need_cap,
@@ -507,46 +588,56 @@ class FieldPlanningSubsystem:
                 )
             else:
                 fields, gap = adjusted_fields_ha(
-                    unit.fields_ha,
+                    fields_now[i],
                     yield_per_ha,
                     config.cultivation_hours_per_ha,
                     clearing,
                     tenure,
-                    unit.forage_marginal_kcal_per_hour,
+                    marginal[i],
                     behavior.field_adjustment_rate,
                     behavior.initial_plot_ha,
                     behavior.return_comparison_margin,
                 )
-            desired[unit.id] = (
-                min(fields, labor_cap, need_cap),
-                farm_return,
-                unit.forage_marginal_kcal_per_hour,
-                gap,
-                limit,
-            )
-        proposals: list[FieldPlan] = []
-        for cell, members in ctx.spatial(state).by_cell.items():
-            total = sum(desired[u.id][0] for u in members)
+            desired.append((min(fields, labor_cap, need_cap), farm_return, marginal[i], gap, ""))
+        index = ctx.spatial(state)
+        order, starts = index.order.tolist(), index.starts.tolist()
+        plan_rows: list[int] = []
+        plan_fields: list[float] = []
+        plan_clearing: list[float] = []
+        plan_return: list[float] = []
+        plan_marginal: list[float] = []
+        plan_gap: list[float] = []
+        for k, cell in enumerate(index.cells.tolist()):
+            members = order[starts[k] : starts[k + 1]]
+            total = sum([desired[r][0] for r in members])
             scale = min(1.0, float(arable[cell]) / total) if total > 0 else 1.0
-            for unit in members:
-                fields, farm_return, forage_marginal, gap, limit = desired[unit.id]
-                if scale < 1.0 and fields > unit.fields_ha:
-                    limit = "arable"
+            for r in members:
+                fields, farm_return, forage_marginal, gap, _ = desired[r]
                 fields *= scale
                 if fields < 0.05:
                     fields = 0.0
-                expansion = max(fields - unit.fields_ha, 0.0)
+                expansion = max(fields - fields_now[r], 0.0)
                 clearing = 0.0
                 if expansion > 0:
-                    efficiency = ctx.capabilities(unit)["clearing_efficiency"]
                     per_ha = clearing_hours_per_ha(
-                        float(state.world.vegetation_density[cell]), config, efficiency
+                        float(vegetation[cell]), config, clearing_efficiency[r]
                     )
                     clearing = expansion * per_ha
-                if fields != unit.fields_ha:
-                    proposals.append(
-                        FieldPlan(
-                            unit.id, fields, clearing, farm_return, forage_marginal, gap, limit
-                        )
-                    )
-        return proposals
+                if fields != fields_now[r]:
+                    plan_rows.append(r)
+                    plan_fields.append(fields)
+                    plan_clearing.append(clearing)
+                    plan_return.append(farm_return)
+                    plan_marginal.append(forage_marginal)
+                    plan_gap.append(gap)
+        return [
+            FieldPlans(
+                cols,
+                np.array(plan_rows, dtype=np.int64),
+                np.array(plan_fields, dtype=np.float64),
+                np.array(plan_clearing, dtype=np.float64),
+                np.array(plan_return, dtype=np.float64),
+                np.array(plan_marginal, dtype=np.float64),
+                np.array(plan_gap, dtype=np.float64),
+            )
+        ]

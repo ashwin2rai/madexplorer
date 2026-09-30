@@ -183,8 +183,9 @@ class InnovationSubsystem:
         table = compiled.technologies
         # Candidates (technology not held, required technologies held, knowledge at each
         # minimum): the prerequisites_met test for every unit and technology at once.
-        masks = table.masks([u.technologies for u in units])
-        knowledge_matrix = np.stack([u.knowledge for u in units])
+        cols = ctx.columns(state)
+        masks = cols.technology_masks()
+        knowledge_matrix = cols.knowledge()
         known = (
             (knowledge_matrix[:, None, :] >= table.min_knowledge[None, :, :])
             | ~table.has_minimum[None, :, :]

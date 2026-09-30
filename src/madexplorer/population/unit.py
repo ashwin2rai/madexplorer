@@ -10,7 +10,7 @@ super-agents with wealth and health distributions arrive in MVP 3.
 import math
 from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import numpy.typing as npt
@@ -21,6 +21,7 @@ from madexplorer.population.familiarity import FamiliarityMap
 if TYPE_CHECKING:
     from madexplorer.core.state import SimulationState, StepContext
     from madexplorer.population.beliefs import DenseBeliefStore
+    from madexplorer.population.table import UnitTable
 
 HARVEST_MEMORY_YEARS = 10
 
@@ -211,24 +212,40 @@ class BeliefMap:
 
 
 class _Cohort:
-    """Descriptor for a cohort vector: assignment clears the unit's derived head counts.
+    """Descriptor for a cohort vector.
 
-    Cohort arrays are always replaced, never mutated in place, so resetting caches on
-    assignment keeps ``population`` and ``weighted_count`` exact while every other
-    attribute stays a plain, fast instance attribute.
+    Registered unit: reads a copy of its row of the unit table's cohort matrix; assignment
+    writes the row (and the exact population count). Detached unit: a plain value whose
+    replacement clears the cached head counts. Cohort arrays are always replaced, never
+    mutated in place, in either case.
     """
 
     def __set_name__(self, owner: type, name: str) -> None:
+        self.name = name
         self.slot = "_" + name
 
     def __get__(self, instance: object, owner: type | None = None) -> IntArray:
         if instance is None:
             raise AttributeError(self.slot)  # no class-level default for the dataclass
-        value: IntArray = instance.__dict__[self.slot]
+        state = instance.__dict__
+        table = state.get("_table")
+        if table is not None:
+            slot = state["_slot"]
+            n = int(table.n_ages[slot])
+            row: IntArray = getattr(table, self.name)[slot, :n].copy()
+            return row
+        value: IntArray = state[self.slot]
         return value
 
     def __set__(self, instance: object, value: IntArray) -> None:
         state = instance.__dict__
+        table = state.get("_table")
+        if table is not None:
+            if self.name == "females":
+                table.set_females(state["_slot"], value)
+            else:
+                table.set_males(state["_slot"], value)
+            return
         state[self.slot] = value
         state["_population"] = None
         state["_weighted"] = None
@@ -289,23 +306,30 @@ class PopulationUnit:
 
     @property
     def population(self) -> int:
-        """Number of individuals (cached until the cohort arrays are replaced)."""
-        cached: int | None = self.__dict__["_population"]
+        """Number of individuals (the table's exact count while registered, else cached)."""
+        state = self.__dict__
+        table = state.get("_table")
+        if table is not None:
+            return int(table.population[state["_slot"]])
+        cached: int | None = state["_population"]
         if cached is None:
             cached = int(self.females.sum() + self.males.sum())
-            self.__dict__["_population"] = cached
+            state["_population"] = cached
         return cached
 
     def weighted_count(self, weights: FloatArray) -> float:
-        """``sum((females + males) * weights)`` over ages, cached per weight array.
+        """``sum((females + males) * weights)`` over ages.
 
-        Used for age schedules that are fixed for a run (need fractions, labor capacity);
-        the cache is cleared whenever a cohort array is replaced.
+        Cached per weight array for a detached unit (cleared when a cohort is replaced);
+        computed from the row for a registered unit (hot paths use the cohort matrices).
         """
-        cache: dict[int, tuple[FloatArray, float]] | None = self.__dict__["_weighted"]
+        state = self.__dict__
+        if state.get("_table") is not None:
+            return float(((self.females + self.males) * weights).sum())
+        cache: dict[int, tuple[FloatArray, float]] | None = state["_weighted"]
         if cache is None:
             cache = {}
-            self.__dict__["_weighted"] = cache
+            state["_weighted"] = cache
         hit = cache.get(id(weights))
         if hit is not None and hit[0] is weights:
             return hit[1]
@@ -347,10 +371,10 @@ for _name in ("females", "males"):
 
 
 class _Beliefs:
-    """Descriptor for ``unit.beliefs``: the unit's row of a belief store while it is in a
-    registry (a compatibility view; assignment copies into the row), else a private map.
+    """Descriptor for ``unit.beliefs``: the unit's row of the belief store while it is
+    registered (a compatibility view; assignment copies into the row), else a private map.
 
-    Hot subsystems read and write the store directly through ``unit.belief_slot``.
+    Hot subsystems read and write the store directly through ``belief_slot(unit)``.
     """
 
     def __get__(self, instance: object, owner: type | None = None) -> BeliefMap:
@@ -359,7 +383,7 @@ class _Beliefs:
         state = instance.__dict__
         store = state.get("_belief_store")
         if store is not None:
-            view: BeliefMap = store.view(state["_belief_slot"])
+            view: BeliefMap = store.view(state["_slot"])
             return view
         detached: BeliefMap = state["_beliefs"]
         return detached
@@ -368,40 +392,161 @@ class _Beliefs:
         state = instance.__dict__
         store = state.get("_belief_store")
         if store is not None:
-            store.assign(state["_belief_slot"], value)
+            store.assign(state["_slot"], value)
         else:
             state["_beliefs"] = value
 
 
-PopulationUnit.beliefs = _Beliefs()  # type: ignore[assignment]
+class _TableField:
+    """Descriptor for a scalar unit-table field: the unit's row while registered, else a
+    plain attribute value. Values read from the table are Python scalars."""
+
+    def __init__(self, name: str, cast: type) -> None:
+        self.name = name
+        self.cast = cast
+
+    def __get__(self, instance: object, owner: type | None = None) -> Any:
+        if instance is None:
+            raise AttributeError(self.name)
+        state = instance.__dict__
+        table = state.get("_table")
+        if table is None:
+            return state[self.name]
+        return self.cast(table.columns[self.name][state["_slot"]])
+
+    def __set__(self, instance: object, value: Any) -> None:
+        state = instance.__dict__
+        table = state.get("_table")
+        if table is None:
+            state[self.name] = value
+        else:
+            table.columns[self.name][state["_slot"]] = value
+
+
+class _Knowledge:
+    """Descriptor for the knowledge vector (a row copy while registered)."""
+
+    def __get__(self, instance: object, owner: type | None = None) -> FloatArray:
+        if instance is None:
+            raise AttributeError("knowledge")
+        state = instance.__dict__
+        table = state.get("_table")
+        if table is None:
+            value: FloatArray = state["knowledge"]
+            return value
+        return table.knowledge_row(state["_slot"])  # type: ignore[no-any-return]
+
+    def __set__(self, instance: object, value: FloatArray) -> None:
+        state = instance.__dict__
+        table = state.get("_table")
+        if table is None:
+            state["knowledge"] = value
+        else:
+            table.knowledge[state["_slot"], : value.size] = value
+
+
+class _Technologies:
+    """Descriptor for the technology set (names; the table also keeps a bitmask)."""
+
+    def __get__(self, instance: object, owner: type | None = None) -> frozenset[str]:
+        if instance is None:
+            raise AttributeError("technologies")
+        state = instance.__dict__
+        table = state.get("_table")
+        if table is None:
+            value: frozenset[str] = state["technologies"]
+            return value
+        return table.technologies[state["_slot"]]  # type: ignore[no-any-return]
+
+    def __set__(self, instance: object, value: frozenset[str]) -> None:
+        state = instance.__dict__
+        table = state.get("_table")
+        if table is None:
+            state["technologies"] = value
+        else:
+            table.set_technologies(state["_slot"], value)
+
+
+def _install_table_descriptors() -> None:
+    from madexplorer.population.table import BOOL_FIELDS, FLOAT_FIELDS, INT_FIELDS
+
+    for name in FLOAT_FIELDS:
+        setattr(PopulationUnit, name, _TableField(name, float))
+    for name in INT_FIELDS:
+        setattr(PopulationUnit, name, _TableField(name, int))
+    for name in BOOL_FIELDS:
+        setattr(PopulationUnit, name, _TableField(name, bool))
+    PopulationUnit.knowledge = _Knowledge()  # type: ignore[assignment]
+    PopulationUnit.technologies = _Technologies()  # type: ignore[assignment]
+    PopulationUnit.beliefs = _Beliefs()  # type: ignore[assignment]
+
+
+_install_table_descriptors()
 
 
 def belief_slot(unit: PopulationUnit) -> int:
-    """The unit's belief-store row (``-1`` when detached)."""
-    slot: int = unit.__dict__.get("_belief_slot", -1)
+    """The unit's storage slot (``-1`` when detached)."""
+    slot: int = unit.__dict__.get("_slot", -1)
     return slot
 
 
-def attach_beliefs(unit: PopulationUnit, store: "DenseBeliefStore") -> None:
-    """Move a unit's beliefs into a row of ``store`` (on entering a registry)."""
+def is_registered(unit: PopulationUnit) -> bool:
+    """Whether the unit's state lives in a store (it is in a unit registry)."""
+    return unit.__dict__.get("_belief_store") is not None
+
+
+def attach_unit(
+    unit: PopulationUnit,
+    slot: int,
+    store: "DenseBeliefStore",
+    table: "UnitTable | None",
+    species_code: int,
+) -> None:
+    """Move a detached unit's beliefs (and, with a table, its table fields) into ``slot``.
+
+    Afterwards the object holds no copy of that state: its descriptors read the stores.
+    """
+    from madexplorer.population.table import TABLE_FIELDS
+
     state = unit.__dict__
-    current = state.get("_belief_store")
-    if current is store:
-        return
-    if current is not None:
-        detach_beliefs(unit)
-    slot = store.allocate()
+    if table is not None:
+        values = {name: getattr(unit, name) for name in TABLE_FIELDS}
+        table.load(slot, values, species_code)
+        for name in TABLE_FIELDS:
+            state.pop(name, None)
+        for name in ("_females", "_males", "_population", "_weighted"):
+            state.pop(name, None)
+        state["_table"] = table
+    store.claim(slot)
     store.assign(slot, state.pop("_beliefs", BeliefMap.empty(0)))
-    state["_belief_store"], state["_belief_slot"] = store, slot
+    state["_belief_store"], state["_slot"] = store, slot
 
 
-def detach_beliefs(unit: PopulationUnit) -> None:
-    """Copy a unit's beliefs out of its store row and free the row (on leaving a registry)."""
+def detach_unit(unit: PopulationUnit) -> int:
+    """Copy a registered unit's state back onto the object and free its rows.
+
+    Returns the freed slot (``-1`` if the unit was not registered).
+    """
     state = unit.__dict__
     store = state.get("_belief_store")
     if store is None:
-        return
-    slot = state["_belief_slot"]
+        return -1
+    slot: int = state["_slot"]
+    table = state.get("_table")
+    if table is not None:
+        values = table.unload(slot)
+        table.reset(slot)
+        state["_table"] = None
+        females, males = values.pop("females"), values.pop("males")
+        state.update(values)
+        state["_females"], state["_males"] = females, males
+        state["_population"], state["_weighted"] = None, None
     state["_beliefs"] = store.detached(slot)
     store.release(slot)
-    state["_belief_store"], state["_belief_slot"] = None, -1
+    state["_belief_store"], state["_slot"] = None, -1
+    return slot
+
+
+def detach_beliefs(unit: PopulationUnit) -> int:
+    """Alias of :func:`detach_unit` (the PH3a name)."""
+    return detach_unit(unit)

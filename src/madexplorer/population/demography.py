@@ -7,6 +7,7 @@ experience strong demographic stochasticity and large ones become predictable
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -14,9 +15,11 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray, IntArray
-from madexplorer.population.health import crowding_hazard_array
-from madexplorer.population.unit import PopulationUnit
+from madexplorer.population.health import crowding_hazard_columns
 from madexplorer.species.life_history import LifeTables
+
+if TYPE_CHECKING:
+    from madexplorer.core.columns import UnitColumns
 
 
 @model_rule(
@@ -134,9 +137,9 @@ class DemographicUpdate:
 
 @dataclass(frozen=True, eq=False)
 class DemographicUpdates:
-    """New cohorts of one species' units (rows in unit order), committed in that order."""
+    """New cohorts of one species' units (rows in unit order), committed as columns."""
 
-    units: tuple[PopulationUnit, ...]
+    cols: "UnitColumns"
     females: IntArray  # (units, ages)
     males: IntArray
     births: IntArray
@@ -144,21 +147,15 @@ class DemographicUpdates:
     crowding_deaths_expected: FloatArray
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Replace every unit's cohorts (own row copies) and record flows in unit order."""
+        """Replace every row's cohorts and record flows (crowding total in row order)."""
+        self.cols.set_cohorts(self.females, self.males)
         ledger = ctx.ledger
-        for i, (unit, births, deaths, crowding) in enumerate(
-            zip(
-                self.units,
-                self.births.tolist(),
-                self.deaths.tolist(),
-                self.crowding_deaths_expected.tolist(),
-                strict=True,
-            )
-        ):
-            unit.females, unit.males = self.females[i].copy(), self.males[i].copy()
-            ledger.births += births
-            ledger.deaths += deaths
-            ledger.crowding_deaths_expected += crowding
+        ledger.births += int(self.births.sum())
+        ledger.deaths += int(self.deaths.sum())
+        total = ledger.crowding_deaths_expected
+        for crowding in self.crowding_deaths_expected.tolist():
+            total += crowding
+        ledger.crowding_deaths_expected = total
 
 
 def mate_available(
@@ -186,39 +183,46 @@ class DemographySubsystem:
         """Draw one year of demographic events (one batched proposal per species)."""
         rng = ctx.rng.stream(Streams.DEMOGRAPHY)
         updates: list[DemographicUpdates] = []
-        everyone = tuple(state.units.values())
+        everyone = ctx.columns(state)
+        if len(everyone) == 0:
+            return []
+        compiled = ctx.compiled
+        assert compiled is not None
+        codes = everyone.species()
         crowding_all = (
-            crowding_hazard_array(
-                everyone,
+            crowding_hazard_columns(
+                everyone.population().astype(np.float64),
+                everyone.get("groups"),
+                everyone.get("residence_years"),
+                everyone.get("cell"),
+                codes,
                 {sid: p.health for sid, p in ctx.scenario.species.items()},
                 state.world.cell_area_km2,
             )
             if ctx.mechanisms.crowding_mortality
             else np.zeros(len(everyone))
         )
-        for species_id in sorted(ctx.scenario.species):
-            rows = [i for i, u in enumerate(everyone) if u.species_id == species_id]
-            if not rows:
+        for code, species_id in enumerate(compiled.species_ids):
+            rows = np.flatnonzero(codes == code)
+            if rows.size == 0:
                 continue
-            units = tuple(everyone[i] for i in rows)
-            len(units)
+            cols = everyone.subset(rows) if rows.size < len(everyone) else everyone
             profile, tables = ctx.species(species_id), ctx.tables[species_id]
             metabolism, lh = profile.metabolism, profile.life_history
-            deficit = np.array([u.energy_deficit for u in units], dtype=np.float64)
+            deficit = cols.get("energy_deficit")
             sensitivity = metabolism.starvation_mortality_sensitivity
             if not ctx.mechanisms.starvation_mortality:
                 sensitivity = 0.0
-            food = np.array([u.food_ratio for u in units], dtype=np.float64)
-            females = np.stack([u.females for u in units])
-            males = np.stack([u.males for u in units])
-            cells = np.array([u.cell for u in units], dtype=np.int64)
+            food = cols.get("food_ratio")
+            females, males = cols.cohorts(tables.need_fraction.size)
+            cells = cols.get("cell")
             fert = fertility_multiplier(
                 food, metabolism.fertility_food_midpoint, metabolism.fertility_food_scale
             )
             fert = fert * mate_available(
                 males, cells, state.world.n_cells, tables, lh.sexual_reproduction
             )
-            crowding = crowding_all[np.array(rows, dtype=np.int64)]
+            crowding = crowding_all[rows]
             hazard, crowd = mortality_hazards(tables, deficit, sensitivity, crowding)
             probability = 1.0 - np.exp(-hazard)
             # Expected deaths from crowding: cause share of each cohort's death probability.
@@ -235,7 +239,7 @@ class DemographySubsystem:
             )
             updates.append(
                 DemographicUpdates(
-                    units,
+                    cols,
                     outcome.females,
                     outcome.males,
                     outcome.births,

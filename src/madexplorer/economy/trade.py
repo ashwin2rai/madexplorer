@@ -12,11 +12,9 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-import numpy as np
-
 from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
-from madexplorer.population.energetics import annual_need_batch
+from madexplorer.population.energetics import annual_need_columns
 from madexplorer.population.unit import PopulationUnit
 
 
@@ -93,33 +91,33 @@ class TradeSubsystem:
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[TradeRound]:
         """Plan the year's transfers against the post-harvest state."""
         config = ctx.scenario.config.trade
-        index = ctx.spatial(state)
-        units = index.units
+        cols = ctx.columns(state)
+        units = cols.units
         if not units:
             return [TradeRound((), config.tie_persistence)]
         compiled = ctx.compiled
         assert compiled is not None
-        len(units)
-        need = annual_need_batch(units, state, ctx)
-        harvest = np.array([u.harvest_kcal for u in units], dtype=np.float64)
-        stores = np.array([u.stores_kcal for u in units], dtype=np.float64)
-        balance = (harvest + stores - need).tolist()
-        propensity = compiled.parameter("social.food_sharing_propensity")[
-            compiled.species_of([u.species_id for u in units])
-        ].tolist()
+        need = annual_need_columns(cols, state, ctx)
+        balance = (cols.get("harvest_kcal") + cols.get("stores_kcal") - need).tolist()
+        propensity = compiled.parameter("social.food_sharing_propensity")[cols.species()].tolist()
+        cells = cols.get("cell").tolist()
         offers: dict[str, float] = {}
         offering: dict[int, list[PopulationUnit]] = {}  # cell -> offering units, unit order
         deficits: list[tuple[float, str, float, float]] = []
-        for unit, b, n, share in zip(units, balance, need.tolist(), propensity, strict=True):
+        cell_of: dict[str, int] = {}
+        for unit, b, n, share, cell in zip(
+            units, balance, need.tolist(), propensity, cells, strict=True
+        ):
             if b > 0:
                 offers[unit.id] = share * b
-                offering.setdefault(unit.cell, []).append(unit)
+                offering.setdefault(cell, []).append(unit)
             elif b < 0 and n > 0:
                 deficits.append((b / n, unit.id, -b, n))
+                cell_of[unit.id] = cell
         transfers: list[Transfer] = []
         for _, recipient_id, deficit, need_kcal in sorted(deficits):
             recipient = state.units[recipient_id]
-            reachable = ctx.movement[recipient.species_id].reachable(recipient.cell)
+            reachable = ctx.movement[recipient.species_id].reachable(cell_of[recipient_id])
             donors = sorted(
                 (cost, donor.id)
                 for cell, cost in reachable.items()

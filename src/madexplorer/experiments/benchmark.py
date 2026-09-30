@@ -45,7 +45,11 @@ def _peak_rss_mb() -> float:
 
 
 def synthetic_simulator(
-    scenario: Scenario, n_units: int, group_size: int = 30, farming: bool = False
+    scenario: Scenario,
+    n_units: int,
+    group_size: int = 30,
+    farming: bool = False,
+    unit_table: bool = True,
 ) -> Simulator:
     """A simulator whose initial units are replaced by ``n_units`` groups on random land cells.
 
@@ -63,7 +67,7 @@ def synthetic_simulator(
             {**p.model_dump(), "cell": list(land_cell)} for p in scenario.config.initial_populations
         ]
         scenario = scenario.with_settings({"initial_populations": founders})
-    sim = Simulator(scenario, static=static)
+    sim = Simulator(scenario, static=static, unit_table=unit_table)
     sim.state.units.clear()
     placement = np.random.default_rng([scenario.config.simulation.seed, n_units])
     land = np.flatnonzero(~sim.world.is_water)

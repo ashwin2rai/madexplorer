@@ -13,6 +13,7 @@ from madexplorer.ecology.resources import (
     logistic_regrowth,
 )
 from madexplorer.economy.agriculture import HECTARES_PER_KM2, update_soil_nutrients
+from madexplorer.population.energetics import capability_column
 
 
 @dataclass(frozen=True)
@@ -48,10 +49,14 @@ class EcologySubsystem:
             )
             plant_k, game_k = plant_k * plant_mult, game_k * game_mult
             management = np.zeros_like(fields)
-            for unit in state.units.values():
-                if unit.fields_ha > 0:
-                    level = ctx.capabilities(unit)["soil_management"]
-                    management[unit.cell] += level * unit.fields_ha / fields[unit.cell]
+            cols = ctx.columns(state)
+            unit_fields = cols.get("fields_ha")
+            farming = np.flatnonzero(unit_fields > 0)
+            if farming.size:
+                level = capability_column(cols.subset(farming), ctx, "soil_management")
+                cells = cols.get("cell")[farming]
+                # Unbuffered and in row order: the same sequence of additions as the loop.
+                np.add.at(management, cells, level * unit_fields[farming] / fields[cells])
             soil = update_soil_nutrients(soil, fields > 0, management, agriculture)
         elif (soil < 1.0).any():
             soil = update_soil_nutrients(
