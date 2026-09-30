@@ -3,7 +3,7 @@
 This file is the **forward-looking implementation status** for Mad Explorer after the MVP 2 model freeze.
 It intentionally omits the experiment-by-experiment history that accumulated during MVP 2 stabilization.
 
-For scientific/model requirements, read `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE_V2.md` first.
+For scientific/model requirements, read `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md` (document version 2.0) first.
 For exact freeze provenance, read `baselines/mvp2/freeze_manifest.json`.
 Use this file to answer: **What exists now? What is frozen? What is still limited? What should we do next?**
 
@@ -36,7 +36,7 @@ If the source tree differs from the frozen hash, classify the change explicitly 
 
 When documents disagree, use this order:
 
-1. `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE_V2.md` — canonical scientific and architectural objective.
+1. `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md` (v2.0) — canonical scientific and architectural objective.
 2. `baselines/mvp2/freeze_manifest.json` — exact frozen revision, scenarios, seeds, reference outcomes, and performance baseline.
 3. This file — current implementation priorities, accepted limitations, and handoff notes.
 4. Tests and model-rule documentation — executable mechanism contracts.
@@ -314,6 +314,89 @@ Historically large runtime consumers include:
 Re-profile after every substantial representation change; do not assume the old ranking remains true.
 
 ---
+
+### 9.1 Performance-hardening baseline (PH0, 2026-09-30)
+
+Frozen model code (freeze source tree plus benchmark tooling only). 2-core codespace.
+Synthetic states: 20 warm-up years, then timed ticks. CPU time. Reports are in
+`benchmarks/perf/ph0_scale_*.json`. Commands: `make bench-quick` (engineering loop) and
+`make bench-scale`.
+
+| Case | Mean units | CPU ms/tick | µs/unit/tick | Python calls/unit/tick | Peak RSS | Dense beliefs | Top subsystems (ms/tick) |
+|---|---:|---:|---:|---:|---:|---:|---|
+| 100 units, 40×40 | 112 | 29 | 263 | 514 | 63 MB | 2.5 MB | migration 9, foraging 7, demography 4 |
+| 1k units, 40×40 | 1,055 | 264 | 250 | 509 | 107 MB | 22 MB | migration 60, sharing 59, foraging 53, diffusion 45, demography 39 |
+| 10k units, 40×40 | 9,990 | 5,092 | 510 | 1,064 | 852 MB | 135 MB | diffusion 1,582, sharing 1,487, fusion 805, trade 668, migration 575 |
+| 25k units, 40×40 (3 ticks) | 27,464 | 18,690 | 681 | 1,889 | 3.0 GB | 584 MB | diffusion 14,632, sharing 9,629, trade 7,019, fusion 3,940, migration 2,546 |
+| 1k units, 100×100 | 1,081 | 253 | 234 | 525 | 243 MB | 148 MB | migration 82, foraging 64, demography 32 |
+
+Findings:
+- **Up to ~1k units, cost is linear, at ~250 µs and ~510 Python calls per unit per tick.**
+  The overhead is Python per unit, spread over every subsystem (a flat profile; no single
+  kernel dominates).
+- **Above that, cost grows superlinearly: per-unit cost ×2 at 10k and ×2.7 at 25k.** These
+  synthetic states put 8-17 units in each land cell, so encounter and contact counts grow
+  with local density:
+  - diffusion contacts, sharing encounter pairs and trade donor scans are pairwise by the
+    model's definition. Part of this cost is inherent to the frozen semantics; only the
+    constant factor is implementation.
+  - Fusion is quadratic in the implementation: `rewire_ties` scans every unit on each
+    merge.
+  - Scaling runs at realistic density need larger worlds, which the dense beliefs prevent
+    (next point).
+- **Dense beliefs cost 12 bytes × cells per unit:** 20.8 kB per unit at 1,600 cells and
+  130 kB at 10,000 cells. 10k units on a 100×100 world would need ~1.2 GB of beliefs alone.
+  Beliefs are the first memory limit for larger worlds.
+- Familiarity (1-5 entries per unit), residence records and report pools are small after
+  P4b. Trade edges vary with the state.
+
+### 9.2 Performance-hardening plan (PH1-PH5)
+
+Strategy, from the measurements above (row-view micro-benchmark: a field read through a
+numpy-backed view costs 4-7× a plain attribute, and `np.float64` scalar arithmetic ~4.6×
+Python float):
+1. First convert subsystems to **batched column computations** over a per-phase columnar
+   snapshot. The large win is removing per-unit Python logic, not storage. While
+   `PopulationUnit` objects remain authoritative, gathers cost one pass per field.
+2. Then **flip authority** to a columnar `UnitTable`, with `PopulationUnit` as a view for
+   cold paths (fission/fusion apply, events, tests, serialization). Flipping earlier would
+   slow every unconverted subsystem.
+3. All steps are Level A (exact) unless labelled. Golden fixtures and seeded outputs are the
+   oracle. Differential tests compare reference and batched kernels on random small states,
+   with identical pre-drawn random numbers.
+
+Phases:
+- **PH1: infrastructure and first exact conversions.**
+  - `CompiledScenario`: numeric species parameters; technology bit positions, prerequisite
+    masks, minimum-knowledge and capability-effect matrices.
+  - A shared counting-sort `SpatialIndex` (cells in first-appearance order, preserving
+    `units_by_cell` order), invalidated by migration, fission, fusion and extinction.
+  - A `UnitTable` columnar snapshot, with integer row indices (stable string ids kept for
+    events and id-ordered ties).
+  - Convert energetics and demography gathers, and grouping in foraging, field planning,
+    fusion and trade, to the index and columns.
+- **PH2:** replace per-unit proposal dataclasses in hot paths with array buffers; remove
+  the remaining `units_by_cell` and per-unit dict/list creation; fix fusion's quadratic
+  rewiring (a partner → holders reverse index).
+- **PH3:** batch the hottest subsystems as column kernels, with reference-vs-fast
+  differential tests: sharing, migration, foraging, diffusion (contact edge arrays),
+  learning, innovation.
+- **PH4:** flip authority to `UnitTable`, with a dense belief matrix as the first backend;
+  Numba only for kernels that remain hot after the flip. RNG draws stay generated by
+  Python streams.
+- **PH5:** a belief-store abstraction (dense and sparse backends), packed familiarity if it
+  is still significant, checkpoint/resume, experiment branching, shared immutable worker
+  state, columnar recording. Then the MVP 3 scaling report (1k/10k/50k units at realistic
+  density; cost of 8-16 strata).
+
+Accepted optimizations are logged below (area, exact or Level B, before and after,
+fixtures).
+
+### 9.3 Accepted optimizations
+
+| # | Area | Class | Benchmark (before → after) | Fixtures |
+|---|---|---|---|---|
+| — | Benchmark tooling: storage report, Python calls per tick, resized-world founders, `bench-quick` / `bench-scale` | tooling | — | unchanged |
 
 ## 10. Current engineering objective: MVP 2 Performance Hardening
 

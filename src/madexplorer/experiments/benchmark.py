@@ -17,7 +17,9 @@ sensitive to other load, so reports also give process CPU time, which is the bet
 for comparisons.
 """
 
+import cProfile
 import multiprocessing
+import pstats
 import resource
 import time
 from collections.abc import Sequence
@@ -29,6 +31,7 @@ from madexplorer.config.loader import Scenario
 from madexplorer.config.schema import InitialPopulation
 from madexplorer.core.provenance import numeric_platform, run_manifest
 from madexplorer.core.simulation import Simulator
+from madexplorer.core.static import StaticContext
 from madexplorer.population.initialization import found_unit
 
 # Subsystems that build belief maps; the synthetic warm-up runs only these.
@@ -48,7 +51,17 @@ def synthetic_simulator(
     ``farming`` every group holds all technologies and enough knowledge to keep them, so
     cultivation code paths are exercised from the first tick.
     """
-    sim = Simulator(scenario)
+    static = StaticContext.build(scenario)
+    world = static.world
+    if any(world.is_water[world.cell_id(*p.cell)] for p in scenario.config.initial_populations):
+        # The founders are discarded below; only move them onto land when a resized world
+        # would otherwise reject them (the canonical 40 x 40 world keeps its own founders).
+        land_cell = world.coords(int(np.flatnonzero(~world.is_water)[0]))
+        founders = [
+            {**p.model_dump(), "cell": list(land_cell)} for p in scenario.config.initial_populations
+        ]
+        scenario = scenario.with_settings({"initial_populations": founders})
+    sim = Simulator(scenario, static=static)
     sim.state.units.clear()
     placement = np.random.default_rng([scenario.config.simulation.seed, n_units])
     land = np.flatnonzero(~sim.world.is_water)
@@ -103,6 +116,50 @@ def _known_cells(sim: Simulator) -> float:
     return float(np.mean([u.beliefs.known_cells(year, memory[u.species_id]) for u in units]))
 
 
+def state_storage(sim: Simulator) -> dict[str, float]:
+    """Sizes of the per-unit state that grows with units and cells (a memory report).
+
+    Beliefs are dense per-unit arrays over all cells; familiarity, residence and trade ties
+    are per-unit dictionaries (entries counted, not bytes).
+    """
+    units = list(sim.state.units.values())
+    belief_bytes = sum(
+        u.beliefs.year.nbytes
+        + u.beliefs.food_kcal.nbytes
+        + u.beliefs.population.nbytes
+        + u.beliefs.hops.nbytes
+        for u in units
+    )
+    n = max(len(units), 1)
+    return {
+        "units": len(units),
+        "cells": sim.world.n_cells,
+        "belief_mb": round(belief_bytes / 2**20, 2),
+        "belief_bytes_per_unit": round(belief_bytes / n, 1),
+        "familiarity_entries": sum(len(u.familiarity) for u in units),
+        "familiarity_entries_per_unit": round(sum(len(u.familiarity) for u in units) / n, 1),
+        "residence_entries_per_unit": round(sum(len(u.recent_residence) for u in units) / n, 1),
+        "trade_edges": sum(len(u.trade_ties) for u in units),
+        "report_cells_per_unit": round(sum(u.report_cells.size for u in units) / n, 1),
+    }
+
+
+def python_calls_per_tick(sim: Simulator, ticks: int) -> float:
+    """Python function calls per tick, counted under cProfile (a separate, untimed pass).
+
+    CPython has no cheap allocation counter; the number of Python-level calls is the
+    overhead proxy the performance work tracks (object traversal, small numpy calls,
+    proposal construction). The pass advances the simulation like ordinary ticks.
+    """
+    profile = cProfile.Profile()
+    profile.enable()
+    for _ in range(ticks):
+        sim.step()
+    profile.disable()
+    stats = pstats.Stats(profile)
+    return float(stats.total_calls) / ticks  # type: ignore[attr-defined]
+
+
 def synthetic_case(
     scenario: Scenario,
     n_units: int,
@@ -110,8 +167,12 @@ def synthetic_case(
     warmup_years: int,
     group_size: int = 30,
     farming: bool = False,
+    count_calls: bool = True,
 ) -> dict[str, Any]:
-    """Time ``ticks`` full steps from a warmed-up synthetic state."""
+    """Time ``ticks`` full steps from a warmed-up synthetic state.
+
+    With ``count_calls``, two further untimed ticks count Python calls per tick.
+    """
     sim = synthetic_simulator(scenario, n_units, group_size, farming)
     started = time.perf_counter()
     warm_up_beliefs(sim, warmup_years)
@@ -129,6 +190,9 @@ def synthetic_case(
     cpu_total = time.process_time() - cpu_started
     mean_units = float(np.mean(unit_counts))
     total = float(np.sum(tick_seconds))
+    storage = state_storage(sim)
+    rss = _peak_rss_mb()
+    calls = python_calls_per_tick(sim, 2) if count_calls else float("nan")
     return {
         "n_units": n_units,
         "farming": farming,
@@ -148,7 +212,12 @@ def synthetic_case(
             k: round(1000.0 * v / ticks, 2)
             for k, v in sorted(sim.timings.items(), key=lambda kv: -kv[1])
         },
-        "peak_rss_mb": round(_peak_rss_mb(), 1),
+        "peak_rss_mb": round(rss, 1),
+        "cells": sim.world.n_cells,
+        "us_per_unit_tick_cpu": round(1e6 * cpu_total / ticks / max(mean_units, 1.0), 1),
+        "storage": storage,
+        "python_calls_per_tick": round(calls),
+        "python_calls_per_unit_tick": round(calls / max(storage["units"], 1), 1),
     }
 
 

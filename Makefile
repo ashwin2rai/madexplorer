@@ -3,7 +3,7 @@ export UV_LINK_MODE ?= copy
 
 .DEFAULT_GOAL := help
 .PHONY: help install sync lint format typecheck test test-stat test-stat-long golden cov check run sim pre-commit clean \
-	bench-perf bench-smoke bench-dev bench-rc baseline
+	bench-perf bench-quick bench-scale bench-smoke bench-dev bench-rc baseline
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -57,6 +57,16 @@ BENCH_JOBS ?= 2
 BENCH_LABEL ?= latest
 bench-perf: ## Synthetic per-unit benchmark (100-2000 units, 30 ticks) -> benchmarks/perf/
 	uv run madexplorer bench synthetic $(MVP2) --out benchmarks/perf/$(BENCH_LABEL)_synthetic.json
+
+bench-quick: ## Engineering loop: 1,000 synthetic units, 10 ticks (~15 s; not saved)
+	uv run madexplorer bench synthetic $(MVP2) --units 1000 --ticks 10
+
+bench-scale: ## Scaling: 100/1k/10k units on 40x40, 1k units on 100x100 -> benchmarks/perf/
+	uv run madexplorer bench synthetic $(MVP2) --units 100,1000,10000 --ticks 10 \
+		--out benchmarks/perf/$(BENCH_LABEL)_scale_units.json
+	uv run madexplorer bench synthetic $(MVP2) --units 1000 --ticks 10 \
+		--set world.topology.width=100 --set world.topology.height=100 \
+		--out benchmarks/perf/$(BENCH_LABEL)_scale_world.json
 
 bench-smoke: ## Smoke ensemble: 2 seeds x 250 years
 	uv run madexplorer ensemble $(MVP2) --seeds 0:1 --years 250 --jobs $(BENCH_JOBS) --out ensembles/bench_smoke

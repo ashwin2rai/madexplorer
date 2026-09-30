@@ -252,7 +252,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
                 f"known={case['known_cells_after_warmup']:>6} "
                 f"ms/tick={case['ms_per_tick']:>8} cpu={case['cpu_ms_per_tick']:>8} "
                 f"ms/unit/tick={case['ms_per_unit_tick']:.4f} "
-                f"rss={case['peak_rss_mb']}MB | {top}"
+                f"rss={case['peak_rss_mb']}MB calls/unit/tick="
+                f"{case['python_calls_per_unit_tick']} beliefs={case['storage']['belief_mb']}MB"
+                f" | {top}"
             )
     else:
         report = timed_runs(scenario, _parse_seeds(args.seeds), args.years)
