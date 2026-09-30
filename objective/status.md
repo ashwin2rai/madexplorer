@@ -1,19 +1,12 @@
 # Implementation Status
 
 **Last updated:** 2026-09-30
-**Code at time of writing:** `6f08204` (P5 step 2 switches present, both off); the benchmark
-manifests record `source_tree_sha256`.
-**Current phase:** MVP 2 **fast freeze** (policy of 2026-09-30, Section 0 "Fast-freeze
-policy"). All model decisions for MVP 2 are done:
-- P5 closed: field-growth reform A on; the field replacement cost on (it replaces the
-  double-counting abandonment penalty); B off. Golden fixtures re-recorded once for A plus
-  the replacement cost.
-- Pressure validation passed (2 seeds × 400 years, `mvp2_pressure`).
-- P6 closed: aggregation is documented as not neutral and stays off in canonical runs.
-
-**Next: P7 freeze.** Commit the code; run a small Tier 3 reference ensemble and the
-performance benchmark; then tag, on the user's approval. The 32-seed baseline is no longer
-required. Runtime optimization comes after the freeze, as a separate milestone.
+**Code at time of writing:** `f505fd1` (source tree `7692ac03…`), plus test-tier and
+documentation edits after the freeze check.
+**Current phase:** **MVP 2 is frozen** (2026-09-30; Section 0, "P7. MVP 2 freeze"). The
+model semantics are fixed; the implementation is not yet fast. Next milestone: the
+performance-only phase (Section 0, "After the freeze"). Equations and behavior change only
+for genuine correctness bugs. The git tag `mvp2` is to be set by the user.
 
 This file records what exists, what was learned while building it, what is broken or
 unfinished, and what to do next. The specification is `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`;
@@ -57,7 +50,9 @@ Read this first when resuming in a new session or VM. Nothing outside this repos
   version, CPU SIMD dispatch). **On a new VM with a different CPU they are skipped, not
   failed.** In that case, record local fixtures with `make golden` before relying on exact
   replay, and do not commit them over the reference ones.
-- `make test` is fast (~15 s); `make test-stat` takes ~18 min on 2 cores.
+- `make test` is fast (~15 s). `make test-stat` (compact statistical tier) takes ~25 s;
+  `make test-stat-long` (extended / research suite, marker `slow`, manual) takes ~18+ min on
+  2 cores.
 - **Benchmark on CPU time, not wall time.** On the shared 2-core codespace, wall time varied
   up to 2× between identical runs (background VS Code processes). `madexplorer bench`
   reports both; compare `cpu`/`cpu_seconds`.
@@ -140,7 +135,7 @@ Remaining path to the freeze:
 4. Aggregation limitation documented (keep the strict xfail or replace it with a test that
    asserts the limitation); at most a 1-2-seed confirmation. **Done** (P6 entry).
 5. Freeze: source revision, scenario configuration, golden fixtures, a 4-8-seed short
-   reference ensemble, status, known limitations, performance benchmark.
+   reference ensemble, status, known limitations, performance benchmark. **Done** (P7).
 
 After the freeze, equations and behavior change only for genuine correctness bugs.
 Optimizations are then validated against identical seeded output or tight tolerances.
@@ -185,7 +180,7 @@ network; distributional state: later strata) in every new data structure.
 | P4b | Familiarity reform (after the P4 investigation): lazy exponential decay of unpracticed familiarity, population-weighted merges | **model change** (accepted; golden re-recorded) | **done** |
 | P5 | Agriculture (20-25; **done** 2026-09-30: A on, replacement cost on, B off; pressure validation passed): expected future tenure `p(1-p^H)/(1-p)` from the unit's current stay probability; review tech × knowledge (candidate: knowledge sets distance to the technology frontier, `e_min + (1-e_min)K/(K+K_half)`, with `e_min` justified behaviorally, not fitted); small experimental cultivation share (2-5% labor) when crop returns are within a band of foraging, as generic subsistence exploration; scenarios A (abundant frontier) and B (intensification pressure); paired cultivation on/off ablation on B as a statistical test replacing the strict xfail | **model changes** + validation | **done** |
 | P6 | Aggregation (26), reduced by the fast-freeze policy: limitation documented, 2-seed confirmation, strict xfail kept | documentation | **done** |
-| P7 | Freeze (31), fast-freeze scope: source revision, `mvp2_neolithic` and `mvp2_pressure`, golden fixtures, a 4-8-seed short reference ensemble, performance benchmark, final status and known limitations; git tag `mvp2` only on the user's approval (the 32-seed × 1,000-year baseline dropped) | release | planned |
+| P7 | Freeze (31), fast-freeze scope: source revision, `mvp2_neolithic` and `mvp2_pressure`, golden fixtures, 4-seed short reference runs, performance benchmark, final status and known limitations; git tag `mvp2` by the user (32-seed × 1,000-year baseline dropped) | release | **done** 2026-09-30 |
 
 Open design choices to confirm during review (defaults proposed, not fixed):
 
@@ -1204,6 +1199,136 @@ Option 1).**
   this accepted limitation. No new tolerance was sought. Correct aggregation (group-level
   hazards, selective emigration) belongs to MVP 3's statistical super-agents.
 
+#### P7. MVP 2 freeze (2026-09-30): **MVP 2 model semantics are frozen**
+
+This does not mean the implementation is performant: that is the next, separate milestone.
+
+**Revision.**
+- Commit `f505fd118aa17bda3cc1cbb92afed13008bf102b`; source tree SHA-256
+  `7692ac03a2c75ad598e771098231b1f8bfb74bf918cd4b148227837b0be6bea5`. Every freeze run and
+  benchmark manifest records this hash.
+- `git_dirty: true` in the manifests comes only from test-tier and documentation edits
+  outside `src/`.
+- Numeric platform: `numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3`, 2-core
+  codespace.
+- Machine-readable record: `baselines/mvp2/freeze_manifest.json`. It holds the commit, hashes,
+  scenarios, config hashes, seeds, horizons, per-seed results, the performance baseline and
+  test status. Run outputs are in `baselines/mvp2/` (≈120 kB).
+
+**Frozen defaults.**
+- `mechanisms`: `direct_observation_shrinkage`, `familiarity_decay`, `field_growth_to_target`
+  and `field_replacement_cost` on; `expected_tenure` off.
+- Canonical scenarios run with `aggregation: false`.
+- `migration.food_utility: log1p`.
+- Golden fixtures `tests/regression/golden/*.json`, last re-recorded for A plus the
+  replacement cost.
+
+**Canonical scenarios.**
+- `scenarios/mvp2_neolithic.yaml` (config hash `24ebc6b8…`, world seed 7).
+- `scenarios/mvp2_pressure.yaml` (8 × 8, 16 bands).
+
+**Freeze check 1: canonical reference, `mvp2_neolithic`, seeds 0-3, 600 years**
+(`baselines/mvp2/neolithic_4x600/`; 89 s wall, 135 s child CPU, `--jobs 2`; invariants
+checked every step).
+
+| Seed | Final pop | Cells y600 | Migration rate | Farm share | Sedentary | First cultivation | Farm ≥ 10 / 25 / 50% | Seed sel. / fallow / axes / granaries | Inventions | Runtime |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 33,070 | 790 | 0.047 | 0.50 | 0.85 | 147 | 220 / 256 / 539 | 208 / 233 / 259 / 322 | 73 | 71 s |
+| 1 | 22,850 | 678 | 0.054 | 0.43 | 0.83 | 238 | 340 / 381 / — | 312 / 322 / 397 / 440 | 81 | 45 s |
+| 2 | 18,340 | 497 | 0.052 | 0.50 | 0.83 | 166 | 251 / 298 / 566 | 208 / 245 / 361 / 324 | 63 | 31 s |
+| 3 | 15,760 | 508 | 0.054 | 0.42 | 0.77 | 158 | 293 / 307 / — | 270 / 281 / 321 / — | 31 | 18 s |
+
+- Storage pits first appear in years 68-199.
+- Final crude death rate is 33.7-34.6 per 1,000; crowding causes 7-8% of deaths. Final
+  farmed soil is 0.37-0.41.
+- No extinctions, no NaN/inf in the rows, no invariant failures.
+- Every seed makes the agricultural transition: farming ≥ 25% of food by years 256-381, and
+  ≥ 50% by year 600 in two seeds. The narratives differ by seed, as expected.
+- **No pathology; consistent with the accepted design.**
+
+**Freeze check 2: pressure validation, `mvp2_pressure`, seeds 0-3, 400 years, cultivation on
+vs off** (`baselines/mvp2/pressure_4x400_*`; 92 s wall for the probe plus both ensembles).
+Means over years 351-400:
+
+| Seed | Population on / off | Ratio | People per occupied cell on / off | Farm share | Sedentary on / off | Energy deficit on / off | Crude death rate on / off | First fields / farm ≥ 50% |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 3,356 / 1,252 | 2.68 | 55.2 / 28.4 | 0.60 | 0.86 / 0.36 | 0.023 / 0.060 | 39.1 / 43.0 | 76 / 245 |
+| 1 | 3,795 / 1,153 | 3.29 | 63.0 / 28.0 | 0.64 | 0.84 / 0.32 | 0.027 / 0.042 | 39.5 / 39.5 | 82 / 239 |
+| 2 | 3,906 / 1,139 | 3.43 | 64.8 / 27.1 | 0.65 | 0.80 / 0.35 | 0.031 / 0.040 | 39.5 / 37.9 | 77 / 246 |
+| 3 | 4,168 / 1,131 | 3.68 | 68.5 / 25.9 | 0.67 | 0.85 / 0.38 | 0.027 / 0.035 | 39.2 / 36.3 | 84 / 213 |
+
+- All four matched seeds show the same large effect: resource pressure → cultivation adoption
+  → higher sustainable population and density, with less food stress. Stopped at 4 seeds.
+- Seeds 0-1 reproduce the P5 step 5 values exactly.
+- Mortality is slightly higher with farming on seeds 2-3, through crowding. This is the
+  accepted density cost, not a pathology.
+
+**Freeze check 3: pre-optimization performance baseline** (committed revision).
+- `benchmarks/perf/mvp2_freeze_synthetic.json` (`make bench-perf`; 34 s wall, 32 s CPU).
+  Per-case CPU is recorded in the report.
+
+  | Requested units (mean) | ms/tick (CPU) | ms/unit/tick | Peak RSS | Top subsystems (ms/tick) |
+  |---|---|---|---|---|
+  | 100 (128) | 34.0 (31.3) | 0.265 | 65 MB | migration 6.2, foraging 5.2, innovation 4.6 |
+  | 500 (610) | 144 (142) | 0.237 | 92 MB | migration 22, foraging 21, sharing 19 |
+  | 1000 (1098) | 274 (269) | 0.249 | 112 MB | sharing 50, migration 41, foraging 33, diffusion 28 |
+  | 2000 (1763) | 461 (451) | 0.261 | 151 MB | sharing 87, migration 67, diffusion 64, foraging 39, demography 37 |
+
+- `benchmarks/perf/mvp2_freeze_seed0_600y.json` (`madexplorer bench runs`, seed 0, 600
+  years):
+  - 43.8 s wall, 41.9 s CPU; 1,212 final units; 0.293 ms/unit-year; peak RSS 123 MB.
+  - Windows: early (years 61-90) 4.0 ms/tick at 8 units; middle (271-300) 20.9 ms at 82
+    units; **late (571-600) 328 ms/tick at 1,086 units, 0.30 ms/unit/tick**.
+  - Time shares: sharing 17%, migration 14%, foraging 13%, diffusion 11%, demography 9%,
+    field planning 7%, learning 6%, perception 5%.
+  - Final population is identical to the ensemble's seed 0 (33,070).
+
+**Test status at the freeze.**
+- `make check` green: 185 tests (lint, format, mypy, regression with golden fixtures on this
+  platform, mechanism).
+- `make test-stat` (compact tier): 2 passed. This is the pressure agriculture test, seeds 0-1,
+  25 s.
+- The aggregation strict xfail is kept with its documented rationale.
+- `make test-stat-long` (extended / research validation suite, marker `slow`: crowding,
+  technology ranges, aggregation tolerance; 8 seeds × 900 years) was **not run** for the
+  freeze. It is manual and not required for normal development, CI or MVP freezes.
+
+**Accepted MVP 2 limitations** (details in Section 8 and the entries above):
+1. Computational aggregation is not scientifically neutral; it is off in canonical runs
+   (P6). Correct aggregation belongs to MVP 3.
+2. Stock-vs-yield mismatch in the migration food utility (Section 8, issue 5).
+3. Field replacement cost is priced at home clearing conditions. Destination-specific
+   reconstruction, output forgone while rebuilding, and soil capital are deferred.
+4. No population plateau is required. Farming populations can still grow at the horizon;
+   crowding, food limitation, competition and soil are the only density limits.
+5. Noisy beliefs retain some winner's-curse bias (mitigated by shrinkage). Sedentism under
+   `log1p` still depends on perception noise.
+6. The technology × knowledge efficiency formulation was left as is (P5 option C, not
+   pursued).
+7. Hazard-based tenure (B) was rejected for its complexity; clearing is amortized over past
+   residence.
+8. Whole-group migration only; no strata, wealth, health distributions or specialists (MVP
+   3).
+9. Carried-over simplifications: static vegetation, annual timestep, one-good trade,
+   group-level knowledge, Chebyshev perception, one soil pool per cell (Section 8, items
+   6-7).
+10. Exact seeded replay is platform-specific (numpy SIMD dispatch). Golden fixtures skip on
+    other platforms.
+11. The large exploratory ensembles cited in this file (`ensembles/`, `p5_ab_2x2.tgz`) are not
+    in the repository.
+
+#### After the freeze: performance-only phase (next milestone)
+
+- Model semantics stay frozen. Optimizations are validated against identical seeded output
+  (golden fixtures, `baselines/mvp2` rows) or tightly controlled, documented numerical
+  tolerances.
+- Measure against this freeze baseline (CPU time, same machine class).
+- Candidates, in order of the freeze profile:
+  - belief sharing, migration, foraging, diffusion and demography per-unit loops;
+  - structure-of-arrays unit state;
+  - fewer object and dictionary allocations;
+  - compiled kernels only where profiling justifies them.
+
 
 #### Performance outlook (assessment after P0-P4 profiling, 2026-09-25)
 
@@ -1254,7 +1379,8 @@ The estimates below are **not measurements**.
 ```bash
 make install                         # uv sync + pre-commit hooks
 make check                           # lint, format check, mypy, fast tests (regression + mechanism)
-make test-stat                       # statistical multi-seed model tests (~10-15 min on 2 cores)
+make test-stat                       # compact statistical tests (~25 s; part of MVP freezes)
+make test-stat-long                  # extended / research validation suite (manual, ~18+ min)
 make golden                          # re-record exact regression fixtures after an INTENDED change
 uv run madexplorer run scenarios/mvp1_sandbox.yaml --years 450 --quiet
 #   (the old reference numbers here predate the P2-P4 changes; see the golden fixtures instead)
@@ -1706,6 +1832,10 @@ aggregation stays within tolerance of the reference.
 
 ## 9. MVP 2 baseline (item 12)
 
+**Superseded (2026-09-30):** the 32-seed × 1,000-year baseline is no longer required. The
+freeze reference is the small ensemble in `baselines/mvp2/` (Section 0, P7). The text below
+is kept for history.
+
 **Not yet recorded.** Canonical `scenarios/mvp2_neolithic.yaml`, reference mode, 1,000 years.
 After the speed-ups, the estimated wall time on the 2-core codespace is ~13 min for
 seeds 0-15 and ~25 min for seeds 0-31 (the earlier "2 hours" assumed every seed was as slow as
@@ -1768,9 +1898,10 @@ src/madexplorer/
 scenarios/       mvp1_sandbox.yaml, mvp2_neolithic.yaml
 species/         human.yaml
 technologies/    neolithic.yaml
-tests/           mechanism tests; regression/ (golden fixtures); statistical/ (make test-stat)
+tests/           mechanism tests; regression/ (golden fixtures); statistical/ (make test-stat,
+                 make test-stat-long for the `slow` research suite)
 benchmarks/perf/ benchmark reports (JSON), p0_pre_reform_* = pre-stabilization reference
-baselines/       mvp2/ (planned: frozen MVP 2 ensemble; not recorded yet)
+baselines/       mvp2/ (MVP 2 freeze: freeze_manifest.json, 4-seed reference runs)
 ```
 
 ### Conventions to keep

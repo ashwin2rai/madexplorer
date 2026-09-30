@@ -2,7 +2,7 @@
 export UV_LINK_MODE ?= copy
 
 .DEFAULT_GOAL := help
-.PHONY: help install sync lint format typecheck test test-stat golden cov check run sim pre-commit clean \
+.PHONY: help install sync lint format typecheck test test-stat test-stat-long golden cov check run sim pre-commit clean \
 	bench-perf bench-smoke bench-dev bench-rc baseline
 
 help: ## Show available targets
@@ -28,8 +28,11 @@ typecheck: ## Type-check with mypy
 test: ## Run regression and mechanism tests (fast)
 	uv run pytest
 
-test-stat: ## Run statistical multi-seed model tests (slow)
-	uv run pytest -m statistical
+test-stat: ## Compact statistical model tests (< 1 min; part of MVP freezes)
+	uv run pytest -m "statistical and not slow"
+
+test-stat-long: ## Extended / research validation suite: 8 seeds x 900 years (manual, tens of min)
+	uv run pytest -m "statistical and slow"
 
 golden: ## Re-record exact regression fixtures after an intended behavior change
 	UPDATE_GOLDEN=1 uv run pytest tests/regression
@@ -64,8 +67,8 @@ bench-dev: ## Development ensemble: 8 seeds x 600 years (model changes)
 bench-rc: ## Release-candidate ensemble: 16 seeds x 1,000 years
 	uv run madexplorer ensemble $(MVP2) --seeds 0:15 --years 1000 --jobs $(BENCH_JOBS) --out ensembles/bench_rc
 
-baseline: ## Frozen MVP 2 baseline: 32 seeds x 1,000 years -> baselines/mvp2 (freeze only)
-	uv run madexplorer ensemble $(MVP2) --seeds 0:31 --years 1000 --jobs $(BENCH_JOBS) --out baselines/mvp2
+baseline: ## Optional large ensemble: 32 seeds x 1,000 years (not the freeze reference; see status.md P7)
+	uv run madexplorer ensemble $(MVP2) --seeds 0:31 --years 1000 --jobs $(BENCH_JOBS) --out ensembles/baseline_32x1000
 
 pre-commit: ## Run pre-commit hooks on all files
 	uv run pre-commit run --all-files

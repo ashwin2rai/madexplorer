@@ -1,9 +1,17 @@
 """Statistical model tests: distributional properties across seeds (spec §26.2, §29.4).
 
-Slow (several minutes); excluded from the default run and executed with
-``make test-stat``. They check broad, mechanism-level expectations with paired seeds,
-never a seed-specific historical narrative. Thresholds are deliberately loose: a
-failure means a qualitative property of the model changed, not that a number moved.
+Excluded from the default run. Two tiers:
+
+- ``make test-stat``: the compact statistical tests (the intensification-pressure
+  agriculture test, 2 seeds x 400 years, well under a minute). Part of MVP freezes.
+- ``make test-stat-long`` (marker ``slow``): the extended / research validation suite,
+  8 paired seeds x 900 years on a 16 x 16 world (tens of minutes). Manual; not required
+  for normal development, CI or MVP freezes. Kept because it checks useful long-run
+  properties.
+
+They check broad, mechanism-level expectations with paired seeds, never a seed-specific
+historical narrative. Thresholds are deliberately loose: a failure means a qualitative
+property of the model changed, not that a number moved.
 """
 
 from collections.abc import Mapping
@@ -80,6 +88,7 @@ def test_cultivation_raises_carrying_capacity_under_intensification_pressure(see
     assert farming["mean_energy_deficit"] <= foraging["mean_energy_deficit"]
 
 
+@pytest.mark.slow
 def test_crowding_mortality_reduces_population_growth() -> None:
     crowded = _ensemble()
     uncrowded = _ensemble(("mechanisms.crowding_mortality", False))
@@ -88,6 +97,7 @@ def test_crowding_mortality_reduces_population_growth() -> None:
     assert all(float(r["final_crowding_death_share"]) > 0 for r in crowded)
 
 
+@pytest.mark.slow
 def test_technologies_appear_within_broad_stochastic_ranges() -> None:
     rows = _ensemble()
     storage = np.array([float(r["first_storage_pits_year"]) for r in rows])
@@ -111,6 +121,7 @@ AGGREGATION_POPULATION_XFAIL = pytest.mark.xfail(
 )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("measure", "tolerance"),
     [

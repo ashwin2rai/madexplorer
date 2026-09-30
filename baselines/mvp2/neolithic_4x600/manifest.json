@@ -1,0 +1,22 @@
+{
+  "scenario_name": "mvp2_neolithic",
+  "world_seed": 7,
+  "config_hash": "e8bc0077e521fb6354de1a29cfbdcece0ffaffdace8b4eb2d89a0f73ce0dfd93",
+  "model_version": "0.1.0",
+  "git_commit": "f505fd118aa17bda3cc1cbb92afed13008bf102b",
+  "git_dirty": true,
+  "source_tree_sha256": "7692ac03a2c75ad598e771098231b1f8bfb74bf918cd4b148227837b0be6bea5",
+  "dependency_lock_hash": "def063d96343f64736018fb865ff4d08a08a9c6ba83be9fe20fd74bb1aa0b13f",
+  "python_version": "3.13.15",
+  "numpy_version": "2.5.3",
+  "timestamp_utc": "2026-09-30T02:06:21+00:00",
+  "seeds": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "settings": {},
+  "wall_seconds": 89.2165972519997,
+  "n_runs": 4
+}

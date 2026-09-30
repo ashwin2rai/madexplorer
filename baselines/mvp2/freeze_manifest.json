@@ -1,0 +1,240 @@
+{
+ "milestone": "MVP 2 model freeze",
+ "date": "2026-09-30",
+ "meaning": "MVP 2 model semantics are frozen; the implementation is not yet optimized.",
+ "git_commit": "f505fd118aa17bda3cc1cbb92afed13008bf102b",
+ "source_tree_sha256": "7692ac03a2c75ad598e771098231b1f8bfb74bf918cd4b148227837b0be6bea5",
+ "source_tree_sha256_in_runs": [
+  "7692ac03a2c75ad598e771098231b1f8bfb74bf918cd4b148227837b0be6bea5"
+ ],
+ "numeric_platform": "numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3",
+ "golden_fixtures": "tests/regression/golden/*.json (re-recorded once for field_growth_to_target + field_replacement_cost)",
+ "mechanism_defaults_changed_in_mvp2_freeze_pass": {
+  "direct_observation_shrinkage": true,
+  "familiarity_decay": true,
+  "field_growth_to_target": true,
+  "field_replacement_cost": true,
+  "expected_tenure": false,
+  "aggregation (canonical scenarios)": false
+ },
+ "reference_runs": {
+  "neolithic_4x600": {
+   "scenario": "scenarios/mvp2_neolithic.yaml",
+   "config_hash": "e8bc0077e521fb6354de1a29cfbdcece0ffaffdace8b4eb2d89a0f73ce0dfd93",
+   "seeds": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "years": 600,
+   "per_seed": {
+    "0": {
+     "final_population": 33070.0,
+     "occupied_cells_y600": 790.0,
+     "migration_rate": 0.04747070266801259,
+     "final_farm_share": 0.5006527010244077,
+     "final_sedentary_share": 0.8469430437597272,
+     "first_cultivation_year": 147.0,
+     "farm_share_10pct_year": 220.0,
+     "farm_share_25pct_year": 256.0,
+     "farm_share_50pct_year": 539.0,
+     "inventions": 73.0,
+     "runtime_seconds": 71.05127418499978
+    },
+    "1": {
+     "final_population": 22850.0,
+     "occupied_cells_y600": 678.0,
+     "migration_rate": 0.05427597771406935,
+     "final_farm_share": 0.4335515360844577,
+     "final_sedentary_share": 0.8277293269908591,
+     "first_cultivation_year": 238.0,
+     "farm_share_10pct_year": 340.0,
+     "farm_share_25pct_year": 381.0,
+     "farm_share_50pct_year": null,
+     "inventions": 81.0,
+     "runtime_seconds": 44.86835326600021
+    },
+    "2": {
+     "final_population": 18338.0,
+     "occupied_cells_y600": 497.0,
+     "migration_rate": 0.05236808536903178,
+     "final_farm_share": 0.49749618055225475,
+     "final_sedentary_share": 0.8343859935923474,
+     "first_cultivation_year": 166.0,
+     "farm_share_10pct_year": 251.0,
+     "farm_share_25pct_year": 298.0,
+     "farm_share_50pct_year": 566.0,
+     "inventions": 63.0,
+     "runtime_seconds": 31.258788650000042
+    },
+    "3": {
+     "final_population": 15756.0,
+     "occupied_cells_y600": 508.0,
+     "migration_rate": 0.05430239880918303,
+     "final_farm_share": 0.4195631872283515,
+     "final_sedentary_share": 0.7698519180344207,
+     "first_cultivation_year": 158.0,
+     "farm_share_10pct_year": 293.0,
+     "farm_share_25pct_year": 307.0,
+     "farm_share_50pct_year": null,
+     "inventions": 31.0,
+     "runtime_seconds": 17.582173696000154
+    }
+   }
+  },
+  "pressure_4x400": {
+   "scenario": "scenarios/mvp2_pressure.yaml",
+   "config_hash": {
+    "cultivation_on": "42ee15123b35e0c327baa1241b200c21eee61c8eb43817d69506ecce89a2cf5e",
+    "cultivation_off": "d0db3598762b90a3c3038e4979004bf39d3f54a66de404766f4b33db5cb95559"
+   },
+   "seeds": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "years": 400,
+   "window": "means over years 351-400",
+   "per_seed": {
+    "0_on": {
+     "population": 3356.04,
+     "people_per_occupied_cell": 55.245614850952926,
+     "farm_share_of_harvest": 0.6048375111702959,
+     "sedentary_share": 0.859865844966539,
+     "mean_energy_deficit": 0.02340581101415848,
+     "mean_food_ratio": 1.0279886366860496,
+     "crude_death_rate": 39.11268928578731,
+     "first_fields_year": 76,
+     "farm_share_50pct_year": 245
+    },
+    "0_off": {
+     "population": 1251.6,
+     "people_per_occupied_cell": 28.44551724840806,
+     "farm_share_of_harvest": 0.0,
+     "sedentary_share": 0.361057307965838,
+     "mean_energy_deficit": 0.059934520581904,
+     "mean_food_ratio": 0.9904612054780286,
+     "crude_death_rate": 42.99609331645015,
+     "first_fields_year": null,
+     "farm_share_50pct_year": null
+    },
+    "1_on": {
+     "population": 3794.98,
+     "people_per_occupied_cell": 62.98856879696231,
+     "farm_share_of_harvest": 0.6384238097559962,
+     "sedentary_share": 0.8359523906111582,
+     "mean_energy_deficit": 0.027146266442714097,
+     "mean_food_ratio": 1.027646776778587,
+     "crude_death_rate": 39.48198100578868,
+     "first_fields_year": 82,
+     "farm_share_50pct_year": 239
+    },
+    "1_off": {
+     "population": 1153.16,
+     "people_per_occupied_cell": 27.99729361981027,
+     "farm_share_of_harvest": 0.0,
+     "sedentary_share": 0.31981865061359643,
+     "mean_energy_deficit": 0.041601069766825344,
+     "mean_food_ratio": 1.0155322814845105,
+     "crude_death_rate": 39.531576151853805,
+     "first_fields_year": null,
+     "farm_share_50pct_year": null
+    },
+    "2_on": {
+     "population": 3905.82,
+     "people_per_occupied_cell": 64.7894100658796,
+     "farm_share_of_harvest": 0.6485949277942876,
+     "sedentary_share": 0.8040052496429145,
+     "mean_energy_deficit": 0.031234927857919714,
+     "mean_food_ratio": 1.0264999990614034,
+     "crude_death_rate": 39.4716620691953,
+     "first_fields_year": 77,
+     "farm_share_50pct_year": 246
+    },
+    "2_off": {
+     "population": 1139.1,
+     "people_per_occupied_cell": 27.110649647593362,
+     "farm_share_of_harvest": 0.0,
+     "sedentary_share": 0.3506940848038466,
+     "mean_energy_deficit": 0.04040424499761104,
+     "mean_food_ratio": 1.0279427354468456,
+     "crude_death_rate": 37.91265470101785,
+     "first_fields_year": null,
+     "farm_share_50pct_year": null
+    },
+    "3_on": {
+     "population": 4168.1,
+     "people_per_occupied_cell": 68.538148433976,
+     "farm_share_of_harvest": 0.6720647603017216,
+     "sedentary_share": 0.8541823313792196,
+     "mean_energy_deficit": 0.026984356264487707,
+     "mean_food_ratio": 1.0260851160382372,
+     "crude_death_rate": 39.24457297205214,
+     "first_fields_year": 84,
+     "farm_share_50pct_year": 213
+    },
+    "3_off": {
+     "population": 1131.46,
+     "people_per_occupied_cell": 25.945057151773508,
+     "farm_share_of_harvest": 0.0,
+     "sedentary_share": 0.38438113275864266,
+     "mean_energy_deficit": 0.03529659328753337,
+     "mean_food_ratio": 1.0271684556197835,
+     "crude_death_rate": 36.28341991125179,
+     "first_fields_year": null,
+     "farm_share_50pct_year": null
+    }
+   }
+  }
+ },
+ "performance_baseline": {
+  "synthetic": "benchmarks/perf/mvp2_freeze_synthetic.json",
+  "seed0_600y": "benchmarks/perf/mvp2_freeze_seed0_600y.json",
+  "seed0_600y_summary": {
+   "runtime_seconds": 43.82,
+   "cpu_seconds": 41.88,
+   "final_units": 1212,
+   "ms_per_unit_year": 0.293,
+   "peak_rss_mb": 123.3,
+   "windows": {
+    "early": {
+     "years": [
+      61,
+      90
+     ],
+     "ms_per_tick": 4.02,
+     "mean_units": 8.3,
+     "ms_per_unit_tick": 0.4868
+    },
+    "middle": {
+     "years": [
+      271,
+      300
+     ],
+     "ms_per_tick": 20.93,
+     "mean_units": 82.1,
+     "ms_per_unit_tick": 0.2549
+    },
+    "late": {
+     "years": [
+      571,
+      600
+     ],
+     "ms_per_tick": 328.29,
+     "mean_units": 1085.5,
+     "ms_per_unit_tick": 0.3024
+    }
+   }
+  },
+  "cpu_count": 2
+ },
+ "tests": {
+  "make check": "green (185 passed)",
+  "make test-stat (compact)": "2 passed (pressure agriculture test, seeds 0-1)",
+  "make test-stat-long": "not run for the freeze (extended research suite; manual)",
+  "aggregation strict xfail": "kept, documented accepted limitation"
+ },
+ "accepted_limitations": "objective/status.md Section 0 'MVP 2 freeze' and Section 8"
+}

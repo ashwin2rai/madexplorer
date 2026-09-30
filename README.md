@@ -50,9 +50,11 @@ Requires [uv](https://docs.astral.sh/uv/).
 make install                 # uv sync + install pre-commit git hooks
 ```
 
-Run `make` to list all targets (`test`, `test-stat`, `golden`, `lint`, `format`, `typecheck`,
-`check`, `cov`, `clean`, ...). `make test` runs exact regressions and mechanism tests;
-`make test-stat` runs the slow multi-seed statistical tests.
+Run `make` to list all targets (`test`, `test-stat`, `test-stat-long`, `golden`, `lint`,
+`format`, `typecheck`, `check`, `cov`, `clean`, ...). `make test` runs exact regressions and
+mechanism tests. `make test-stat` runs the compact statistical tests (under a minute). `make
+test-stat-long` runs the extended / research validation suite (8 seeds × 900 years, tens of
+minutes); it is manual and not required for normal development, CI or MVP freezes.
 
 ## Running simulations
 
