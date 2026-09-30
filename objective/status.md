@@ -1,1916 +1,619 @@
-# Implementation Status
+# Implementation Status — Current Canonical State
 
-**Last updated:** 2026-09-30
-**Code at time of writing:** `f505fd1` (source tree `7692ac03…`), plus test-tier and
-documentation edits after the freeze check.
-**Current phase:** **MVP 2 is frozen** (2026-09-30; Section 0, "P7. MVP 2 freeze"). The
-model semantics are fixed; the implementation is not yet fast. Next milestone: the
-performance-only phase (Section 0, "After the freeze"). Equations and behavior change only
-for genuine correctness bugs. The git tag `mvp2` is to be set by the user.
+This file is the **forward-looking implementation status** for Mad Explorer after the MVP 2 model freeze.
+It intentionally omits the experiment-by-experiment history that accumulated during MVP 2 stabilization.
 
-This file records what exists, what was learned while building it, what is broken or
-unfinished, and what to do next. The specification is `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`;
-section numbers below (§) refer to it.
+For scientific/model requirements, read `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE_V2.md` first.
+For exact freeze provenance, read `baselines/mvp2/freeze_manifest.json`.
+Use this file to answer: **What exists now? What is frozen? What is still limited? What should we do next?**
 
 ---
 
-## Session handover: working agreements and practical notes
+## 1. Current phase
 
-Read this first when resuming in a new session or VM. Nothing outside this repository
-(assistant memory, scratch files) survives between sessions.
+**MVP 1:** complete.  
+**MVP 2:** complete and scientifically frozen.  
+**Current milestone:** **MVP 2 Performance Hardening**.  
+**Next scientific milestone:** **MVP 3 — Distributional Society**.
 
-### How the user wants work done
+The current task is to make the frozen MVP 2 simulator substantially faster **without changing model semantics**.
+Model changes are out of scope during performance hardening unless a genuine correctness bug is demonstrated.
 
-- **Phase by phase with checkpoints.** Write the plan into this file before starting a large
-  task. Stop at the end of each phase (or sub-step), summarize, and ask whether to proceed.
-  **The user commits; do not commit or tag unless asked.** Do not work for hours without a
-  checkpoint or leave many uncommitted intermediate files.
-- **Decisions in prose, not multiple-choice prompts.** For modeling decisions, list the
-  options with a recommendation in plain text and let the user reply. The user rejected the
-  multiple-choice question tool twice and answered with nuanced conditions, e.g. "option 1,
-  but don't re-record the golden fixtures until X".
-- **Scientific stance.** Never tune coefficients toward a desired trajectory (for example,
-  colonization speed). Prefer reformulations that are both more plausible and cheaper. Label
-  every change exact, rounding-level, numerical approximation, or model change. Validate
-  behavioral changes with paired ensembles (same seeds) and document the results here.
-- **Performance changes must preserve behavior** unless explicitly isolated and validated:
-  - the golden fixtures stay unchanged for pure optimizations;
-  - RNG draws may be batched only when the values and their order are identical; replacing
-    several independent random events with fewer is a model change needing an experiment;
-  - the 2× speed target is a stretch goal, not a reason to change behavior.
-- **Keep the repository runnable** (`make check` green) and keep status entries factual,
-  including failures and retractions (e.g. P2 found that an earlier claim in this file was
-  wrong).
+### Frozen MVP 2 identity
 
-### Environment and tooling notes
+- Freeze commit: `f505fd118aa17bda3cc1cbb92afed13008bf102b`
+- Source-tree SHA-256: `7692ac03a2c75ad598e771098231b1f8bfb74bf918cd4b148227837b0be6bea5`
+- Freeze manifest: `baselines/mvp2/freeze_manifest.json`
+- Canonical scientific scenarios:
+  - `scenarios/mvp2_neolithic.yaml`
+  - `scenarios/mvp2_pressure.yaml`
 
-- Setup: `make install` (uv; `UV_LINK_MODE=copy` is set in the Makefile because the uv cache
-  is on another filesystem in Codespaces). Python 3.13 via `.python-version`.
-- Golden fixtures (`tests/regression/golden/`) carry a numeric-platform signature (numpy
-  version, CPU SIMD dispatch). **On a new VM with a different CPU they are skipped, not
-  failed.** In that case, record local fixtures with `make golden` before relying on exact
-  replay, and do not commit them over the reference ones.
-- `make test` is fast (~15 s). `make test-stat` (compact statistical tier) takes ~25 s;
-  `make test-stat-long` (extended / research suite, marker `slow`, manual) takes ~18+ min on
-  2 cores.
-- **Benchmark on CPU time, not wall time.** On the shared 2-core codespace, wall time varied
-  up to 2× between identical runs (background VS Code processes). `madexplorer bench`
-  reports both; compare `cpu`/`cpu_seconds`.
-- Benchmarks and ensembles spawn fresh processes that import from `src/`. **Do not edit
-  source files while a benchmark is running**; spawned cases would pick up half-edited code.
-  To measure a reference version, use a git worktree at that commit (`git worktree add
-  --detach <dir> <commit>`, then `uv sync` inside it) and run the benchmark there.
-- Run only one heavy job at a time on 2 cores; tests or profiling alongside a benchmark
-  distort its timings.
-- A `Simulator` holds `MappingProxyType` capability maps; clear `sim.capability_cache` before
-  pickling one.
-- Paired comparisons: `madexplorer compare ensembles/<a> ensembles/<b>` (same seeds).
-  Parameter overrides: `--set path=value`, e.g.
-  `--set species.human.cognition.observation_noise_sigma=0.5`,
-  `--set mechanisms.direct_observation_shrinkage=false`,
-  `--set species.human.migration.food_utility=capped_log`.
-- `ensembles/` and `runs/` are git-ignored: ensemble results cited in this file are not in
-  the repository and must be regenerated if needed (commands and settings are given with each
-  result). `benchmarks/perf/*.json` are committed.
-
-### Decisions log for this pass (details in Section 0)
-
-| Phase | Decision (by the user unless noted) |
-|---|---|
-| P0 | Benchmarks come before the belief reform, to get a pre-reform reference |
-| P2 | Food prior for shrinkage = mean of the group's own direct observations; relay confidence decay 0.7 per hop; nothing older than the memory horizon is passed on |
-| P3 | No 12-cell attention cap (reachability already bounds candidates to ~20); `max_considered_destinations: null`, with the utility-blind cap kept for future species |
-| P3 | Direct-observation shrinkage via precision weighting `tau^2/(tau^2+sigma^2)` (not `1/(1+sigma^2)`), made switchable, measured, then **adopted** (on by default) |
-| P3 | Slower colonization under shrinkage is treated as diagnostic, not tuned back |
-| P3b | Hard food cap reviewed; smooth forms compared; **`log1p` selected** (assistant's selection on mechanism grounds, user-delegated); `log` kept as a diagnostic |
-| P3 | Golden fixtures re-recorded once, after both P3 decisions |
-| P3 | Aggregation population test: temporary **strict** xfail linked to P6; tolerance not loosened |
-| P4 | Newton foraging solver accepted as a documented numerical approximation (golden re-recorded for it only) |
-| P4 | Inherited familiarity: investigate first; any bounded/decaying reformulation is a separate model change, not part of P4 |
-| P4b | Familiarity reform, options 1 + 3: exponential decay toward F0 = 0.6 with tau = `memory_years`, evaluated lazily; "idle" = years *without practice* (a cell used every year does not decay); population-weighted merge of decayed values; fission copies effective values. **Accepted** after the paired experiment; not to be tuned to recover the old trajectory |
-| P4b | The 1e-6 pruning threshold is a storage threshold (numerically equivalent to baseline familiarity), not a forgetting parameter |
-| P4b | Lower farming after the reform is not a reason to change it: agriculture adoption is a separate problem for P5 |
-| P5 | 2026-09-30, fast freeze: minimize expensive experiments; tiered experiment policy (below); no 16/32-seed × 1,000-year ensembles unless explicitly requested; the 32-seed baseline is dropped as a freeze requirement |
-| P5 | A (field growth to target) provisionally accepted on the 2×2 result; only the field-abandonment audit remains before making it the default |
-| P5 | B (hazard-based expected tenure) kept off: tested, and too little improvement to justify the complexity; no further B experiments |
-| P5 | Missing population plateau is not an MVP 2 blocker; no mortality added or tuned to create one |
-| P5 | Field-abandonment penalty replaced by the field **replacement cost** (Option 1): re-clearing labor for the current fields at home clearing conditions × marginal foraging return, in years of need, at the stores weight (1); no new parameter. Sunk clearing labor plays no part. Destination-specific costs deferred |
-| P5 | Accepted 2026-09-30 after a 2-seed × 500-year sanity check: A and the replacement cost on by default, golden fixtures re-recorded once for both; P5 mechanism decisions closed |
-| P5 | Stock-vs-yield mismatch in the food utility (annual crop against a wild stock) is an accepted MVP 2 limitation, not fixed now |
-| P5 | Pressure validation passed on 2 seeds × 400 years (`mvp2_pressure`); the strict agriculture xfail is replaced by a compact 2-seed test |
-| P6 | Aggregation: no broad ensemble; formalize "aggregation is not scientifically neutral, off in canonical runs"; at most a 1-2-seed confirmation after the final changes; correct aggregation belongs to MVP 3 |
+If the source tree differs from the frozen hash, classify the change explicitly as an optimization, numerical reformulation, bug fix, or model change.
 
 ---
 
-## 0. MVP 2 final stabilization pass: plan and progress
+## 2. Source-of-truth hierarchy
 
-### Fast-freeze policy (user, 2026-09-30; supersedes the experiment sizes planned below)
+When documents disagree, use this order:
 
-Goal: a stable MVP 2 model freeze as quickly as responsibly possible. Runtime work follows
-the freeze as a separate milestone. Before any simulation expected to take more than a few
-minutes, ask whether a unit test, analytical probe, synthetic state, decision replay or 1-2
-short seeds would answer the question; if so, use that.
+1. `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE_V2.md` — canonical scientific and architectural objective.
+2. `baselines/mvp2/freeze_manifest.json` — exact frozen revision, scenarios, seeds, reference outcomes, and performance baseline.
+3. This file — current implementation priorities, accepted limitations, and handoff notes.
+4. Tests and model-rule documentation — executable mechanism contracts.
+5. README and older comments — convenience documentation only; some text may still be stale.
 
-- **Tier 1, mechanism diagnostic** (preferred): unit tests, analytical calculations,
-  decision-level probes, synthetic states; 1 seed and 100-300 years if a run is needed.
-- **Tier 2, short paired validation** (only when stochastic dynamics matter): 2-4 matched
-  seeds, 300-600 years, stopping once the mechanism has clearly appeared.
-- **Tier 3, final freeze check** (once, after all model decisions): 4-8 seeds, the shortest
-  horizon that exercises the full MVP 2 transition.
-
-Remaining path to the freeze:
-1. **Field-abandonment audit** (Tier 1). Does the explicit `abandoned_fields` penalty
-   duplicate the crop value already in the stay utility? Record per farmer decision: home
-   food utility without crops, crop contribution, destination utility, penalty, utility
-   gain, move probability; re-evaluate offline with the penalty at zero. Remove or
-   reformulate the penalty if it is duplicative; keep it if it is a distinct, reasonable
-   cost. Not tuned toward any migration rate. **Done:** duplicative; replaced by the
-   replacement cost (P5 step 2c).
-2. Enable A by default; re-record the golden fixtures. **Done** (together with the
-   replacement cost, 2026-09-30).
-3. Intensification-pressure scenario; cultivation on vs off, 2 matched seeds × 400-500 years
-   (4 seeds or ~600 years only if ambiguous). Measures: cultivation occurrence, farm food
-   share, population, local density, food stress, sedentism. Replace the strict agriculture
-   xfail with a compact test derived from it. **Done: passed** (P5 step 5).
-4. Aggregation limitation documented (keep the strict xfail or replace it with a test that
-   asserts the limitation); at most a 1-2-seed confirmation. **Done** (P6 entry).
-5. Freeze: source revision, scenario configuration, golden fixtures, a 4-8-seed short
-   reference ensemble, status, known limitations, performance benchmark. **Done** (P7).
-
-After the freeze, equations and behavior change only for genuine correctness bugs.
-Optimizations are then validated against identical seeded output or tight tolerances.
-
-Goal: make MVP 2 faster, less prone to representation artifacts, and validated well enough
-to freeze, without starting MVP 3. Work proceeds phase by phase. **Each phase ends at a
-checkpoint where work pauses for review and the user decides whether to commit.** Every phase
-keeps `make check` green; behavior changes are labelled as model changes and re-record the
-golden fixtures in that phase only.
-
-Rules for the whole pass: no tuning coefficients toward a desired trajectory; prefer
-reformulations that are both more plausible and cheaper; keep aggregation off in reference
-runs; keep the MVP 3 split (shared group-level state: beliefs, technologies, location,
-network; distributional state: later strata) in every new data structure.
-
-### Findings from the code audit (before any change)
-
-- `BeliefMap` is four dense cell-length arrays per unit, rebuilt every year by perception
-  (full copy, full expiry scan) and by sharing (full copy per unit with partners). Sharing
-  transmits every fresher cell of every partner: effectively lossless map synchronization.
-- `water_access` in beliefs is a copy of a static, noise-free world field.
-- Migration scores every believed reachable cell (hundreds late in a run).
-- Field planning amortizes clearing over `min(max(residence_years, 1), horizon)`: past, not
-  expected future, tenure. A newly arrived group amortizes over 1 year.
-- Initial crop yield = potential × `crop_yield` 0.5 × agricultural efficiency `K/(K+2)` with K
-  near the 0.5 adoption bonus (≈0.2), i.e. ≈10% of potential: a likely double penalty.
-- Foraging allocation bisects 40 times (`economy/foraging.py`).
-- `StepContext.capabilities()` copies the cached capability dict on every call.
-- Crop potential and arable area are recomputed by both farming and field planning each year.
-- The ensemble uses a default `ProcessPoolExecutor` (no explicit start method, no thread
-  limits, scenario and world rebuilt per seed).
-
-### Phases (checkpoint after each)
-
-| Phase | Content (brief items) | Kind of change | Status |
-|---|---|---|---|
-| P0 | Benchmarks first (18): synthetic performance scenario with 100/500/1000/2000 units for 25-50 ticks (ms/tick, ms/unit/tick, per-subsystem time, peak RSS); benchmark tiers smoke / dev / release / baseline as make targets; record **pre-reform reference timings** (incl. 1,000-year seed 0) for target 19 | tooling | **done** |
-| P1 | Belief representation (5-8): mutable per-unit arrays updated in place by sparse `BeliefPatch` proposals (apply touches only listed cells); lazy expiry (validity = `year - observed <= memory` checked on read, no yearly scan); copy on fission/fusion only; drop `water_access` from beliefs (read from the world for known cells); float32 estimates | representation (exact on all golden fixtures and the 1,000-year seed 0) | **done** |
-| P2 | Bounded social information (1-4): `SocialReport` (cell, observed year, food, population, confidence, provenance: direct / relayed hops); `social_information.reports_per_interaction` (default 8), `max_report_age`, `transmission_confidence_decay`; senders pick reports by salience (current and recently visited cells, direct observations, unusually good or bad cells), not the whole map; direct observation confidence 1, each relay × decay; migration shrinks food belief toward a prior with weight q | **model change** (small measured effect) | **done** |
-| P3 | Revised after P2 (reachability already bounds candidates to ~20): no hard attention cap for humans (`max_considered_destinations: null`, utility-blind nearest-cells cap available for future species); switchable precision-weighted shrinkage of direct observations `q = tau^2/(tau^2 + sigma^2)`; perception-noise experiment with and without it; then review of the capped food utility | **model changes** (shrinkage on; food utility `log1p`) | **done** |
-| P4 | Remaining hotspots (11-16): static scenario context (arable ha, movement tables, neighborhoods, foraging access) built once and reused across seeds in a worker; per-tick `CropState` shared by farming and planning; foraging solver precision benchmarked (12/16 iterations or Newton-bisection) against a 1e-4 relative tolerance; immutable shared capability objects; light ensemble recorder (default for ensembles), full recorder on request; explicit `spawn`/`forkserver` context, one BLAS/OpenMP thread per worker, several seeds per worker. Measure against P0 (target ≥ 2×) | optimization; solver precision is a measured approximation | **checkpoint 2026-09-29**: items 1-8 done; remaining hotspots deferred (user moved on to P5) |
-| P4b | Familiarity reform (after the P4 investigation): lazy exponential decay of unpracticed familiarity, population-weighted merges | **model change** (accepted; golden re-recorded) | **done** |
-| P5 | Agriculture (20-25; **done** 2026-09-30: A on, replacement cost on, B off; pressure validation passed): expected future tenure `p(1-p^H)/(1-p)` from the unit's current stay probability; review tech × knowledge (candidate: knowledge sets distance to the technology frontier, `e_min + (1-e_min)K/(K+K_half)`, with `e_min` justified behaviorally, not fitted); small experimental cultivation share (2-5% labor) when crop returns are within a band of foraging, as generic subsistence exploration; scenarios A (abundant frontier) and B (intensification pressure); paired cultivation on/off ablation on B as a statistical test replacing the strict xfail | **model changes** + validation | **done** |
-| P6 | Aggregation (26), reduced by the fast-freeze policy: limitation documented, 2-seed confirmation, strict xfail kept | documentation | **done** |
-| P7 | Freeze (31), fast-freeze scope: source revision, `mvp2_neolithic` and `mvp2_pressure`, golden fixtures, 4-seed short reference runs, performance benchmark, final status and known limitations; git tag `mvp2` by the user (32-seed × 1,000-year baseline dropped) | release | **done** 2026-09-30 |
-
-Open design choices to confirm during review (defaults proposed, not fixed):
-
-- Prior for shrinking uncertain food beliefs (P2): proposal is the unit's own experience,
-  the mean of its *direct* observations in its memory window. It needs no hidden world
-  knowledge; an alternative is a vegetation-class expectation.
-- Transmission decay default ≈0.7 per hop, with reports older than the memory horizon never
-  sent.
-- Where a phase's result contradicts the plan (e.g. a reform does not speed things up, or
-  agriculture still cannot emerge under pressure), the finding is documented rather than
-  forced.
-
-### Progress log
-
-(Entries are added per phase: issue, old behavior, new behavior, assumptions, performance,
-validation, remaining concerns.)
-
-#### P0. Benchmarks and pre-reform reference (tooling; no behavior change)
-
-- **Added.** `experiments/benchmark.py` and `madexplorer bench {synthetic,runs}`:
-  - *synthetic*: the MVP 2 world with `n` groups of 30 placed on random land cells (own
-    placement generator, not a model stream), 20 years of perception + belief sharing only
-    (so belief maps reach a late-run state), then 30 timed full ticks. `--farming` gives
-    every group all technologies. Reports ms/tick, ms/unit/tick, per-subsystem ms/tick,
-    known cells per unit, peak RSS. Each case runs in a fresh `spawn` process.
-  - *runs*: ordinary seeded runs with a per-subsystem breakdown.
-  - `Simulator.timings` (off by default) accumulates evaluate+apply time per subsystem;
-    `Simulator.context()` factored out of `step()`. `numeric_platform()` moved to
-    `core/provenance.py` (used by golden tests and benchmark reports).
-  - Make targets: `bench-perf` (synthetic), `bench-smoke` (2 seeds × 250 y), `bench-dev`
-    (8 × 600 y), `bench-rc` (16 × 1,000 y), `baseline` (32 × 1,000 y → `baselines/mvp2`).
-  - `tests/test_benchmark.py`. Golden fixtures unchanged; 120 fast tests pass.
-- **Pre-reform reference** (2-core codespace; reports in `benchmarks/perf/p0_pre_reform_*.json`):
-
-  | Synthetic units (mean over ticks) | Known cells / unit | ms/tick | ms/unit/tick | sharing | migration | perception | diffusion | RSS |
-  |---|---|---|---|---|---|---|---|---|
-  | 100 (116) | 26 | 37 | 0.32 | 3 | 7 | 4 | 2 | 71 MB |
-  | 500 (577) | 106 | 171 | 0.30 | 41 | 25 | 18 | 12 | 127 MB |
-  | 1000 (1059) | 475 | 362 | 0.34 | 112 | 48 | 38 | 28 | 178 MB |
-  | 2000 (1792) | 796 | 677 | 0.38 | 255 | 82 | 60 | 60 | 293 MB |
-
-  Farming variant: same pattern (2000 units: 639 ms/tick, field planning 32 ms).
-  **1,000-year seed 0, reference mode: 167.9 s** (final 29,794 people, 1,165 units; peak
-  RSS 256 MB). Time by subsystem: sharing 47.5 s (28%), migration 19.0, foraging 15.6,
-  perception 15.2, diffusion 14.5, demography 11.2, field planning 8.1, learning 7.3,
-  fusion 6.1. **Target 19: ≤ ~84 s (2×) on this machine.**
-- **What it shows.** Per-unit cost rises with unit count (0.30 → 0.38 ms/unit/tick) because
-  belief sharing scales with units × known cells (41 → 255 ms, 6× for 3.5× units) as maps
-  saturate (106 → 796 known cells). Fusion (3 → 24 ms) and diffusion also grow faster than
-  linearly; to be checked in P4. P1-P3 target sharing, perception and migration directly.
-
-#### P1. Belief representation (representation change; seeded output unchanged)
-
-- **Old.** `BeliefMap` was immutable: perception copied four cell-length arrays per unit per
-  year and scanned them to erase stale entries; sharing copied them again for every unit with
-  partners; fission shared the map object; `water_access` (static, noise-free) was stored in
-  every unit's map.
-- **New** (`population/unit.py`, `mobility/exploration.py`, `mobility/migration.py`):
-  - `BeliefPatch(unit_id, cells, year, food_kcal, population)` is the proposal of perception
-    and sharing; `apply` writes only those cells into the unit's arrays. Patches carry copies,
-    so staged evaluate/apply semantics are unchanged.
-  - **Lazy expiry.** No yearly scan: an entry is current in year `t` while
-    `observed > t - memory_years`; `BeliefMap.current()` / `known_cells()` apply the test on
-    read (migration uses it to pick candidates). Stale entries may be merged or relayed, but
-    are always older than any current entry, so this never changes a current belief. This is
-    exactly equivalent to the old eager erasure.
-  - **Ownership.** A map belongs to one unit; fission copies it (`BeliefMap.copy()`), fusion
-    builds a merged map. Copy cost moved from every tick to rare structural events.
-  - **Static data out of beliefs.** Water access is read from `world.water_access` for known
-    cells; `Observation` and `cell_utility` changed accordingly.
-  - **Smaller types.** Food estimates float32 (noise sigma 0.3 ≫ 1e-7 precision), perceived
-    population int32, years int32: 12 bytes per cell per unit instead of 32.
-- **Validation.** All five golden fixtures unchanged (including after float32); the 1,000-year
-  seed-0 run is identical (29,794 people, 500,700 unit-years). New mechanism tests: lazy expiry,
-  patches touch only their cells, copies are independent; the Hypothesis sharing test now
-  applies the patch and compares with the reference dictionary merge.
-- **Performance** (`benchmarks/perf/p1_*`):
-
-  | Synthetic units | ms/tick P0 → P1 | perception | sharing | peak RSS |
-  |---|---|---|---|---|
-  | 500 | 171 → 166 | 18.4 → 10.6 | 41 → 36 | 127 → 87 MB |
-  | 1000 | 362 → 305 | 37.6 → 18.2 | 112 → 96 | 178 → 112 MB |
-  | 2000 | 677 → 601 | 60.2 → 32.4 | 255 → 235 | 293 → 165 MB |
-
-  1,000-year seed 0: perception 15.2 → 9.4 s, peak RSS 256 → 185 MB, but total 167.9 →
-  168.4 s because every other subsystem measured 3-10% slower in this run. That looks like
-  machine timing noise on the shared codespace (roughly ±5%), not a regression: the code
-  those subsystems run did not change. Whole-run comparisons below that noise level need
-  repeated runs.
-- **Remaining.** Sharing still compares whole maps with every partner (O(cells × partners)
-  per unit) and is now the dominant cost (≈28% of the run); P2 replaces it with bounded
-  reports. Perception's remaining cost is per-unit Python overhead (radius, neighborhood,
-  noise draw), addressed in P4 if still significant.
-
-#### P2. Bounded social information (model change)
-
-- **Old.** An encounter copied every partner observation fresher than the receiver's own:
-  maps converged toward the whole map (≈800 known cells per unit late in a run), at a cost of
-  O(cells × partners) per unit.
-- **New** (`mobility/exploration.py`, `species/human.yaml` `social_information:`):
-  - Beliefs carry provenance `hops` (0 = direct observation, k = relayed k times); confidence
-    `q = decay ** hops` (`transmission_confidence`, decay 0.7).
-  - Each sender picks `reports_per_interaction` = 8 reports per year from a small pool: cells
-    it perceives this year, cells it lived in within its memory (`recent_residence`, at most
-    one per year), and cells it last received reports about (so relaying is possible). Only
-    current beliefs no older than `max_report_age_years` (20) qualify. Ranking
-    (`social_report_salience`): the current cell first, then
-    `q × recency × (1 + |ln(food / prior)|)`, i.e. first-hand, recent and unusually rich or poor
-    places first; ties by cell id (deterministic).
-  - The receiver takes, per cell, the freshest report (then fewest relays, then earliest
-    partner) and adopts it if strictly fresher than its own belief, or as fresh with fewer
-    relays; it stores one more relay than the sender had.
-  - `belief_shrinkage`: migration evaluates `q·food + (1-q)·prior`. **The prior is the mean
-    of this year's direct food observations** (the group's current surroundings), a
-    simplification of the agreed "mean of its direct observations in memory" that needs no
-    scan of the map. Direct observations (q = 1) are unaffected.
-  - Report selection and receipt run once for all units (`select_reports_batch`,
-    `receive_reports_batch`); the per-unit `select_reports` / `receive_reports` are thin
-    wrappers used by the tests, so the rule exists once. The batched version reproduced the
-    per-unit version exactly (1,000-year seed 0 identical).
-  - New unit fields with merge/split rules: `food_prior_kcal` (weighted mean / copy),
-    `report_cells` (union / copy), `recent_residence` (latest year per cell / copy).
-- **Finding: social information barely reaches migration.** When a group decides, nearly all
-  cells it can reach in one move are cells it perceived directly that year (after 250 years,
-  6 of 818 reachable cells were outside perception), and a same-year direct observation always
-  beats a report. So map-wide synchronization cost ~28% of run time for almost no behavioral
-  effect, and **the earlier claim that migration chose among hundreds of cells was wrong:**
-  candidates are limited by reachability (~20 cells). The remaining winner's curse comes from
-  noisy *direct* observations of those ~20 cells.
-- **Finding: inherited familiarity grows without bound.** `familiarity` (foraging skill per
-  cell) is copied on fission and max-merged on fusion, so by year 850 a unit carries ~540
-  cells of lineage familiarity. Using it as "places lived" made report pools huge (sharing
-  51 s); replaced by `recent_residence`. The dictionary itself still costs memory and lookups;
-  noted for P4.
-- **Validation.** Golden fixtures unchanged (≤ 250 years, reports never changed a decision);
-  1,000-year seed 0 diverges (28,853 → 29,628 people after the residence fix vs 29,794 in P1).
-  Paired dev ensemble, P1 (`d47628d`) vs P2, 8 seeds × 600 years: final population −0.4%
-  (−52, se 100), migration rate +0.5% (se 0.3%), final-tail migration rate +0.007 (se 0.003),
-  identical technology milestones and invention counts. New mechanism tests
-  (`tests/test_exploration.py`, `tests/test_migration.py`): bounded report count whatever the
-  map size; current, first-hand and exceptional places first; stale and too-old beliefs not
-  passed on; relays add a hop and replace only worse beliefs; freshest-then-least-relayed wins
-  between partners; Hypothesis test of vectorized receipt against a one-by-one reference;
-  confidence falls per relay; hearsay pulls less than a direct observation but still more
-  than an average alternative; residence record bounded.
-- **Performance** (`benchmarks/perf/p2_*`; CPU time now recorded because wall time on this
-  shared machine varied by up to 2× between runs):
-
-  | | P1 | P2 |
-  |---|---|---|
-  | Synthetic 2000 units, ms/tick (sharing) | 601 (235) | 545 (120) |
-  | Synthetic 1000 units, ms/tick (sharing) | 305 (96) | 321 (52) |
-  | Known cells per unit after warm-up (2000 units) | 796 | 44 |
-  | Seed 0, 1,000 y: total / sharing / perception / migration | 168 / 48 / 9 / 20 s | 175 (169 CPU) / 30 / 16 / 25 s |
-  | Peak RSS seed 0 | 185 MB | 182 MB |
-
-- **Remaining.** Sharing is bounded, but the new per-unit work (hops, prior, residence
-  record, shrinkage) added fixed overhead to perception and migration, so the whole run is
-  not yet faster. Batching perception and migration per unit is a P4 item. The partner-draw
-  loop (one Python iteration per candidate pair) is now the largest part of sharing.
-
-#### P3. Migration uncertainty: direct-observation shrinkage and the noise experiment
-
-- **Decisions taken with the user after P2.** (1) No 12-cell attention cap: one relocation
-  already reaches only ~20 cells, so a cap would add a behavioral assumption for no speed
-  gain. `migration.max_considered_destinations` exists (`null` for humans); when set it keeps
-  the current cell plus the nearest cells by path cost (`attention_set`, utility-blind, so it
-  cannot re-create a best-of-many selection). (2) Direct observations get switchable
-  precision-weighted shrinkage instead of an ad hoc `1/(1+sigma^2)`.
-- **Implementation.**
-  - `food_prior` (perception): per unit and year, the mean log food of its direct
-    observations and `tau^2 = max(Var_obs(log food) - sigma^2, 0)`, the estimated true
-    between-cell variance (empirical Bayes; noise is multiplicative, so it is a log-space
-    quantity). Uses only what the group sees; no new parameter.
-  - `direct_observation_confidence`: `q_direct = tau^2 / (tau^2 + sigma^2)` when
-    `mechanisms.direct_observation_shrinkage` is on, else 1.
-  - `belief_shrinkage` v2.0: confidence `q = q_direct × decay^hops`; effective food
-    `exp(q·ln(food) + (1-q)·log_prior)`, unchanged when `q = 1`. **Relay shrinkage moved from
-    linear to log space** to use one consistent form (golden fixtures unchanged by this).
-  - The current cell is shrunk like any other cell (symmetric treatment of staying and moving).
-  - Fields `food_log_prior` / `food_log_signal_var` replace `food_prior_kcal`.
-- **Controlled mechanism result** (`tests/test_migration.py`; 21 cells observed with sigma 0.3,
-  40 draws). Mean annual move probability:
-
-  | Situation | shrinkage off | shrinkage on |
-  |---|---|---|
-  | All cells truly identical (pure noise) | 0.57 | 0.17 |
-  | True spread 0.3 (log sd), one neighbor 4× richer | 0.97 | 0.88 |
-  | True spread 0.3, no richer neighbor | 0.62 | 0.34 |
-  | True spread 0.8, one neighbor 4× richer | 0.99 | 0.98 |
-
-  Shrinkage removes most noise-only moves and keeps most of the response to real differences.
-- **Perception-noise ensembles** (MVP 2, seeds 0-7 paired, 600 years;
-  `ensembles/p3_noise_s{sigma}_shrink_{off,on}`):
-
-  | sigma | shrinkage | migration rate | sedentary share | final population | crowding death share | inventions | first cultivation |
-  |---|---|---|---|---|---|---|---|
-  | 0.1 | off | 0.159 | 0.26 | 11.5k | 4.0% | 7.5 | 121 |
-  | 0.3 | off | 0.219 | 0.14 | 12.0k | 2.8% | 7.25 | 122 |
-  | 0.5 | off | 0.271 | 0.07 | 7.7k | 2.1% | 7.0 | 148 |
-  | 0.1 | on | 0.161 | 0.28 | 13.6k | 4.1% | 6.5 | 120 |
-  | 0.3 | on | 0.146 | 0.28 | 7.4k | 4.2% | 5.75 | 134 |
-  | 0.5 | on | 0.137 | 0.28 | 3.8k | 4.0% | 4.9 | 142 |
-
-  Noise sensitivity (sigma 0.5 − 0.1, paired): **without shrinkage** migration +0.112
-  (se 0.005) and sedentary share −0.19 (se 0.005): noise dominates mobility, as before.
-  **With shrinkage** migration −0.024 (se 0.005) and sedentary share +0.002 (se 0.009):
-  mobility no longer depends on noise. Instead, noise now acts through information: final
-  population falls 13.6k → 3.8k (−9.8k, se 0.9k).
-- **Why population falls with shrinkage on** (seed 0, sigma 0.3, 600 years): groups are not
-  starving (food ratio 1.08 vs 1.02, energy deficit 0.006 vs 0.029); they colonize more slowly
-  (171 vs 519 occupied cells at year 600; similar density, 30 vs 34 people per cell). In the
-  reference model at year 300, **the food term is at the food-ratio cap (2) for both the home
-  cell and the best destination in 77% of decisions**; the median perceived gain of the best
-  cell is negative (−0.45) although by true food it is poorer than home in only 22% of cases.
-  So in the reference model much of the range expansion is driven by noise making the home
-  cell look worse than it is (a random-walk diffusion), not by a perceived benefit.
-  Shrinkage removes that, leaving expansion to real signals (crowding lowers food per head
-  below the cap), which are weak while land is abundant.
-- **Decision (user): adopt shrinkage** (`mechanisms.direct_observation_shrinkage: true` by
-  default) and treat the slower colonization as diagnostic, not as something to tune back.
-  Before re-recording fixtures, review the saturated food term (next).
-
-#### P3b. Food utility review (model change)
-
-- **Problem.** Migration valued food as `w·ln(min(R, 2))`, where R is perceived stock per
-  prospective head in years of need. The cap dates from the first commit with no recorded
-  purpose beyond "diminishing marginal value". Measured R in decisions: median about 3,
-  90th percentile 4-9; 65-100% of candidates above the cap. The term was flat in 67-77% of
-  decisions, so groups could not tell a rich cell from a very rich one. Once noise was
-  shrunk, many destinations became indistinguishable on food.
-- **Change.** `food_utility` rule v2.0 with a species choice
-  `migration.food_utility ∈ {capped_log, log1p, saturating, log}`; numerical guards clamp R to
-  [0.05, 1000]. Diagnostic `food_utility_slope` = dU/d ln R; a decision counts as
-  *food-saturated* when home R > 1 and the slope < 0.1 (ledger
-  `migration_decisions` / `food_saturated_decisions`, ensemble `food_saturated_share`).
-  Ensemble rows now also record occupied cells in years 150, 300, 450, 600 and 1000. The food
-  weight (2) was not retuned for any form.
-- **Controlled response** (shrinkage on, 21 cells around R ≈ 3, sigma 0.3; move probability):
-
-  | Form | noise only | 4× richer neighbor, true spread 0.3 | no richer neighbor, spread 0.3 |
-  |---|---|---|---|
-  | capped_log | 0.110 | 0.113 | 0.110 |
-  | log1p | 0.148 | 0.816 | 0.275 |
-  | saturating (k = 1) | 0.115 | 0.213 | 0.125 |
-  | log | 0.169 | 0.875 | 0.340 |
-
-- **Ensembles** (shrinkage on; seeds 0-7 paired, 600 years; `ensembles/p3_food_{form}_s{sigma}`;
-  values at sigma 0.1 / 0.3 / 0.5):
-
-  | Form | cells y300 | cells y600 | migration | food-saturated | sedentary | population y600 | first cultivation | inventions |
-  |---|---|---|---|---|---|---|---|---|
-  | capped_log | 34 / 20 / 14 | 405 / 225 / 116 | 0.16 / 0.15 / 0.14 | 67-77% | 0.28 | 13.6k / 7.4k / 3.8k | 120 / 134 / 142 | 6.5 / 5.8 / 4.9 |
-  | log1p | 44 / 53 / 33 | 595 / 641 / 456 | 0.17 / 0.19 / 0.19 | 0% | 0.32 / 0.27 / 0.21 | 16.1k / 17.9k / 12.2k | 240 / 173 / 304 | 11.9 / 11.1 / 11.6 |
-  | saturating | 36 / 28 / 23 | 394 / 272 / 183 | 0.09 / 0.08 / 0.08 | 6-10% | 0.52-0.62 | 13.4k / 9.7k / 6.8k | 194 / 214 / 185 | 25 / 23 / 18 |
-  | log | 48 / 48 / 41 | 532 / 522 / 514 | 0.23 / 0.23 / 0.24 | 0% | 0.26 / 0.20 / 0.15 | 14.7k / 14.3k / 13.9k | 258 / 216 / 227 | 12.9 / 10.2 / 12.4 |
-
-  Noise sensitivity (sigma 0.5 − 0.1, paired, se): cells at year 600 −289 (25) capped_log,
-  −139 (53) log1p, −211 (43) saturating, −18 (65) log; final population −9.8k (0.9k),
-  −4.0k (1.6k), −6.6k (2.1k), −0.7k (2.0k); sedentary share +0.00, −0.11 (0.007), +0.10,
-  −0.11 (0.009).
-- **Selection: `log1p`**, on mechanism grounds:
-  - It is monotone and never flat (0% saturated decisions).
-  - It is bounded only logarithmically, so abundance cannot run away, and it is finite at R = 0.
-  - It has the requested interpretation: diminishing returns, marginal value per kcal 1/(1+R).
-  - It responds strongly to genuinely richer neighbors, and its noise sensitivity of
-    colonization and population is less than half the cap's.
-  - The other forms: `capped_log` rejected (flat, blind to a 4× richer neighbor, colonization
-    set by noise); `saturating` rejected (nearly flat above R ≈ 3 with k = 1, a new free
-    parameter, weak response, extreme sedentism); `log` kept as a diagnostic (most
-    noise-robust, but no diminishing returns and a hard floor at R → 0). It shows that
-    colonization of ~500-640 cells is not an artifact of log1p's shape.
-  - Colonization speed was not a criterion; the old reference's 519 cells were not targeted.
-- **Accepted trade-offs.**
-  - Under log1p, sedentism still depends on noise (−0.11 from sigma 0.1 to 0.5, versus −0.19
-    in the original model without shrinkage).
-  - log1p has low elasticity at very low stocks (R < 1: a 4× richer cell gains only
-    ln(1.56/1.14) at R = 0.14). This regime is rare in runs (home R 10th percentile ≈ 1.2).
-    The shrinkage mechanism tests now use a realistic R ≈ 3.
-  - First cultivation comes later and varies more (173-304 vs 120-142). Inventions double
-    (≈11-12 vs 5-7), with larger populations and wider range. Both are for P5 to examine.
-- **Validation.** Golden fixtures re-recorded once, after both P3 decisions
-  (shrinkage on, log1p). 141 fast tests pass. New tests: forms monotone with correct slope;
-  smooth forms keep a gradient where the cap is flat; saturating bounded; shrinkage damps
-  noise-only moves at R ≈ 3 and keeps the response to a real 4× richer neighbor.
-- **Statistical suite after P3** (`make test-stat`, 18 min): 3 pass, the agriculture test is
-  still the strict xfail (open issue 1, P5), and **the aggregation-tolerance test now fails**.
-  With 8 units per cell, final population is 2.6× the aggregation-off reference (mean paired
-  log ratio 0.97, tolerance 0.35, all 8 seeds higher). Under the new migration model the
-  "8 units per cell ≈ reference" approximation from Section 7.1 no longer holds. The
-  tolerance was not loosened. **Marked a temporary strict xfail linked to P6** (user
-  decision): aggregation off is the canonical reference; P6 either establishes a defensible
-  approximation range or documents aggregation as performance-only for MVP 2. The
-  cultivation-timing case of the same test still passes and is not marked.
-
-#### P4. Remaining hotspots (IN PROGRESS, checkpoint 2026-09-29)
-
-**Rules for P4 (user):**
-- Behavior-preserving unless a change is isolated and experimentally justified.
-- Golden fixtures stay unchanged for pure optimizations.
-- RNG semantics preserved: draws may be batched only when they are identical; reformulating
-  stochastic decisions needs a separate experiment.
-- Inherited familiarity is investigated, not silently pruned.
-- The 2× target is a stretch goal, never a reason to change behavior.
-
-**Reference for P4.** The P3 model is a larger simulation than the pre-P3 one: log1p
-colonizes more of the map. **1,000-year seed 0 at P4 start: 227.8 s CPU (237.9 s wall),
-35,010 people, 1,376 final units** (`benchmarks/perf/p4_start_seed0_1000y.json`), versus
-168 s / 1,165 units before P3. Per-unit cost is similar (0.37 ms/unit/tick late), so a 2×
-target is ≈ 114 s on this machine. Windows:
-
-| Window | Years | ms/tick | Units |
-|---|---|---|---|
-| Early | 101-150 | 5.5 | 12 |
-| Middle | 451-500 | 167 | 469 |
-| Late | 951-1000 | 490 | 1,325 |
-
-The synthetic reference is `p4_start_synthetic.json`. Its 500-unit case overlapped with a
-test run, so compare CPU time there.
-
-**Done so far (all tests green, 148 fast tests):**
-
-| Item | Change | Kind | Verified |
-|---|---|---|---|
-| 1 | `core/static.py` `StaticContext`: world, life tables, movement models (lazy reachability caches), per-species `ForageAccess`, arable ha, cached perceived cells per (species, cell), padded neighborhood tables. Keyed by a hash of world/ecology/agriculture/species config (not seed or horizon). `Simulator(static=...)` checks the key; ensemble workers reuse one via `shared_static_context` | exact | golden unchanged; `tests/test_static.py` (reuse across seeds reproduces fresh runs) |
-| 2 | `StepContext.crop_potential()` memoized per step (farming + field planning); arable ha from the static context | exact | golden unchanged |
-| 3 | `StepContext.capabilities()` returns one shared read-only mapping per technology set (`capability_cache`), no per-call dict copy | exact | golden unchanged. MappingProxyType is not picklable: clear `sim.capability_cache` before pickling a Simulator |
-| 4a | Migration decisions batched: vectorized first-maximum argmax; the hazard still uses the scalar `migration_probability` (bit-identical); one `rng.random(n)` for all move draws in unit order. Any exact tie sends the year through the sequential path (`_evaluate_sequentially`) to keep the draw order | exact | golden unchanged; `test_batched_decisions_equal_unit_by_unit_decisions_and_draws` (same proposals, same RNG state) |
-| 4b | Perception batched: one `standard_normal` call for all units (verified identical to sequential draws); food prior per segment (`food_prior_batch`) | rounding-level: batched mean/var differ from per-unit `np.mean`/`np.var` by ≤ 2e-14 relative in about half of cases (pairwise vs sequential summation) | golden unchanged; 1,000-year seed 0 identical |
-| 5 | Sharing partner draws: `candidate_encounters` builds all (receiver, partner) pairs in the nested-loop order with array operations, then draws **one independent uniform per pair** in one `rng.random(n_pairs)` call (same law, same draws) | exact | golden unchanged; `test_candidate_encounters_follow_the_nested_loop_order`. Not benchmarked separately yet |
-| 6 | Foraging effort solver: safeguarded Newton from zero effort (monotone on the concave harvest curve), tolerance `abs(H - T) ≤ 1e-12·T`, falls back to the old 40-step bisection | **numerical approximation** | On 4,280 recorded real solves: max difference from 40-step bisection 2.3e-12 (fraction) and 1.9e-12 (harvest), about bisection's own resolution; 2.5× faster per solve (9.7 vs 24.5 µs); 12-step bisection would err by 5e-4. Hypothesis test against a 60-step bisection. Paired ensemble vs bisection (seeds 0-7, 600 years; `ensembles/p4_newton_dev` vs `p3_food_log1p_s0.3`): statistically equivalent (details below the table). **Golden fixtures re-recorded for this change** |
-| 7 | Light recorder: `MetricsRecorder(light=True)` / `Simulator.run(light=True)` computes only `LIGHT_FIELDS` plus tech shares, no snapshots; `Simulator(record_events=False)` discards events. Ensembles default to light unless runs are saved | exact (model untouched) | `test_light_recorder_rows_equal_the_same_fields_of_full_rows` (farming run, every light field bit-identical to the full row, NaN included; no events or snapshots); `test_ensemble_summary_is_the_same_from_light_and_full_recorders`. CLI `madexplorer ensemble --full-recorder` (`timed_ensemble(light=...)`), tested to give identical `runs.csv` rows. `bench runs` keeps the full recorder, for comparability with earlier reports |
-| 8 | `run_ensemble`: explicit `spawn` context; `OMP/OPENBLAS/MKL/VECLIB/NUMEXPR_NUM_THREADS=1` for workers (unless the user set them); persistent workers reuse the static context across seeds | implementation | `timed_ensemble` and the CLI now pass `light`. Ensemble timing below |
-
-Item 6 paired ensemble in detail: identical milestones and colonization to year 300; final
-population −219 (se 145); occupied cells −4.4 (se 3.0); migration +0.0004 (se 0.0005).
-
-**Measured after items 1-4** (1,000-year seed 0; `p4_items1to4_seed0_1000y.json`):
-- The run is identical (35,010 people).
-- CPU 227.8 → 198.7 s.
-- Perception 32.5 → 9.5 s; migration 37.0 → 25.7 s.
-- Middle window 167 → 127 ms/tick; late window 490 → 445 ms/tick.
-- Dev ensemble per-run time (items 1-6): 49.8 → 40.1 s.
-
-**Ensemble timing, items 1-8** (`bench-dev` shape: 8 seeds × 600 years, `--jobs 2`; child
-CPU time from the shell's `times`; pre-P4 = a git worktree at `2746232`, set up with `uv sync`):
-
-| Configuration | Wall | Child CPU |
-|---|---|---|
-| pre-P4 (`2746232`) | 222 s | 355 s |
-| items 1-8, `--full-recorder` | 165 s | 270 s (−24%) |
-| items 1-8, light recorder (default) | 161 s | 264 s (−26%) |
-
-The light recorder alone saves ≈2%. Its ensemble rows are identical to the full recorder's
-for every measure (`madexplorer compare`: all differences 0). The spawn / thread-limit /
-persistent-worker changes (item 8) cannot be switched off separately, so their own share is
-not isolated. The pre-P4 and items 1-8 runs differ slightly in outputs (the Newton solver,
-item 6), so this is a timing comparison, not a replay.
-
-**Current state, items 1-8** (`p4_items1to8_seed0_1000y.json`, `p4_items1to8_synthetic.json`):
-
-| Subsystem, seed 0, 1,000 y (CPU s) | P4 start | items 1-4 | items 1-8 |
-|---|---|---|---|
-| knowledge_sharing | 37.4 | 39.0 | 26.8 |
-| migration | 37.0 | 25.7 | 20.2 |
-| diffusion | 21.4 | 22.6 | 18.9 |
-| foraging | 28.5 | 29.1 | 18.0 |
-| demography | 16.5 | 17.4 | 14.4 |
-| field_planning | 11.9 | 12.1 | 9.6 |
-| learning | 10.7 | 11.4 | 9.4 |
-| perception | 32.5 | 9.5 | 7.6 |
-| fusion | 7.4 | 7.7 | 7.0 |
-| **total CPU** | **227.8** | **198.7** | **159.0** |
-
-- 1.43× faster than P4 start, against a 2× stretch target of ≈114 s. The run is not identical to
-  P4 start: the Newton solver (item 6) changed it, and it now ends with 35,953 people and 1,393
-  units instead of 35,010 and 1,376. Peak RSS 196 MB (unchanged).
-- Windows (ms/tick): early 6.0, middle 110 (was 167 at P4 start), late 364 (was 490). The
-  late window is 0.27 ms/unit/tick (was 0.37).
-- **Caveat on noise.** Subsystems whose code did not change between items 1-4 and 1-8 also
-  measured 12-18% faster (learning 11.4 → 9.4, demography 17.4 → 14.4, diffusion 22.6 → 18.9).
-  So part of the 199 → 159 s drop is machine variation on the shared codespace, not the code.
-  The attributable gains are foraging −11 s (Newton, item 6) and sharing −12 s (item 5); both
-  are well beyond the ≈15% background shift.
-- Synthetic (ms/tick CPU, P4 start → now): see the two JSON reports. Per-unit cost at 2,000
-  requested units is 0.25 ms/unit/tick (P2: 0.30). Sharing (82 ms), migration (66), diffusion
-  (56) and demography (38) lead.
-
-**Inherited familiarity investigation** (probe, not in the repository: a shadow record of the
-year each unit's lineage last foraged each cell, copied / max-merged with the same rules as
-`familiarity`, keys verified identical at every checkpoint; 1,000-year seed 0):
-
-- *Mechanism.* Familiarity f starts at 0.6 in an unknown cell and rises `f += 0.3(1 − f)` per
-  year foraged there (0.9 after ~4 years). It never decays. Fission copies it; fusion takes the
-  per-cell maximum.
-- *What it affects.* It multiplies foraging effort, which sets harvest when labor limits it
-  and each group's share of a shared cell. It also enters `forage_marginal_kcal_per_hour`,
-  which is used by field planning (farm vs forage) and by the agriculture need signal in
-  innovation. It does **not** enter migration utility, beliefs or social reports (since P2).
-- *Growth.* Cells per unit: 12 (year 100), 57 (500), 103 (600), 394 (800), 772 (1,000; p90
-  976). Share of entries last practiced by the lineage more than 100 years earlier: 44%
-  (year 200), 78% (600), 96% (1,000).
-- *Behavioral reach.* In the second half of the run, 160k foraging years were a group's first
-  year in a cell (arrivals, not continuing residence). For those, **mean familiarity was 0.93
-  and 89% started above the 0.6 of a truly unknown cell.** By lineage staleness: 11% truly new;
-  44% re-entered within 20 years; 22% after 21-100 years; **23% after more than 100 years**,
-  still at mean familiarity 0.98. So a group arriving where an ancestral band foraged four or
-  more generations earlier forages as if it had never left.
-- *Cost.* Direct runtime is small: fission dict copies 0.09 s, fusion max-merge loops 0.75 s
-  (<1% of the run). Memory grows about quadratically late in the run: ≈1.08M entries ≈
-  100 MB estimated at year 1,000, a large share of the 196 MB peak RSS. That estimate is from
-  entry counts, not measured.
-- *Interpretation.* This is immortal lineage map memory rather than practiced local skill. It
-  is inconsistent with the 20-year `memory_years` horizon that bounds beliefs. It also
-  plausibly biases the farm-vs-forage comparison toward foraging for groups re-entering old
-  lineage ranges (open issue 1). That last point was untested at the time; P4b's experiment
-  did not support it (marginal foraging returns unchanged).
-- *Reformulation options* (a separate model change, not part of P4; for the user to decide):
-  1. **Decay toward the unfamiliar level when not practiced** (recommended):
-     `f = f0 + (f_last − f0)·exp(−Δt/τ)`. Evaluate it lazily from a stored last-practiced year,
-     as belief expiry already works, and prune entries once within ε of f0. Taking
-     τ = `memory_years` adds no new parameter. Smooth, and it bounds memory.
-  2. Hard horizon: forget entries not practiced within `memory_years`. Simplest; a step
-     change at the horizon.
-  3. Independently of 1 or 2: fusion takes the population-weighted mean instead of the
-     maximum (the maximum assumes the most skilled member's knowledge is shared by everyone).
-  4. Keep it as is, documented as cultural geographic knowledge.
-
-  Any of options 1-3 needs a paired dev ensemble and re-recorded golden fixtures.
-
-**Remaining P4 work, in order:**
-1. Inherited familiarity: options 1 + 3 chosen, implemented and measured as P4b below;
-   awaiting acceptance (then flip the default and re-record the golden fixtures once).
-2. Next hotspots, in order of items 1-8 CPU time (seed 0):
-   - sharing's remaining per-unit work (26.8 s);
-   - migration (20.2 s);
-   - diffusion, `contacts` per unit (18.9 s);
-   - foraging, per-cell Python around the Newton solver (18.0 s);
-   - demography and the `weighted_count` calls (14.4 s);
-   - fusion, `merge_state` / `rewire_ties` (7.0 s).
-3. Write up P4 (speedup, and whether each change is exact, approximate or behavioral), then
-   checkpoint.
-
-The scratch artifacts used during P4 (recorded solver inputs, a pickled late-run state) are
-not in the repository. To regenerate solver inputs, wrap `economy.foraging.cell_harvest` to
-record every 20th call's arguments during a 600-year seed-0 run (about 6,300 samples).
-
-#### P4b. Practiced familiarity reform (MODEL CHANGE, separate from P4; ACCEPTED 2026-09-29)
-
-**Scope.** P4 itself was behavior-preserving or numerically controlled: only the Newton solver
-(item 6) changed seeded output, as a measured approximation. The familiarity decay reform is a
-later, *intentional* model reform, kept separate from the P4 performance results. P4b is
-complete:
-- `mechanisms.familiarity_decay: true` is the default;
-- golden fixtures were re-recorded once for it (all five changed, including MVP 1, since
-  familiarity is a foraging mechanism);
-- `make check` is green (165 tests).
-
-**Conceptual distinction (documented in `population/familiarity.py` and `species/human.yaml`).**
-- *Beliefs / geographic information*: knowledge that a place exists and approximate
-  information about it (the belief map, social reports, memory horizon).
-- *Familiarity*: practiced ability to exploit that local ecology efficiently. It is a
-  foraging-efficiency multiplier per cell.
-
-A lineage can therefore remember a valley for generations, through beliefs and reports, while
-losing its practical foraging familiarity with it.
-
-**Accepted consequences (intentional, not regressions).** The reform changes the reference
-trajectory materially:
-- lower population at year 600 (−18%) and year 1,000 (−23%);
-- fewer occupied cells;
-- lower sedentism.
-
-Long-distance movement and recolonization now carry a real relearning cost; the previous model
-gave lineages near-perfect competence in places they had not used for a century. All numbers
-cited in Sections 0-P4 and earlier that predate this change are from the pre-reform model.
-
-**Agriculture.** Marginal foraging returns (the field-planning input) are unchanged, and
-farming at comparable population or density is similar. Aggregate farming declines because
-growth and colonization slow. This is evidence that the agriculture-adoption problem (open
-issue 1) is **independent of the familiarity issue**. It is addressed in P5, without
-weakening decay or raising yields to compensate.
-
-**Plan and record as carried out:**
-
-User decision 2026-09-29: options 1 + 3 from the P4 familiarity investigation. P4 itself stays
-behavior-preserving / numerically controlled; this is a later, intentional model reform.
-
-Plan:
-1. Semantics. Familiarity = practiced competence at exploiting one cell's ecology, not
-   knowledge that the place exists (that stays in beliefs). Effective value
-   `F = F0 + (F_stored - F0)·exp(-a/tau)`, with F0 = `cognition.initial_familiarity` (0.6),
-   tau = `cognition.memory_years` (20; no new timescale), and a = years without practice. A
-   cell foraged in consecutive years does not decay (a = years since last practice − 1,
-   floored at 0), so resident groups are unaffected. No hard cutoff.
-2. Lazy evaluation. Store value and last-practiced year per cell; decay only when read.
-   Practice = decayed value + the usual learning increment, stamped with the current year.
-3. Merge = population-weighted mean of values decayed to the merge year (a cell missing on
-   one side counts as F0), for fusion and coarsening alike. Fission gives the daughter the
-   parent's effective values materialized at the split year; lineages then decay
-   independently.
-4. Pruning (representation only): an entry within 1e-6 of F0 when materialized at a merge or
-   split is dropped, since absence means F0. An implementation threshold, not a parameter.
-5. Switch `mechanisms.familiarity_decay` (covers decay and weighted merge), **off by default
-   until the experiment is accepted**, so golden fixtures stay unchanged; the old rules are
-   reproduced exactly when off.
-6. Mechanism tests (spec list), paired dev ensemble (seeds 0-7, 600 years) plus 1,000-year
-   runs for agriculture, with the requested diagnostics (familiarity on arrival, time since
-   practice, foraging returns, cultivation, sedentism, milestones). Checkpoint. On
-   acceptance: flip the default, re-record golden fixtures once, update this file.
-
-**Implementation (done, switch off by default).**
-- `population/familiarity.py`: `FamiliarityMap` (stored value and last-practiced year per
-  cell), `FamiliarityRule` (F0, tau or None), rule `familiarity_decay` v1.0 (governance
-  registry, 44 rules at the time; 53 after P5).
-- Foraging reads `effective(cell, year)` and practice goes through `practice()`.
-  `merge_state` / `absorb` / `split_off` take the merge/split year and the rule; fusion,
-  fission and coarsening pass them. Founders' homeland entry is stamped with the start year.
-- Materialization (merge, split) folds the decay into the value and re-stamps the year to
-  `max(last, year − 1)`, so the idle clock continues unchanged (tested). Merged stamp = the
-  latest of the two sides' stamps.
-- Switch off: `make check` green and golden fixtures unchanged, so the old rules are
-  reproduced exactly.
-- Tests: `tests/test_familiarity.py`, 14 tests covering the spec list:
-  - no decay at Δt = 0, nor while practiced every year;
-  - monotone approach to F0;
-  - excess 1/e after tau idle years;
-  - never below F0 (Hypothesis);
-  - practice starts from the decayed value;
-  - population-weighted merge, with a missing cell counted as F0;
-  - merge uses values decayed to the merge year;
-  - the merge keeps the idle clock;
-  - fission gives the daughter the parent's effective values, and the lineages then diverge;
-  - pruning only near F0;
-  - decayed familiarity leaves beliefs intact;
-  - the old rules when off;
-  - foraging reads and practices the decayed value, end to end, both switch settings.
-
-**Experiment.** One matched ensemble instead of the planned 600-year dev run plus 1,000-year
-runs: seeds 0-7 paired, 1,000 years (the 600-year checkpoints are inside it),
-`mvp2_neolithic` reference mode, decay off vs on (`ensembles/p4b_familiarity_1000y/{off,on}`,
-not in git). Ensemble rows plus a probe that only observes. The probe keeps its own record of
-the lineage's true last-practice year, because the model's stamps are re-based on merge and
-split. Probe script not in git: wrap `CellHarvest.apply`, `groups.split_off` and
-`composition.merge_state` as in the P4 investigation. Paired mean difference, on − off (se):
-
-| Measure | off | on | diff (se) |
-|---|---|---|---|
-| Familiarity at arrival, 2nd half: mean / median | 0.92 / 0.998 | 0.69 / 0.63 | −0.23 (0.007) / −0.37 (0.002) |
-| ... arrivals after >100 idle years: mean | 0.97 | 0.600 | −0.37 (0.003) |
-| People-weighted familiarity, all foraging, 2nd half | 0.97 | 0.89 | −0.084 (0.005) |
-| Arrivals: new cell / return ≤20 y / 21-100 y / >100 y | 14 / 44 / 21 / 21% | 15 / 46 / 19 / 20% | similar |
-| Median idle years of returns | 18.5 | 14 | −4.5 (0.8) |
-| Familiarity entries per unit, year 600 / 1,000 | 83 / 640 | 45 / 97 | −38 / −543 |
-| Forage kcal per hour, year 400 / 1,000 | 736 / 633 | 714 / 624 | −23 (7) / −10 (5) |
-| Marginal forage return (field planning input), year 600 / 1,000 | 498 / 468 | 507 / 468 | +8 (7) / −0.1 (13) |
-| Population, year 400 / 600 / 1,000 | 3.47k / 17.7k / 37.7k | 2.84k / 14.5k / 29.0k | −0.63k (0.25) / −3.2k (1.2) / −8.7k (3.5) |
-| Occupied cells, year 300 / 600 / 1,000 | 53 / 637 / 1,007 | 44 / 548 / 944 | −9 (4) / −89 (41) / −63 (26) |
-| Migration rate | 0.263 | 0.252 | −0.011 (0.010) |
-| Crude death rate, last 50 y (per 1,000) | 38.3 | 38.9 | +0.56 (0.15) |
-| First cultivation / storage pits (year) | 173 / 141 | 161 / 132 | −12 (10) / −9 (23) |
-| Farm share of food, last 50 y | 0.166 | 0.055 | −0.11 (0.057) |
-| Farming population share, year 1,000 | 0.75 | 0.47 | −0.28 (0.10) |
-| Sedentary share, last 50 y | 0.49 | 0.36 | −0.13 (0.065) |
-| Inventions | 20.3 | 13.5 | −6.8 (2.4) |
-| Final share seed selection / fallow rotation | 1.00 / 0.99 | 0.49 / 0.39 | −0.51 (0.17) / −0.60 (0.17) |
-| Run time per seed | 255 s | 211 s | −44 s (fewer units) |
-
-Interpretation:
-- **Familiarity now has its intended meaning.** A lineage returning after a century
-  forages like newcomers (0.60), where before it kept 0.97. Continuously resident groups
-  are unaffected (people-weighted familiarity falls only 0.97 → 0.89). Stored entries per
-  unit stay bounded (≈100 instead of 640 and growing).
-- **Growth and range expansion slow down.** Every relocation now costs a real relearning
-  period (arrival efficiency 0.69 instead of 0.92). Colonization is slower (−14% cells at
-  year 600), mortality slightly higher, and population is −18% to −23% from year 400 on.
-  The earlier permanent familiarity subsidized moving within the ancestral range.
-- **Agriculture: the prediction from the P4 investigation is not supported.** Mean marginal
-  foraging returns, the input field planning compares with crop returns, are the same in
-  both models. Farming at year 1,000 is lower with decay (farm share −0.11, 1.9 se;
-  farming population −0.28). At matched population or density (pooling 50-year trajectory
-  points), farming is similar in both models or slightly higher with decay:
-  - density 30-34 people per cell: farm share 0.042 off vs 0.094 on (few points on);
-  - density 34-38: 0.16 vs 0.23.
-  So the lower year-1,000 farming follows the smaller and slower-growing population, in
-  line with farming in this model emerging late, where population is densest. It is not a
-  direct effect of familiarity on the farm-vs-forage choice. This is observational
-  (trajectory points pooled across seeds, not a causal decomposition), and the high-density
-  bins have few points in the decay model. Nothing was tuned.
-- Accepting the reform makes the year-1,000 reference slower-growing and less agricultural.
-  Open issue 1 (farming rarely takes hold) is, if anything, sharper.
-
-
-#### P5. Agriculture (IN PROGRESS, started 2026-09-29)
-
-Guiding question (user): *under what ecological and demographic conditions should cultivation
-become rational under the current equations, and does it emerge there?* Not: how to restore
-an earlier farm share. No weakening of familiarity decay and no yield increases to
-compensate.
-
-Plan (checkpoint after each step; model changes only with user approval and paired
-ensembles):
-1. **Audit (measurement only).** Record the field-planning decision inputs in reference runs:
-   - the yield decomposition: potential × `crop_yield` capability × agricultural efficiency
-     `K/(K+2)`;
-   - clearing hours, and the tenure assumed (`min(max(residence, 1), horizon)`) against
-     realized future tenure;
-   - farm return vs marginal foraging × 1.1.
-   From these, static counterfactuals show which factor binds: knowledge efficiency,
-   technology capability, tenure, clearing. Then options with a recommendation.
-2. Tenure: expected future tenure `p(1 − p^H)/(1 − p)` from the unit's stay probability, if
-   the audit shows the past-residence proxy is biased.
-3. Technology × knowledge: whether `crop_yield` 0.5 × `K/(K+2)` double-penalizes early
-   cultivation (candidate `e_min + (1 − e_min)·K/(K + K_half)`, `e_min` justified
-   behaviorally).
-4. Experimental cultivation share: only if the mechanism requires it.
-5. Scenario B (intensification pressure) and matched cultivation on/off ablation, replacing
-   the strict xfail.
-
-**Step 1: audit (done 2026-09-29; measurement only, model unchanged).**
-- Method: seeds 0-7, 1,000 years, reference mode (with P4b). Probe not in git.
-  - It wraps `FieldPlanningSubsystem.evaluate` every 5th year for units holding a crop
-    technology: 778k unit-decisions.
-  - It records the yield components, clearing hours, marginal forage return, past
-    residence, and this year's move hazard (from `MigrationSubsystem.decide` with a private
-    RNG).
-  - Realized future tenure comes from recorded relocations.
-  - A 300-year check confirmed the probe leaves seeded output bit-identical.
-  - Data: `ensembles/p5_audit/audit_seed*.npz` (not in git).
-- **Ecology is not the constraint.** Potential yield median 1.05 Mkcal/ha (p10 0.62, p90
-  1.56). With a mature crop and full skill (capability 0.9, efficiency 1), farming new land
-  would beat marginal foraging × 1.1 in 97.5% of decisions.
-- **Yield decomposition.** Capability median 0.5 (`plant_cultivation`); knowledge K median
-  3.05 (2.25 before year 400), so efficiency K/(K+2) is 0.60 (0.53 early). Realized yield is
-  0.25-0.35 of potential: median 3.6 × 10^5 kcal/ha, 602 kcal/h on existing fields, against
-  median marginal foraging 520 kcal/h (647 before year 400).
-- **Static decision shares** (farming beats foraging × 1.1; counterfactuals ignore feedback):
-
-  | Variant | all years | years ≤ 400 | years > 700 |
-  |---|---|---|---|
-  | existing fields (clearing sunk) | 0.56 | 0.35 | 0.61 |
-  | new land, current rule (past-residence tenure) | 0.29 | 0.08 | 0.35 |
-  | tenure expected from hazard `p(1−p^H)/(1−p)` | 0.32 | 0.12 | 0.37 |
-  | realized tenure (oracle) | 0.29 | 0.09 | 0.33 |
-  | tenure = horizon (10) | 0.44 | 0.22 | 0.49 |
-  | knowledge efficiency = 1 | 0.76 | 0.75 | 0.77 |
-  | efficiency `0.5 + 0.5·K/(K+2)` (illustrative e_min) | 0.55 | 0.43 | 0.58 |
-  | capability 0.9 | 0.72 | 0.65 | 0.71 |
-
-  Where expansion wins, foraging is depleted: marginal forage return median 276 vs 584
-  kcal/h where it loses, and cells are twice as populated (48 vs 23 people). This is the
-  intended mechanism: cultivation becomes rational under local crowding and depletion.
-- **Tenure proxy.** Past residence under-states expected tenure for recent arrivals and
-  over-states it for long residents. Realized future tenure (capped at 10), by current
-  residence:
-  - 1-4 years: assumed 1.9, hazard-based 3.6, realized 3.35;
-  - 5-9 years: assumed 6.7, hazard-based 6.1, realized 5.3;
-  - 10 or more: assumed 10, hazard-based 7.0, realized 6.2.
-
-  The hazard-based form tracks realized tenure much better (slightly optimistic), but it
-  moves the decision share only from 0.29 to 0.32.
-- **The binding constraint is field scale-up, not whether farming pays.**
-  - Units with fields: 24% of decisions. Median field 0.36 ha, covering **0.6% of need**
-    (p90 13 ha).
-  - Crops reach a material share only for groups resident 50+ years (median 37% of need).
-    Residence median is 5 years, p90 24.
-  - Cause: `adjusted_fields_ha` grows fields by `rate × gap × (fields + initial_plot)`:
-    - the first plot is `0.3 × gap × 2 ha` (median 0.15 ha);
-    - then growth is ~7% a year (median gap 0.25);
-    - so reaching the need cap (median 55 ha) takes ~80 years of uninterrupted residence,
-      and every relocation abandons the fields.
-  - Labor is not what limits this: a median group could clear ~7.6 ha a year with 20% of its
-    labor.
-  - So even where farming out-earns foraging, the adjustment rule (a placeholder
-    partial-adjustment law) keeps it marginal for most of a group's stay. The rule, not
-    ecology, technology or knowledge, is the main reason farming stays rare.
-- Experimental cultivation (step 4) is not needed: groups already try farming (24% hold
-  fields). What fails is scale-up.
-
-**Options for step 2 (model changes; decision pending):**
-- A. **Field adjustment toward a target** (recommended first):
-  `fields += rate × (target − fields)` while farming wins, with target = min(need cap, labor
-  cap, arable share). The existing rate 0.3 then closes ~95% of the gap in ~9 years. It keeps
-  the existing return comparison, which self-corrects: as foraging effort falls, its
-  marginal return rises. Clearing labor stays a real cost (labor debt) and could be bounded
-  by an existing labor share. No yield change.
-  - A2 (more exact, more code): choose fields where marginal farm and forage returns are
-    equal, using the foraging harvest curve.
-- B. **Hazard-based expected tenure** (recommended on correctness grounds, small effect):
-  store last year's move hazard per unit and use `p(1 − p^H)/(1 − p)`.
-- C. **Technology × knowledge** (defer): efficiency is the largest static factor, but its
-  "double penalty" is partly conceptual. `crop_yield` 0.5 = undomesticated crops;
-  K/(K+2) = practitioner skill; the invention threshold K = 2.2 means inventors realize
-  52%. Re-evaluate after A, since the static counterfactuals ignore the dynamics, and a
-  frontier formulation risks acting as a disguised yield increase.
-- Then step 5: scenario B and a matched cultivation on/off ablation.
-
-**Step 2: A and B implemented (2026-09-29), behind temporary switches, both off.** User
-decision: do A and B, run a matched 2×2; no experimental cultivation; technology ×
-knowledge untouched.
-- A, `mechanisms.field_growth_to_target`, rule `field_growth_to_target` v1.0:
-  - It applies when new land pays under the unchanged return comparison.
-  - Step = min(`field_adjustment_rate` × (need area − fields), labor-feasible area).
-    - Need area: requirement × (1 + surplus target) / expected yield; the existing cap, no
-      new parameter.
-    - Labor-feasible area follows from next year's budget
-      `(L − ΔF·clearing)·s ≥ (F + ΔF)·cultivation`, so ongoing cultivation counts first and
-      clearing is still paid as labor debt.
-  - Per-cell arable scaling as before. Shrinking unchanged. `initial_plot_ha` is unused
-    under A.
-  - `FieldPlan.limit` records the binding limit (target, labor, arable) for diagnostics.
-- B, `mechanisms.expected_tenure`, rule `expected_tenure` v1.0:
-  - Tenure = `p(1 − p^H)/(1 − p)` with p = 1 − last year's move hazard (H when p ≈ 1).
-  - The new unit field `move_hazard` is written by a `MoveHazards` proposal in migration
-    (before relocations):
-    - 0 when there is no alternative destination;
-    - NaN when the unit cannot evaluate staying;
-    - reset to NaN on relocation.
-    - Merge: population-weighted mean of known values. Split: copy.
-  - An unknown hazard falls back to the existing proxy `min(max(residence, 1), H)`. It only
-    changes how clearing is amortized.
-- Tests: `tests/test_field_growth.py` (12). With both switches off, golden fixtures are
-  unchanged; `make check` green (177).
-- 2×2 matched experiment (arms base / A / B / AB): run, results below.
-
-**Step 2 results: 2×2 matched experiment (run 2026-09-29; analyzed 2026-09-30).**
-- **Provenance.**
-  - Seeds 0-15 (16, not the planned 8), 1,000 years, `mvp2_neolithic` reference mode.
-  - All arms: commit `6f08204`, `source_tree_sha256` `c82b01c7…`, which equals the
-    committed tree, so the model code is exactly `6f08204`. The manifests' `git_dirty: true`
-    most likely comes from the probe script, which lies outside the hashed tree.
-  - The runs were made on another machine: runtimes are ~75 s per base run, and the archive is
-    owned by a different user. Exact seeded replay on this codespace may differ in the last
-    bits.
-  - Data: `p5_ab_2x2.tgz`, holding `{base,A,B,AB}/` with
-    `runs.csv`, `summary.*`, `manifest.json` and `probe_seed*.json`.
-    The archive is intentionally not committed (it sits untracked in the repository root,
-    124 kB, md5 `918d5a6e…`). The summarized results below are the record used for the
-    MVP 2 decision.
-  - **The probe script was never committed and is lost.** The ensemble rows can be
-    regenerated with
-    `madexplorer ensemble scenarios/mvp2_neolithic.yaml --seeds 0:15 --years 1000 --set mechanisms.field_growth_to_target=<bool> --set mechanisms.expected_tenure=<bool>`;
-    the probe fields cannot be reproduced without re-implementing the probe.
-  - Consistency check: the probe's year-1,000 population equals `runs.csv`
-    `final_population` in all 64 runs.
-- **Ensemble results.** Means over seeds; differences are paired over the same seeds, with
-  the standard error in brackets.
-
-  | Measure | base | A | B | AB | A − base | B − base | AB − A |
-  |---|---|---|---|---|---|---|---|
-  | Population, year 1,000 | 30.0k | 273k | 27.2k | 266k | +243k (17k) | −2.8k (0.9k) | −7.7k (9.2k) |
-  | Log ratio of final population vs base | — | 2.18 (0.08), 16/16 > 0 | −0.09 (0.03), 4/16 > 0 | 2.16 (0.08) | | | |
-  | Occupied cells, year 300 / 600 / 1,000 | 52 / 593 / 960 | 49 / 454 / 1,080 | 52 / 583 / 932 | 46 / 439 / 1,080 | −2 (2) / −139 (25) / +120 (31) | 0 / −9 (8) / −28 (9) | |
-  | Migration rate | 0.250 | 0.0045 | 0.255 | 0.0045 | −0.245 (0.004) | +0.005 (0.003) | 0 |
-  | Final farm share of food | 0.068 | 0.90 | 0.025 | 0.90 | +0.83 (0.02) | −0.04 (0.02) | 0 |
-  | Final sedentary share | 0.39 | 0.99 | 0.32 | 0.99 | +0.60 (0.03) | −0.07 (0.02) | 0 |
-  | Final farmed soil | 0.47 | 0.33 | 0.53 | 0.33 | −0.14 (0.03) | +0.06 (0.02) | 0 |
-  | Crowding share of deaths, final | 4.1% | 15.2% | 3.5% | 15.2% | +11.2 pts (0.3) | −0.5 pts (0.2) | 0 |
-  | Crude death rate, final (per 1,000) | 38.8 | 37.8 | 39.0 | 37.8 | −1.0 (0.2) | +0.2 (0.1) | |
-  | Inventions | 19.1 | 101 | 13.9 | 121 | +82 (18) | −5.2 (1.4) | +20 (26) |
-  | First cultivation (year) | 172 | 170 | 171 | 170 | −1.7 (1.0) | −1.0 (0.4) | |
-  | Farm share ≥ 10% / 25% / 50% of food (year; runs reaching it) | 895 (5) / 958 (2) / — | 223 / 284 / 479 (16) | 923 (2) / — / — | 218 / 290 / 497 (16) | | | |
-  | Final units | 1,249 | 12.2k | 1,169 | 11.8k | | | |
-  | Runtime per run (other machine) | 75 s | 990 s | 73 s | 903 s | | | |
-
-- **Probe trajectories** (seed means). "Farming units" = units holding fields.
-
-  | Year | Share of units with fields, base / A | Fields per farming unit (ha), base / A | Median crop share of need, farming units, base / A | Mean residence (years), base / A |
-  |---|---|---|---|---|
-  | 200 | 0.05 / 0.15 | 0.29 / 10.6 | 0.002 / 0.19 | 5.6 / 7.1 |
-  | 300 | 0.05 / 0.49 | 0.19 / 16.9 | 0.001 / 0.42 | 6.2 / 14.9 |
-  | 400 | 0.08 / 0.79 | 0.23 / 18.9 | 0.001 / 0.51 | 6.9 / 31.2 |
-  | 600 | 0.12 / 0.96 | 0.37 / 29.2 | 0.001 / 0.64 | 7.2 / 92.8 |
-  | 1,000 | 0.47 / 1.00 | 5.0 / 37.5 | 0.04 / 1.05 | 17.6 / 378 |
-
-  B tracks base, and AB tracks A, on every probe measure.
-  - Binding limit of expansion steps under A: target 50%, labor 49%, arable 1%.
-  - Years from first field to 50% of need (median of seed medians): A 37, AB 28; base 616
-    for the few units that reached it.
-- **Interpretation.**
-  - **A is the operative mechanism.** It confirms the step 1 audit: field scale-up, not
-    returns, ecology, technology or knowledge, kept farming marginal. Cultivation is still
-    invented at the same time (≈ year 170). Once it pays, fields now reach half of need in a
-    few decades, and farming becomes the main food source by ≈ year 480 in every seed.
-  - **B has no measurable benefit.** AB − A is zero within noise on every measure. B alone is
-    slightly negative (−9% population, less farming, later seed selection and fallow
-    rotation). This is consistent with the audit: the hazard-based tenure is shorter than the
-    past-residence proxy for long residents. The probe's tenure error falls only from 3.7 to
-    3.4 years.
-  - **A changes the regime, not only the farm share.** The sequence is: fields scale up, then
-    groups settle, then population grows.
-    - The existing migration terms make farmers almost immobile: crop output is added to the
-      home cell, and abandoning fields costs `abandoned_fields_weight` (2) × farm kcal / need.
-    - Before ≈ year 500, A has slightly fewer people and colonizes more slowly (−139 cells at
-      year 600): farmers stop spreading. A then overtakes base.
-    - Growth is still exponential at year 1,000 (≈ 0.5% a year; peak = final in every seed).
-      Crowding mortality (15% of deaths) is the only density brake and does not produce a
-      plateau.
-    - These behaviors come from existing mechanisms: a linear abandonment cost, and no
-      density limit other than crowding. They are findings to examine, not to tune away.
-  - **Cost.** About 10× more units makes 1,000-year runs ~12-13× slower. This matters for the
-    P7 baseline and makes the deferred P4 hotspots and MVP 3 resolution work more pressing.
-- **Probe fields not interpretable without the lost script:**
-  - `tenure_estimate_quality`: the error of the tenure estimate relative to what (realized
-    tenure, which cap?) is unknown. Under A its small value mainly reflects that almost no one
-    moves.
-  - `years_first_field_to_need_share`: what `n` counts is unknown.
-  - Clearing hours per hectare cleared are half as high under A (404 vs 834). This may be
-    real (clearing different land) or an artifact of how the probe counted; not verified.
-- **Recommendation (assistant's; decision pending).**
-  1. Adopt A on mechanism grounds.
-  2. Keep B off, or remove it.
-  3. Before changing the default, examine the near-zero migration of farmers and the growth
-     with no plateau as mechanisms in their own right.
-  4. Then run step 5 (scenario B and the matched cultivation on/off ablation) with A on.
-
-  Golden fixtures unchanged: both switches are still off by default.
-
-**Step 2b: field-abandonment audit (2026-09-30; Tier 1, measurement only, model unchanged).**
-- **Question.** Does the explicit `abandoned_fields` penalty duplicate the crop value already
-  in the stay utility?
-- **The two terms** (`mobility/migration.py`):
-  - *Stay term.* The current fields' crop output C (this year's yield × fields, in years of
-    need) is added to the home cell's wild food before the food utility. The crop is worth
-    `food_weight · [ln(1+R+C) − ln(1+R)]`, where R is the home's perceived wild stock per
-    head.
-  - *Penalty.* Every destination is charged `abandoned_fields_weight` (2) × C: linear, no
-    diminishing returns. Placeholder since the first technology commit (`244289c`), with no
-    recorded rationale.
-  - Both value the same quantity, this year's output of the fields being left.
-- **Method.** Probe `scripts/probes/field_abandonment_audit.py` (in the repository).
-  - Seeds 0 and 1, A on, 500 years.
-  - Every migration decision of a unit holding fields, every 5th year from year 250: 14,891
-    decisions.
-  - Each decision is re-scored offline with modified `MoveCosts`: no penalty, no crop,
-    neither, or a replacement-cost variant (below). No random draws are consumed; the
-    probed run equals the unprobed one (seed 0, year 200: 761 people, 29 units in both).
-  - Runtime 25 s for both seeds.
-- **Results** (medians of the utility terms; mean annual move probability; both seeds
-  pooled; each seed separately shows the same pattern):
-
-  | Crop share of need | n | crop in stay term | penalty | replacement cost | P(move) full | no penalty | replacement | no crop and no penalty |
-  |---|---|---|---|---|---|---|---|---|
-  | < 0.1 | 1,089 | 0.015 | 0.097 | 0.051 | 0.066 | 0.082 | 0.071 | 0.086 |
-  | 0.1-0.25 | 1,840 | 0.064 | 0.352 | 0.159 | 0.041 | 0.090 | 0.059 | 0.104 |
-  | 0.25-0.5 | 3,700 | 0.155 | 0.720 | 0.281 | 0.023 | 0.098 | 0.054 | 0.129 |
-  | 0.5-0.75 | 3,736 | 0.322 | 1.242 | 0.426 | 0.013 | 0.135 | 0.062 | 0.194 |
-  | ≥ 0.75 | 4,526 | 0.612 | 1.842 | 0.613 | 0.006 | 0.224 | 0.080 | 0.315 |
-  | all | 14,891 | | | | **0.021** | **0.143** | **0.066** | **0.196** |
-
-  - The penalty exceeds the crop's stay-side value in 100% of decisions (median 4.1×). It
-    alone cuts farmers' move probability about 7× (0.143 → 0.021), and heavy farmers' about
-    40× (0.224 → 0.006).
-  - The crop in the stay term already lowers mobility on its own: 0.196 → 0.143 overall, and
-    0.315 → 0.224 for heavy farmers.
-  - The median best destination is worse than home even on wild food alone (gain −0.46
-    without either crop term): farmers mostly sit in good cells.
-- **Verdict: the penalty is duplicative as formulated.** It charges the same year's crop
-  output a second time, linearly, at a placeholder weight. It dominates the decision
-  entirely.
-- **A distinct cost does exist that the stay term lacks:** the field *capital*. The crop
-  term counts one year's harvest, while leaving also destroys cleared land that took labor
-  to create and must be re-cleared elsewhere. The probe's *replacement cost* prices it
-  without a new parameter:
-  - re-clearing the current fields (fields × `clearing_hours_per_ha` at the home cell's
-    vegetation and the group's clearing efficiency);
-  - valued at the group's marginal foraging return (the opportunity cost of that labor,
-    which field planning already uses);
-  - expressed in years of need;
-  - weighted like abandoned stores (weight 1: both are lost accumulated stocks).
-
-  It is 0.35× the current penalty and about 1.5× the crop term. Median re-clearing labor is
-  ~50-570 hours per person, ≈ 0.05-0.6 years of need.
-- **Side finding (limitation, not fixed).** Without the penalty, heavy farmers are *more*
-  mobile than light farmers (0.224 vs 0.082). Their home wild stock is low (R ≈ 1.4 vs 4.5,
-  displaced by fields and crowding), and the crop enters as one year's flow against a wild
-  *stock*. This is the existing food-utility limitation (standing stock, not sustained
-  yield). The replacement cost evens this out (0.05-0.08 across the bins) but does not
-  remove the stock/flow mismatch.
-- **Options (decision pending).**
-  1. **Replace the penalty by the replacement cost** (recommended). Keeps the crop in the
-     stay term; charges only the distinct capital loss. Uses existing quantities and the
-     stores weight, and removes the free `abandoned_fields_weight`. Farmer move probability
-     ≈ 0.066 in this probe, about a third of the no-fields counterfactual. It uses the home
-     cell's clearing cost as the capital's value; the destination's vegetation would be more
-     exact but makes the cost per candidate.
-  2. Remove the penalty: fields' only attachment is one year's crop (≈ 0.14). This drops a
-     real sunk-capital cost.
-  3. Keep it: rejected, since it double-counts.
-
-  Whichever is chosen: implement it with a rule entry and mechanism tests, enable A, and
-  re-record the golden fixtures once for both. Not tuned toward any migration rate; the
-  numbers above are consequences, not targets.
-
-**Step 2c: field replacement cost (MODEL CHANGE; accepted 2026-09-30, user decision:
-Option 1).**
-- **Semantics** (rule `field_replacement_cost` v1.0, `mobility/migration.py`; switch
-  `mechanisms.field_replacement_cost`, on).
-  - *Benefit of staying:* existing fields give their crop output through the home food
-    utility, unchanged.
-  - *Cost of leaving:* the group loses cleared, productive land and would have to invest
-    labor to recreate comparable fields elsewhere. The cost is that future reconstruction
-    labor: fields × `clearing_hours_per_ha`, valued at the group's marginal foraging return
-    (the opportunity cost of labor), converted to years of need and weighted by
-    `abandoned_stores_weight` (1), the scale the migration framework already uses for lost
-    accumulated resources. No new parameter.
-  - The clearing labor already spent on the current fields is **sunk** and plays no part.
-  - The crop output is not charged a second time.
-  - Approximation, documented in the rule: the replacement cost approximates the labor
-    required to reconstruct the current agricultural capital using the group's current
-    clearing conditions (home vegetation, the group's clearing efficiency).
-    Destination-specific reconstruction costs are deferred. Output forgone while rebuilding
-    and improved soil are not counted.
-  - Switch off = the legacy penalty `abandoned_fields_weight` (2) × crop output / need,
-    reproduced exactly (golden fixtures unchanged with it off). `abandoned_fields_weight` is
-    now used only there.
-- **Tests** (`tests/test_field_replacement.py`, 8):
-  - the rule equals re-clearing labor × marginal return / need (Hypothesis), and is 0 without
-    fields or need;
-  - the migration cost uses home clearing conditions and the stores weight;
-  - the crop yield does not change the leaving cost, while the legacy penalty triples with
-    it;
-  - sunk clearing labor and labor debt play no part;
-  - the cost is proportional to fields and to the value of labor;
-  - fields still lower the move hazard, but less than under the legacy penalty;
-  - the switch off gives the legacy penalty.
-
-  `test_field_growth.py`'s tenure-input test now pins the proportional growth rule it spies
-  on. `make check` green (185 tests).
-- **Sanity check** (Tier 2: seeds 0-1, 500 years, A on, replacement cost vs the legacy
-  penalty; 1 min 40 s; probe with `--set mechanisms.field_replacement_cost=<bool>`).
-  Values: legacy → replacement cost, for seed 0 / seed 1.
-
-  | Measure | seed 0 | seed 1 |
-  |---|---|---|
-  | Farmers' mean P(move), probe, years 250-500 | 0.018 → 0.038 | 0.026 → 0.043 |
-  | ... farmers with crops ≥ half of need | 0.009 → 0.024 | 0.010 → 0.025 |
-  | Leaving cost, median (max) | 1.19 (2.48) → 0.32 (2.25) | 0.95 (2.43) → 0.35 (1.81) |
-  | Migration rate, whole run / final | 0.042 / 0.021 → 0.061 / 0.042 | 0.074 / 0.037 → 0.085 / 0.061 |
-  | Farm share of food, year 500 | 0.53 → 0.39 | 0.40 → 0.34 |
-  | Sedentary share, year 500 | 0.89 → 0.77 | 0.78 → 0.67 |
-  | Population, year 500 | 15.4k → 14.5k | 8.36k → 8.29k |
-  | Occupied cells, year 450 | 288 → 349 | 192 → 205 |
-  | Farm share ≥ 10% / 25% (year) | 202 / 234 → 220 / 256 | 340 / 380 → 340 / 381 |
-  | Crowding share of deaths, final | 9.0% → 7.3% | 7.3% → 6.4% |
-
-  - The mechanism behaves dynamically: farmers remain much less mobile than foragers, but
-    are no longer effectively immobile.
-  - Farming still becomes the main food source, with first cultivation unchanged.
-  - Slightly faster spread and slightly lower sedentism, as expected.
-  - No NaN or inf in any decision; hazards within (1e-6, 0.999).
-  - The in-run farmer move probability (≈ 0.04) is below the offline counterfactual (0.066,
-    step 2b) because trajectories adapt. Nothing was tuned; accepted as sane.
-- **Acceptance.** `field_growth_to_target` and `field_replacement_cost` on by default;
-  `expected_tenure` (B) off. Golden fixtures re-recorded once for both: MVP 2 250 y seeds 0
-  and 1 and the small farming world changed; MVP 1 and the small forager world did not (no
-  fields). **P5 mechanism decisions are closed.**
-- **B, for the record.** The hazard-based tenure estimator was tested (2×2 above). It did not
-  improve the tenure estimate or the outcomes enough to justify its complexity. It stays
-  available, off; there are no further B experiments for MVP 2.
-
-**Step 5: intensification-pressure validation (2026-09-30; Tier 2, passed).**
-- **Scenario** `scenarios/mvp2_pressure.yaml`.
-  - A bounded, fully terrestrial 8 × 8 world (80 × 80 km) already occupied by 16 forager
-    bands of 30, with no cultivation knowledge. Everything else is canonical MVP 2
-    (aggregation off; A and the replacement cost on).
-  - Design criterion, checked with cultivation off only (seed 0): foragers alone saturate
-    early. They level off at ~1,100-1,300 people from years 150-200, with food ratio ≤ 1,
-    energy deficit up to 0.14 and crude death rate up to ~50.
-  - Rejected first design: two bands on 16 × 16 cells colonized only 61 of 256 cells by year
-    400, so there was no pressure within the horizon.
-- **Experiment.** Seeds 0-1 matched, 400 years, cultivation on vs off. 22 s in total
-  (`scripts/probes/pressure_validation.py`). Values are means over years 351-400; seed 0 /
-  seed 1.
-
-  | Measure | cultivation on | cultivation off |
-  |---|---|---|
-  | First fields / farm share ≥ 10%, 25%, 50% (year) | 76, 104, 132, 245 / 82, 115, 140, 239 | never |
-  | Farm share of food | 0.60 / 0.64 | 0 |
-  | Population | 3,356 / 3,795 | 1,252 / 1,153 |
-  | People per occupied cell | 55 / 63 | 28 / 28 |
-  | Occupied cells (of 64) | 61 / 60 | 44 / 41 |
-  | Sedentary share | 0.86 / 0.84 | 0.36 / 0.32 |
-  | Mean food ratio | 1.03 / 1.03 | 0.99 / 1.02 |
-  | Mean energy deficit | 0.023 / 0.027 | 0.060 / 0.042 |
-  | Crude death rate | 39.1 / 39.5 | 43.0 / 39.5 |
-  | Crowding share of deaths | 8.3% / 8.4% | 3.4% / 3.7% |
-  | Population, years 100 / 200 / 300 / 400 | 850 / 1,863 / 2,945 / 3,448 (seed 0) | 858 / 1,279 / 1,184 / 1,130 (seed 0) |
-
-- **Result.** Under meaningful resource pressure, cultivation emerges early and becomes the
-  main food source. It sustains ~3× the population at ~2× the local density, with less food
-  stress and lower or equal mortality, even though crowding deaths rise. The effect is
-  large and consistent in both seeds, so the validation stopped at 2 seeds × 400 years. The
-  farming population is still growing slowly at year 400 (2,945 → 3,448 on seed 0); that
-  was not investigated further (plateau questions are out of scope for MVP 2).
-- **Test.** The strict xfail `test_agriculture_supports_higher_population_than_foraging_alone`
-  (8 seeds × 900 years on a 16 × 16 one-band world) is replaced by
-  `test_cultivation_raises_carrying_capacity_under_intensification_pressure`
-  (`tests/statistical/`, seeds 0 and 1 parametrized, 400 years, ~25 s). Per seed it checks:
-  - farm share > 0.25, and 0 without cultivation;
-  - population > 1.5× and density > 1.3× the foraging arm;
-  - energy deficit not higher.
-
-  The thresholds are far below the observed effect. **Open issue 1 is resolved** for MVP 2.
-
-**P6: aggregation limitation (2026-09-30; documented, no broad experiment).**
-- **Conclusion (formal, MVP 2): computational aggregation is not scientifically neutral and
-  is disabled for canonical/reference runs.** Evidence:
-  - Section 7.1: 3 units per cell was material; 1 per cell broke colonization.
-  - P3: 8 units per cell gave final population 2.6× the reference on every seed.
-  - Confirmation after the P5 changes (mvp2_pressure, seeds 0-1, 400 years, off vs 8 units
-    per cell; 30 s): only 12 merges in 400 years on seed 0 (from year 288), yet final
-    population +342 (se 68, +9%, both seeds higher). Cultivation milestones and inventions
-    were identical; migration rate −0.005 (0.002).
-- The strict xfail on the aggregation population tolerance is kept; its reason now states
-  this accepted limitation. No new tolerance was sought. Correct aggregation (group-level
-  hazards, selective emigration) belongs to MVP 3's statistical super-agents.
-
-#### P7. MVP 2 freeze (2026-09-30): **MVP 2 model semantics are frozen**
-
-This does not mean the implementation is performant: that is the next, separate milestone.
-
-**Revision.**
-- Commit `f505fd118aa17bda3cc1cbb92afed13008bf102b`; source tree SHA-256
-  `7692ac03a2c75ad598e771098231b1f8bfb74bf918cd4b148227837b0be6bea5`. Every freeze run and
-  benchmark manifest records this hash.
-- `git_dirty: true` in the manifests comes only from test-tier and documentation edits
-  outside `src/`.
-- Numeric platform: `numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3`, 2-core
-  codespace.
-- Machine-readable record: `baselines/mvp2/freeze_manifest.json`. It holds the commit, hashes,
-  scenarios, config hashes, seeds, horizons, per-seed results, the performance baseline and
-  test status. Run outputs are in `baselines/mvp2/` (≈120 kB).
-
-**Frozen defaults.**
-- `mechanisms`: `direct_observation_shrinkage`, `familiarity_decay`, `field_growth_to_target`
-  and `field_replacement_cost` on; `expected_tenure` off.
-- Canonical scenarios run with `aggregation: false`.
-- `migration.food_utility: log1p`.
-- Golden fixtures `tests/regression/golden/*.json`, last re-recorded for A plus the
-  replacement cost.
-
-**Canonical scenarios.**
-- `scenarios/mvp2_neolithic.yaml` (config hash `24ebc6b8…`, world seed 7).
-- `scenarios/mvp2_pressure.yaml` (8 × 8, 16 bands).
-
-**Freeze check 1: canonical reference, `mvp2_neolithic`, seeds 0-3, 600 years**
-(`baselines/mvp2/neolithic_4x600/`; 89 s wall, 135 s child CPU, `--jobs 2`; invariants
-checked every step).
-
-| Seed | Final pop | Cells y600 | Migration rate | Farm share | Sedentary | First cultivation | Farm ≥ 10 / 25 / 50% | Seed sel. / fallow / axes / granaries | Inventions | Runtime |
-|---|---|---|---|---|---|---|---|---|---|---|
-| 0 | 33,070 | 790 | 0.047 | 0.50 | 0.85 | 147 | 220 / 256 / 539 | 208 / 233 / 259 / 322 | 73 | 71 s |
-| 1 | 22,850 | 678 | 0.054 | 0.43 | 0.83 | 238 | 340 / 381 / — | 312 / 322 / 397 / 440 | 81 | 45 s |
-| 2 | 18,340 | 497 | 0.052 | 0.50 | 0.83 | 166 | 251 / 298 / 566 | 208 / 245 / 361 / 324 | 63 | 31 s |
-| 3 | 15,760 | 508 | 0.054 | 0.42 | 0.77 | 158 | 293 / 307 / — | 270 / 281 / 321 / — | 31 | 18 s |
-
-- Storage pits first appear in years 68-199.
-- Final crude death rate is 33.7-34.6 per 1,000; crowding causes 7-8% of deaths. Final
-  farmed soil is 0.37-0.41.
-- No extinctions, no NaN/inf in the rows, no invariant failures.
-- Every seed makes the agricultural transition: farming ≥ 25% of food by years 256-381, and
-  ≥ 50% by year 600 in two seeds. The narratives differ by seed, as expected.
-- **No pathology; consistent with the accepted design.**
-
-**Freeze check 2: pressure validation, `mvp2_pressure`, seeds 0-3, 400 years, cultivation on
-vs off** (`baselines/mvp2/pressure_4x400_*`; 92 s wall for the probe plus both ensembles).
-Means over years 351-400:
-
-| Seed | Population on / off | Ratio | People per occupied cell on / off | Farm share | Sedentary on / off | Energy deficit on / off | Crude death rate on / off | First fields / farm ≥ 50% |
-|---|---|---|---|---|---|---|---|---|
-| 0 | 3,356 / 1,252 | 2.68 | 55.2 / 28.4 | 0.60 | 0.86 / 0.36 | 0.023 / 0.060 | 39.1 / 43.0 | 76 / 245 |
-| 1 | 3,795 / 1,153 | 3.29 | 63.0 / 28.0 | 0.64 | 0.84 / 0.32 | 0.027 / 0.042 | 39.5 / 39.5 | 82 / 239 |
-| 2 | 3,906 / 1,139 | 3.43 | 64.8 / 27.1 | 0.65 | 0.80 / 0.35 | 0.031 / 0.040 | 39.5 / 37.9 | 77 / 246 |
-| 3 | 4,168 / 1,131 | 3.68 | 68.5 / 25.9 | 0.67 | 0.85 / 0.38 | 0.027 / 0.035 | 39.2 / 36.3 | 84 / 213 |
-
-- All four matched seeds show the same large effect: resource pressure → cultivation adoption
-  → higher sustainable population and density, with less food stress. Stopped at 4 seeds.
-- Seeds 0-1 reproduce the P5 step 5 values exactly.
-- Mortality is slightly higher with farming on seeds 2-3, through crowding. This is the
-  accepted density cost, not a pathology.
-
-**Freeze check 3: pre-optimization performance baseline** (committed revision).
-- `benchmarks/perf/mvp2_freeze_synthetic.json` (`make bench-perf`; 34 s wall, 32 s CPU).
-  Per-case CPU is recorded in the report.
-
-  | Requested units (mean) | ms/tick (CPU) | ms/unit/tick | Peak RSS | Top subsystems (ms/tick) |
-  |---|---|---|---|---|
-  | 100 (128) | 34.0 (31.3) | 0.265 | 65 MB | migration 6.2, foraging 5.2, innovation 4.6 |
-  | 500 (610) | 144 (142) | 0.237 | 92 MB | migration 22, foraging 21, sharing 19 |
-  | 1000 (1098) | 274 (269) | 0.249 | 112 MB | sharing 50, migration 41, foraging 33, diffusion 28 |
-  | 2000 (1763) | 461 (451) | 0.261 | 151 MB | sharing 87, migration 67, diffusion 64, foraging 39, demography 37 |
-
-- `benchmarks/perf/mvp2_freeze_seed0_600y.json` (`madexplorer bench runs`, seed 0, 600
-  years):
-  - 43.8 s wall, 41.9 s CPU; 1,212 final units; 0.293 ms/unit-year; peak RSS 123 MB.
-  - Windows: early (years 61-90) 4.0 ms/tick at 8 units; middle (271-300) 20.9 ms at 82
-    units; **late (571-600) 328 ms/tick at 1,086 units, 0.30 ms/unit/tick**.
-  - Time shares: sharing 17%, migration 14%, foraging 13%, diffusion 11%, demography 9%,
-    field planning 7%, learning 6%, perception 5%.
-  - Final population is identical to the ensemble's seed 0 (33,070).
-
-**Test status at the freeze.**
-- `make check` green: 185 tests (lint, format, mypy, regression with golden fixtures on this
-  platform, mechanism).
-- `make test-stat` (compact tier): 2 passed. This is the pressure agriculture test, seeds 0-1,
-  25 s.
-- The aggregation strict xfail is kept with its documented rationale.
-- `make test-stat-long` (extended / research validation suite, marker `slow`: crowding,
-  technology ranges, aggregation tolerance; 8 seeds × 900 years) was **not run** for the
-  freeze. It is manual and not required for normal development, CI or MVP freezes.
-
-**Accepted MVP 2 limitations** (details in Section 8 and the entries above):
-1. Computational aggregation is not scientifically neutral; it is off in canonical runs
-   (P6). Correct aggregation belongs to MVP 3.
-2. Stock-vs-yield mismatch in the migration food utility (Section 8, issue 5).
-3. Field replacement cost is priced at home clearing conditions. Destination-specific
-   reconstruction, output forgone while rebuilding, and soil capital are deferred.
-4. No population plateau is required. Farming populations can still grow at the horizon;
-   crowding, food limitation, competition and soil are the only density limits.
-5. Noisy beliefs retain some winner's-curse bias (mitigated by shrinkage). Sedentism under
-   `log1p` still depends on perception noise.
-6. The technology × knowledge efficiency formulation was left as is (P5 option C, not
-   pursued).
-7. Hazard-based tenure (B) was rejected for its complexity; clearing is amortized over past
-   residence.
-8. Whole-group migration only; no strata, wealth, health distributions or specialists (MVP
-   3).
-9. Carried-over simplifications: static vegetation, annual timestep, one-good trade,
-   group-level knowledge, Chebyshev perception, one soil pool per cell (Section 8, items
-   6-7).
-10. Exact seeded replay is platform-specific (numpy SIMD dispatch). Golden fixtures skip on
-    other platforms.
-11. The large exploratory ensembles cited in this file (`ensembles/`, `p5_ab_2x2.tgz`) are not
-    in the repository.
-
-#### After the freeze: performance-only phase (next milestone)
-
-- Model semantics stay frozen. Optimizations are validated against identical seeded output
-  (golden fixtures, `baselines/mvp2` rows) or tightly controlled, documented numerical
-  tolerances.
-- Measure against this freeze baseline (CPU time, same machine class).
-- Candidates, in order of the freeze profile:
-  - belief sharing, migration, foraging, diffusion and demography per-unit loops;
-  - structure-of-arrays unit state;
-  - fewer object and dictionary allocations;
-  - compiled kernels only where profiling justifies them.
-
-
-#### Performance outlook (assessment after P0-P4 profiling, 2026-09-25)
-
-Question asked: can the simulation become much faster, and would model simplifications help?
-The estimates below are **not measurements**.
-
-- **Diagnosis.** Cost per unit per tick is roughly constant (0.3-0.4 ms from 100 to 2,000
-  units), so the algorithms are not blowing up. The time is mostly Python overhead: per-unit
-  loops in every subsystem, dictionary lookups, and small numpy calls on 10-50-element
-  arrays. The arithmetic itself is small.
-- **The real scaling limit.** Cost scales with the number of groups (units of ~25-30 people),
-  not with people. 35k people ≈ 1,300 units ≈ 450 ms per late tick. MVP 2 aims at dense
-  farming populations: 100k people would be ~3-4k units, and 1M is out of reach at this group
-  size.
-- **Engineering options (no model change):**
-  1. Structure-of-arrays unit state: one array per field across all units, beliefs as one
-     units × cells matrix. Every subsystem becomes a few large vectorized operations.
-     Estimated 5-20× on per-unit overhead (P4's migration/perception batching is a small
-     instance: perception 32 → 9.5 s). A large refactor, best combined with MVP 3's redesign
-     of the unit.
-  2. Compiled kernels (e.g. Numba) for the per-cell foraging solver, diffusion contacts and
-     demography cohorts, once the profile is stable.
-  3. More cores: seeds are independent, so ensembles scale ~linearly. The 32-seed baseline
-     (~25 min on this 2-core codespace) would take ~3-4 min on 16 cores.
-- **Model-level options and their scientific cost:**
-  - *Adaptive resolution (MVP 3 distributional units, stratum-wise binomial decisions)*: the
-    principled reduction of unit count, which is what cost scales with. Naive merging is
-    not acceptable: 8 units per cell changed population 2.6× (P3 statistical test).
-  - *Longer timesteps for slow processes* (learning, diffusion, innovation every few years):
-    moderate gain; rates and hazards need rescaling; changes timing.
-  - *Updating beliefs only when stale* (e.g. skip perception for long-settled groups): cheap,
-    but a behavioral assumption needing an experiment.
-  - *Coarser cells*: probably little gain, since cost follows units, not cells.
-  - *Expected-value demography for large units*: small gain; loses stochasticity that matters
-    for small groups.
-- **Recommendation.**
-  - Finish P4 without model changes; ~2× looks attainable.
-  - After the MVP 2 freeze, design structure-of-arrays state and MVP 3 adaptive resolution
-    together.
-  - Run frozen baselines on a machine with more cores.
-  - Do not simplify the MVP 2 model for speed: in this pass, small representational shortcuts
-    (map-wide gossip, the hard food cap, aggregation) changed outcomes more than expected.
+Do **not** reopen a resolved MVP 2 issue merely because historical notes or comments describe the pre-freeze state.
 
 ---
 
-## 1. Quick restart checklist
+## 3. Frozen MVP 2 model contract
 
-```bash
-make install                         # uv sync + pre-commit hooks
-make check                           # lint, format check, mypy, fast tests (regression + mechanism)
-make test-stat                       # compact statistical tests (~25 s; part of MVP freezes)
-make test-stat-long                  # extended / research validation suite (manual, ~18+ min)
-make golden                          # re-record exact regression fixtures after an INTENDED change
-uv run madexplorer run scenarios/mvp1_sandbox.yaml --years 450 --quiet
-#   (the old reference numbers here predate the P2-P4 changes; see the golden fixtures instead)
-uv run madexplorer ensemble scenarios/mvp2_neolithic.yaml --seeds 0:15 --jobs 2 --years 600
-uv run madexplorer compare ensembles/<a> ensembles/<b>        # paired, same seeds
-uv run madexplorer ensemble ... --set resolution.max_units_per_cell=8 --set mechanisms.aggregation=true
-uv run madexplorer rules -v          # every model rule with rationale (53 rules)
-make bench-perf BENCH_LABEL=<name>   # synthetic per-unit benchmark -> benchmarks/perf/
-make bench-smoke | bench-dev | bench-rc   # ensemble tiers (2x250, 8x600, 16x1000 years)
+The frozen simulator currently contains:
+
+- grid topology, terrain, hydrology, climate, and resource fields;
+- human species/life-history configuration;
+- stochastic age/sex cohort demography;
+- food requirements, energy deficits, fertility response, starvation mortality;
+- foraging with familiarity-dependent efficiency;
+- agriculture, clearing labor, soil depletion/recovery, storage, and simple trade;
+- bounded perception and socially transmitted geographic information;
+- uncertainty-aware direct-observation shrinkage;
+- decaying practiced ecological familiarity, separate from geographic belief;
+- whole-group migration using perceived destination utility;
+- agricultural-capital replacement cost when leaving fields;
+- group fission and fusion;
+- knowledge learning and social diffusion across domains;
+- endogenous technology invention through competing hazards;
+- settlement/crowding mortality;
+- deterministic provenance, isolated RNG streams, metrics, ensembles, and golden regression fixtures.
+
+### Important frozen mechanism defaults
+
+The MVP 2 freeze canonicalized:
+
+- `direct_observation_shrinkage = true`
+- `familiarity_decay = true`
+- `field_growth_to_target = true`
+- `field_replacement_cost = true`
+- `expected_tenure = false`
+- `aggregation = false` in canonical scientific scenarios
+
+These defaults should not be changed during performance hardening.
+
+---
+
+## 4. Current subsystem flow
+
+The annual simulation is staged through subsystem `evaluate()` / proposal / `apply()` phases.
+Conceptually, the frozen pipeline is:
+
+```text
+climate / ecology
+    -> perception
+    -> social geographic information sharing
+    -> farming
+    -> foraging
+    -> trade
+    -> energy balance
+    -> demography
+    -> field planning
+    -> knowledge learning
+    -> knowledge diffusion
+    -> innovation
+    -> fission
+    -> fusion
+    -> migration
+    -> optional coarsening
 ```
 
-Exact seeded regressions now live in `tests/regression/golden/*.json` (five fixed cases),
-recorded on `numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3`. A
-behavior-preserving change must leave them untouched; an intended model change re-records
-them with `make golden` and says so in the commit. On another numeric platform they skip.
+Canonical runs have coarsening disabled.
 
-Then pick up at **Section 0** (the stabilization pass, currently paused in P4). Sections 1-11
-below describe the state before the pass and are kept for history; where they conflict with
-Section 0, Section 0 is current.
+The proposal architecture is valuable for auditability and deterministic staging, but proposal-object allocation is now a legitimate performance target.
 
 ---
 
-## 2. Decisions made (and why)
+## 5. Population representation today
 
-| Decision | Reason |
-|---|---|
-| Package is `madexplorer`, not the spec's working title `socioecology_sim`; CLI is `madexplorer` | Matches the repository name |
-| Python 3.13 (spec says 3.12+) pinned in `.python-version`; uv manages it | Widest library support at the time |
-| World is procedural with its own seed `world.topology.seed`, separate from `simulation.seed` | Ensembles over run seeds share one map; founders' cells stay valid |
-| Species parameters have **no defaults in code**; they live in `species/*.yaml` | §5: humanity must be a profile, not hidden constants |
-| Technology tree is data (`technologies/*.yaml`); the engine knows only 4 *capabilities* | Tech trees are hypotheses (§2.2); they can be swapped or ablated without code changes |
-| MVP 1 scenario keeps all MVP 2 mechanisms (and crowding mortality) switched off | Keeps it a pure foraging sandbox |
-| Annual timestep only (`timestep_years: 1`) | §19 allows annual for MVP; seasonal resolution deferred |
-| Units hold exact age×sex cohort vectors instead of distributions | Exact conservation and cheap vectorized demography for MVP 1-2; strata arrive in MVP 3 |
-| **MVP 2 reference calibration mode is aggregation OFF** (`scenarios/mvp2_neolithic.yaml`) | Coarsening to 3 units/cell measurably changes outcomes (Section 7.1); 8 units/cell matches the reference within noise |
-| Migration uncertainty comes only from beliefs; no per-candidate noise | Removes the best-of-many-noise bias (Section 4, item 1) |
-| Three test classes: `tests/regression/`, mechanism tests (default), `tests/statistical/` | §29; exact replay, local causal claims, and distributional claims are different kinds of evidence |
+`PopulationUnit` remains the central social actor.
 
----
+A unit currently contains:
 
-## 3. What is implemented
+### Demography
 
-### 3.1 Engine and infrastructure (spec §19-§24, §28-§30, §39)
+- exact integer female age cohorts;
+- exact integer male age cohorts.
 
-- **Staged evaluate/apply loop** (`core/subsystem.py`, `core/simulation.py`). Order, documented
-  in `build_pipeline()`: climate → ecology → perception → belief sharing → farming → foraging →
-  trade → energetics → demography → extinction → field planning → learning → diffusion →
-  innovation → fission → fusion → migration → coarsening.
-- **Named RNG streams, one per stochastic mechanism** (`core/rng.py`): world, initialization,
-  environment, perception, knowledge_sharing, demography, fission, fusion, migration,
-  innovation, technology_adoption, trade. Streams are seeded by a stable hash of their names.
-  `RngManager.keyed(mechanism, *keys)` gives a generator that depends only on its keys (e.g.
-  year and unit id); it is ready for MVP 3, where adaptive splitting would otherwise reorder
-  draws, but no subsystem uses it yet (one generator per call is slow).
-- **Invariants checked every step** (`core/invariants.py`): population accounting, nonnegative
-  cohorts, reserves and stocks, valid cells.
-- **Governance registry** (`core/governance.py`): 43 `@model_rule`s with rationale, source type,
-  parameters, domain and limitations.
-- **Provenance**: git commit, dirty flag, **source-tree SHA-256**, config hash, seeds, model
-  version, uv.lock hash, Python/NumPy versions, timestamp, runtime.
-- **Merge/split semantics in one place** (`population/composition.py`): every `PopulationUnit`
-  field has a declared merge rule and split rule (`FIELD_RULES`); a test fails if a new field
-  lacks one. `absorb()` merges and rewires the trade network; `split_off()` divides a unit.
-- **Ablation switches**: `mechanisms:` has 14 booleans (new: `crowding_mortality`).
-- **CLI**: `validate`, `run`, `ensemble` (`--seeds`, `--jobs`, `--years`, `--set path=value`,
-  `--save-runs`), `compare` (paired differences over shared seeds), `inspect`, `rules`.
-- **Parameter overrides** without editing files: `Scenario.with_settings({...})` takes dotted
-  paths into the scenario (`resolution.max_units_per_cell`), a species
-  (`species.human.cognition.observation_noise_sigma`) or the knowledge system
-  (`knowledge.innovation.baseline_logit`); unknown paths are errors.
-- **Ensemble outputs** (`experiments/ensemble.py`) in `ensembles/<name>/`: `runs.csv` (one row
-  per seed: milestones such as first cultivation / first year of each technology / year farming
-  first reaches 10, 25, 50% of food; final population, peak, migration rate, sedentary and farm
-  shares, soil, crowding hazard and death share, technology prevalence, runtime),
-  `summary.csv/json` (n, share of runs reaching each milestone, mean, sd, min, q05-q95, max),
-  and `manifest.json`.
+### Spatial cognition
 
-### 3.2 MVP 1: ecological-demographic sandbox (complete)
+- dense per-cell belief arrays;
+- bounded social reports;
+- recent residence history;
+- per-cell practiced familiarity with timestamps.
 
-| Area | Implementation | Source type |
-|---|---|---|
-| Terrain | spectral-noise elevation, sea-level quantile, slope | — |
-| Hydrology | priority-flood depression filling, D8 flow accumulation, rivers, freshwater access | theoretical |
-| Climate | latitude and lapse-rate temperature, lognormal coastal rainfall, AR(1) global anomalies plus a regional rainfall field | empirical / heuristic |
-| Ecology | Miami-model NPP → edible plant and game capacities; logistic regrowth with recolonization | empirical / placeholder |
-| Life history | Siler mortality (Gurven & Kaplan forager averages), beta-shaped fertility normalized to TFR, need and labor by age | empirical / heuristic |
-| Energetics | pooled sharing, body reserves (60-day cap), thermoregulation cost, travel energy | heuristic |
-| Demography | binomial deaths/births per cohort; hazards add by cause (baseline × starvation factor + crowding); fertility falls with food ratio; births need a fertile male in the cell | heuristic |
-| Foraging | diminishing returns `A(1−e^{−rE/A})`, satisficing to need +20%, shared pools under crowding, familiarity learning | heuristic |
-| Perception | vegetation-occluded radius, noisy observations, memory horizon, neighbor belief sharing | heuristic |
-| Migration | perceived utility (log food per head, water, path cost, staleness) of believed cells; argmax destination; one logistic move hazard on its advantage over staying | heuristic |
-| Group dynamics | fission hazard (size per group, food stress), fusion hazard (small size, lacking a mate) | heuristic |
-| Movement | friction = slope × vegetation; walkers can't cross water; swimmers and fliers supported | heuristic |
+### Culture / technology
 
-### 3.3 MVP 2: agriculture and technology
+- domain knowledge;
+- owned technologies;
+- technology-derived capabilities;
+- social/trade ties.
 
-| Area | Implementation |
-|---|---|
-| Knowledge | Vector per domain (ecology, agriculture, storage, construction). Per year: `K += a·s·log1p(N·s/n0) − δK`, where `s` is practice from activity shares. |
-| Technologies | 6 in `technologies/neolithic.yaml` with knowledge prerequisites, required technologies, a need signal and capability effects. |
-| Innovation | Per-candidate hazard = sigmoid(baseline + need + log(K/K_min) + log1p(N/25) + connectivity + surplus − instability + propensity). **Candidates compete as independent risks**: P(any) = 1 − exp(−Σλ), λ = −ln(1 − p); the invented one is chosen with probability λ_i/Σλ. File order is irrelevant. |
-| Diffusion | Knowledge flows down gradients from contacts (same cell 1.0, adjacent 0.3, trade ties); adoption at ≥50% of prerequisites, loss below 25% with dependency cascades. |
-| Cultivation | Crop harvest before foraging; clearing labor amortized over expected tenure; fields displace wild food; fields expand when farming beats marginal foraging, capped at need +20%. |
-| Soil | `soil_nutrients` is the **fertility of the cell's cultivated land**: while cultivated, `S -= d(1−m)S` and slow natural inputs add `r_c(1−S)` (equilibrium `r_c/(r_c + d(1−m))`, 0.2 unmanaged, 0.33 with fallow rotation); when cultivation stops, fallow recovery `r(1−S)`. The farmed share of the cell no longer matters. |
-| Storage | Surplus fills body reserves, then stores; stores spoil by `1 − retention` per year; moving abandons stores beyond carrying capacity and all fields. |
-| Trade | 30% of surplus offered to nearby groups in deficit; transport loss `exp(−cost/60 km)`; ties decay by 0.7 per year and carry knowledge. |
-| Settlement health | `population/health.py`: additive crowding hazard `k·s·log(1 + N_contact/N0)` (Section 4, item 5). |
-| Aggregation | Optional coarsening of similar co-located units (off in the reference mode). |
+### Subsistence / economic state
+
+- stores;
+- fields;
+- farm and forage harvests;
+- food ratio / energy deficit;
+- labor quantities;
+- residence and migration state.
+
+This representation is scientifically adequate for MVP 2 but expensive in Python because thousands of independent units carry Python objects, mappings, sets/deques, proposal objects, and per-unit arrays.
 
 ---
 
-## 4. MVP 2 cleanup: changes made
+## 6. Canonical scientific conclusions from MVP 2
 
-Every entry lists the problem, why the old mechanism was wrong, what changed, the new
-assumptions, the tests, whether seeded results change, and the kind of change.
+These are settled for the frozen model and should not be reopened during performance hardening.
 
-### Item 1. Migration choice (model change)
+### Agriculture
 
-- **Problem.** About half of all groups moved every year at saturation (0.43 moves per unit-year
-  in MVP 1).
-- **Why it was wrong.** Each candidate cell got independent Gumbel noise, the best noisy
-  candidate was taken, and then a second logistic hazard decided whether to move. The maximum
-  of ~40 noise draws is large even when every option equals staying, so the move probability
-  rose with the *number* of candidates.
-- **Change.** `mobility/migration.py`: utility is computed from beliefs only; the destination
-  is the argmax (exact ties broken uniformly with the migration stream); one move/stay draw
-  with `P = σ(d·(U* − U_stay) − inertia)`. `migration.perception_noise` was removed from the
-  species schema and `species/human.yaml`. `MigrationSubsystem.decide()` exposes the decision
-  for testing.
-- **Assumption.** Uncertainty lives in the belief system (noisy, aging observations).
-- **Tests.** `tests/test_migration.py`: identical alternatives give the same hazard for 1 to
-  ~40 candidates; a better destination raises it; higher inertia lowers it; observed move
-  frequency matches the hazard; the fast score equals the component sum exactly.
-- **Seeded results.** Change. MVP 1 mobility 0.43 → 0.19 moves per unit-year.
-- **Known limitation.** Beliefs are themselves noisy, so the best-*believed* of many cells still
-  carries a winner's-curse bias. This is now a property of the perception model, and it is
-  large: see the noise experiment in Section 7.2.
+The previous bootstrap problem in field expansion was fixed.
+When cultivation is worthwhile, fields now grow toward a meaningful target subject to labor and land constraints.
 
-### Item 2. Soil semantics (model change)
+The bounded pressure scenario validates the intended mechanism:
 
-- **Problem.** Mean farmed soil stayed ~0.94 under continuous cropping.
-- **Why it was wrong.** One cell value was depleted in proportion to the cultivated *share* and
-  recovered in proportion to the uncultivated share, so a small plot got free fallowing from
-  the unfarmed rest of the cell.
-- **Change.** `economy/agriculture.py` `update_soil_nutrients` v2.0 as in Section 3.3; new
-  parameter `agriculture.soil_cultivated_recovery_rate: 0.02` (placeholder; natural inputs
-  under continuous cropping, so unmanaged fields settle near 20% rather than 0). Depletion rate
-  was not raised.
-- **Metrics.** `mean_soil_nutrients_farmed` is now weighted by cultivated area (NaN when nothing
-  is farmed, instead of a misleading 1.0). New: `arable_utilization` (cultivated / arable ha in
-  farmed cells), `cultivated_ha_per_capita`, `farm_hours_per_capita`, `crop_kcal_per_farm_hour`,
-  `farmed_cell_population_density`, `farmed_density_p50/p90`, `occupied_density_p50/p90`.
-- **Tests.** `tests/test_agriculture.py`: sustained cultivation declines monotonically to the
-  analytic equilibrium; fallow recovers; management slows depletion and raises the equilibrium;
-  fertility is independent of how much of the cell is farmed; farming metrics are identical for
-  one doubled unit and two identical copies.
-- **Seeded results.** Change.
-
-### Item 3. Behavior-preserving performance (optimization)
-
-- **Problem.** Late MVP 2 steps took ~1.1 s with ~900 units; belief sharing was 60% of run time.
-- **Changes.** All exact (golden fixtures unchanged, metrics hashes identical):
-  - `WorldGrid.cells_within` / `land_cells_within` cache static neighborhoods.
-  - Migration scores candidates as floats with the same terms and `sum()` order (Python ≥ 3.12
-    `sum` is compensated, so a running `+=` would *not* be bit-identical), iterates the small
-    reachable set, and builds component dicts only for traced units.
-  - Belief sharing collects partners in the same RNG order and keeps, per cell, the first
-    freshest partner observation (as before); perception and sharing both emit a
-    `BeliefUpdate` with a new map. A Hypothesis test checks equality with the original
-    dictionary merge.
-  - **Beliefs are dense per-unit arrays** (`population/unit.py` `BeliefMap`: observation year,
-    food, water, population per cell; `NEVER_OBSERVED` marks unknown cells). Maps are never
-    modified after construction: perception, sharing and merging build new ones, so staged
-    evaluation stays valid and maps can be shared on fission. Perception forgets and writes
-    cells with array operations; sharing compares year arrays directly; migration reads only
-    the reachable candidates (cached as arrays per origin). Memory: 32 bytes × cells per unit
-    (~51 kB on 40×40; ~60 MB at 1,200 units), which grows with cells × units.
-  - `PopulationUnit` uses a descriptor on `females`/`males` instead of a `__setattr__` hook
-    (11.6M hook calls per run), and caches cohort-weighted sums (`weighted_count`, used for
-    need and labor) until a cohort array is replaced.
-- **Measured.** Same seed, same outputs throughout (golden fixtures and per-seed ensemble rows
-  identical):
-  - first round (caches, migration fast path, sharing arrays, cohort descriptor): 1,000-year run
-    (aggregation 3) 400 s → 326 s; late step (920 units) 1.13 s → 0.76 s;
-  - dense belief maps: late step 0.76 s → 0.40 s (sharing 293 → 98 ms, perception 175 → 44 ms);
-    4 seeds × 600 years in reference mode 250 s → 175 s (−30%); 1,000-year seed 0 in reference
-    mode 421 s → 212 s (−50%);
-  - tensorized diffusion (one knowledge matrix, contact edge list, per-receiver sums with
-    numpy's own reduction so results stay bit-identical, all-units × technologies support
-    check) and sharing (stacked partner years, `argmax` = first freshest partner; int32
-    observation years): diffusion 68 → 27 ms per late step; 1,000-year seed 0 212 s → 181 s.
-- **Tried and reverted** (no measurable gain): vectorizing the metrics recorder's mean age and
-  technology shares, and the per-unit invariant check. Their remaining cost (~11 ms and ~4 ms
-  per late step) is per-unit Python overhead; stacking ~900 small arrays costs as much as the
-  loop. `--set debug.check_invariants=false` saves the ~4 ms (~1%) in production ensembles.
-- **Vectorized with rounding-level changes** (accepted explicitly): migration utilities for all
-  candidates of all units in one numpy pass (`candidate_utilities`; per-unit choice, tie
-  draws and move draws keep their order), and crowding hazards for all units at once
-  (`np.bincount` per (cell, species) pool, `-expm1` for sedentism). Differences from the scalar
-  rules are at most ~1e-15 relative (crowding) and ~1e-12 (migration utilities near zero);
-  tests check agreement to 1e-12 / 1e-9. Late step 0.37 → 0.31 s (migration 50 → 34 ms,
-  demography 22 → 16 ms); 1,000-year seed 0 181 → 178 s.
-- **Consequence: exact seeded output is platform-specific.** numpy picks SIMD kernels by CPU
-  feature, so another machine may differ in the last bit and seeded runs can diverge. Golden
-  fixtures record a numeric-platform signature (numpy version, machine, active SIMD dispatch);
-  on a different platform the exact comparison is *skipped* with instructions, never failed.
-  All other tests are platform-independent. Fixtures were re-recorded for this change
-  (4 of 5 changed; MVP 1, which has crowding off, did not).
-- **Not done, deliberately.** A cached `units_by_cell` / `cell_population` index with
-  invalidation: measured at 0.26 ms and 0.58 ms per call with 920 units (~4 ms per step, 0.5%),
-  not worth the stale-cache risk. Belief pruning: a model change, not done.
-
-### Item 4. Ensemble tooling (implementation)
-
-`madexplorer ensemble` / `compare` and `experiments/ensemble.py` as described in Section 3.1.
-Process-based parallelism (`--jobs`); rows sorted by seed; parallel equals serial.
-`tests/test_ensemble.py` covers settings overrides, serial/parallel equality, aggregation and
-paired statistics, and the CLI outputs.
-
-### Item 5. Settlement crowding mortality (model change)
-
-- **Problem.** Farming populations had no health cost of settling densely (old Issue 1).
-- **Change.** `population/health.py`, switch `mechanisms.crowding_mortality` (on by default, off
-  in MVP 1), species section `health:`:
-  - sedentism `s = 1 − exp(−residence_years/τ)`, τ = 5 years, reset by moving;
-  - contact population = own settlement (people per social group) + `w` × other settled people
-    in the cell, `w = min(1, π r² / cell area)`, r = 2 km;
-  - pressure `C = log(1 + N_contact/50)`; adult hazard `h = 0.005 · s · C`, ×2 for children
-    under 5 and adults over 60;
-  - total hazard `h_baseline·exp(starvation) + h_crowding` (cause-specific, additive).
-  - Metrics `mean_crowding_hazard` and `crowding_death_share` (expected deaths attributable to
-    crowding / all deaths).
-- **Assumptions.** All magnitudes are placeholders (a settled group of ~500 in contact adds
-  about one adult baseline hazard). No sanitation technology, immunity or epidemics yet.
-- **Tests.** `tests/test_health.py`: concentrated > dispersed; more settled neighbors raise the
-  hazard; recently moved and mobile groups avoid most of it; crowding raises death
-  probability; a 20 km cell with four villages differs from four 10 km cells by < 10% (counting
-  the whole cell as one settlement would nearly double it); a 3-group merged unit gets the
-  same hazard as three separate units. Statistical: crowding lowers population across seeds.
-- **Seeded results.** Change. It is **not** calibrated to produce a plateau.
-
-### Item 6. Aggregation-resolution sensitivity (experiment; see Section 7.1)
-
-Coarsening at 3 units per cell changes outcomes materially; the MVP 2 scenario now runs with
-aggregation off. `max_units_per_cell: 1` nearly stops colonization.
-
-### Items 7-8. Merge/split semantics and network rewiring (implementation fix)
-
-- **Problem.** Merging was ad hoc in `merge_into`; fission copied a hand-picked subset of fields;
-  trade ties *pointing at* an absorbed unit silently vanished (only its outgoing ties were
-  copied), so coarsening destroyed connectivity.
-- **Change.** `population/composition.py` (`FIELD_RULES`, `merge_state`, `absorb`, `split_off`,
-  `rewire_ties`). Fusion, coarsening and fission all go through it. Rules: extensive
-  quantities (stores, fields, debts, this year's flows) sum on merge and divide in proportion
-  to people on split; intensive ones (food ratio, deficit, marginal returns) are
-  people-weighted means; harvest history is the people-weighted mean of aligned recent years;
-  beliefs keep the freshest observation per cell; incoming ties are redirected, duplicate
-  edges add (tie strength is accumulated exchange), the internal edge is dropped.
-- **Behavior differences.** Fission now splits energy and labor debts proportionally (the
-  daughter used to start with none); merged units keep people-weighted flows and history
-  instead of the target's; duplicate ties add instead of taking the max.
-- **Tests.** `tests/test_composition.py`: rule completeness, Hypothesis split-then-merge
-  conservation of people, reserves, stores, fields and debts, incoming-tie rewiring,
-  duplicate-edge combination, no self-edges, tie weight conserved except the internal edge.
-- **Seeded results.** Change.
-
-### Item 9. RNG isolation (implementation fix)
-
-- **Problem.** Perception and belief sharing shared one stream; fission and fusion shared
-  `social`; technology adoption used `knowledge`. Changing one mechanism's draw count shifted
-  another's draws.
-- **Change.** One stream per mechanism (Section 3.1) plus `RngManager.keyed`.
-- **Tests.** `tests/test_rng.py`: switching knowledge sharing, fusion, migration or fission off
-  leaves the perception, fission and demography streams in the same state after a year
-  (the tests fail when the old shared names are restored); keyed streams depend only on keys.
-- **Seeded results.** Change (different streams).
-
-### Item 10. Innovation order bias (model change)
-
-- **Problem.** Candidates were tried in file order and the first success stopped the loop, so
-  earlier technologies in the YAML had an advantage.
-- **Change.** `choose_invention` (competing risks, Section 3.3); candidates are sorted by id
-  before drawing, so file order does not even change seeded runs. One uniform draw per group.
-- **Tests.** Choice frequencies proportional to λ and total rate `1 − ∏(1 − p)`; a run with the
-  technology list reversed produces the identical invention sequence (fails on the old code).
-- **Seeded results.** Change.
-
-### Refactor after the speed-ups (no behavior change)
-
-Removed scalar duplicates that survived only as test references: `destination_score` /
-`_utility` (migration now has the documented component rule plus the vectorized
-`candidate_utilities`), the per-unit `diffusion_gain` (the rule now lives on
-`diffusion_gains`), `mortality_probability`, `unit_field_names`, `BeliefMap.known_cells`,
-the `SharedKnowledge` proposal (same as `BeliefUpdate`), and the list-returning
-`land_cells_within` (now one cached array function). The health rules (`sedentism`,
-`settlement_crowding_pressure`, `crowding_mortality_hazard`) work elementwise on scalars or
-arrays and `crowding_hazards` is built from them, so the formulas exist once.
-`KnowledgeModel.unsupported` delegates to the batched `knowledge_supported`. Net −150 lines;
-golden fixtures unchanged.
-
-### Item 11. Test classes (implementation)
-
-- `tests/regression/`: golden fingerprints (final state, flow totals, SHA-256 of all metrics
-  and events) for MVP 1 150 y, MVP 2 250 y × 2 seeds, a small forager world and a small
-  farming world; exact in-process replay; seed divergence.
-- Mechanism tests: everything else under `tests/` (marked automatically).
-- `tests/statistical/`: 8 paired seeds on a 16×16 world over 900 years: agriculture raises
-  population over the forager-only baseline; crowding lowers it; storage pits and cultivation
-  appear in ≥ 50% of runs within broad year ranges; 8-units-per-cell aggregation stays within
-  tolerance of the reference. Excluded from `make test` (`-m 'not statistical'`). The
-  agriculture test is a strict `xfail` (open issue 1).
-- 113 fast tests + 5 statistical (4 pass, 1 expected failure).
-
----
-
-## 5. Earlier bugs found and fixed
-
-| Bug | Symptom | Fix |
-|---|---|---|
-| `Scenario.with_overrides` dropped the knowledge system | MVP 2 runs silently ran without technology | Pass `knowledge` through; regression test |
-| Technology loss check passed an empty held set | ≈32k spurious losses per run | `KnowledgeModel.unsupported()`; test |
-| Field expansion unbounded | 794k people by year 1,000 | Fields capped at need × (1 + surplus_target) / yield |
-| D8 flow terminated in noise pits | 2 river cells on 64×64 | Priority-flood fill before routing |
-| Latitude gradient 0.6 °C/deg | Sea level at 50°N below freezing | 0.4 °C/deg |
-| Premature cultivation by mobile bands | Early growth ~20% lower | Clearing amortized over expected tenure |
-| Ecology knowledge efficiency 0.83 for expert founders | Stalled growth | `half_efficiency_level: 0.05` |
-
----
-
-## 6. Performance now
-
-| Run (2-core codespace) | Runtime |
-|---|---|
-| MVP 1, 64×64, 450 years | ~8-20 s |
-| MVP 2, 40×40, 600 years, aggregation off (16-seed ensemble, `--jobs 2`) | median ~45 s per run, ~7 min per ensemble |
-| MVP 2, 40×40, 600 years, reference mode, 4-seed ensemble (`--jobs 2`) | 25-67 s per run, 1.5 min wall |
-| MVP 2, 40×40, 1,000 years, reference mode, seed 0 (one of the slowest seeds) | 178 s |
-| Estimated baseline, 1,000 years, `--jobs 2`: 8 / 16 / 32 seeds | ~6 / ~13 / ~25 min (range 5-9 / 9-17 / 20-33) |
-
-A late step (920 units) is now ~0.31 s: sharing ~99 ms, foraging ~38, perception ~35,
-migration ~34, diffusion ~24, demography ~16, field planning ~14, learning ~16, plus ~15 ms of
-metrics and invariant checks. Belief sharing still relays observations until every unit knows most of the
-map (median 786 cells at year 850); a spatial memory limit would cut this further but is a
-model change.
-
----
-
-## 7. Experiments after the cleanup
-
-All on `mvp2_neolithic` (40×40), seeds 0-15 paired, 600 years, unless noted. "d/sd" is the
-paired mean difference divided by the reference standard deviation; "material" means
-|d/sd| > 0.25 and more than 2 standard errors from zero.
-
-### 7.1 Resolution invariance (item 6)
-
-Reference: aggregation off.
-
-| Setting | Final population | Migration rate | Inventions | Units | Verdict |
-|---|---|---|---|---|---|
-| aggregation off (reference) | 11,080 | 0.217 | 6.9 | 413 | — |
-| max 8 units/cell | +0.9% (d/sd 0.03) | −0.7% (0.08) | +3% (0.08) | same | within noise |
-| max 3 units/cell (old default) | −11% (−0.34) | −7% (−0.69) | +24% (+0.70) | −19% | **material** |
-| max 1 unit/cell | −97% (326 people) | +26% | −34% | 6.5 | **breaks colonization** |
-
-Technology milestone years (first storage pits, first cultivation) are identical across
-off / 8 / 3 because, over 600 years, the first inventions happen before any cell exceeds 3
-units. On seed 0 over 1,000 years the difference is large: aggregation 3 gave 50.1k people and
-~40% farmed food, aggregation off 29.8k people and no farming. Mechanisms behind the bias:
-
-- innovation and learning use the unit's head count, so a merged 3-group unit innovates and
-  learns like one group three times larger (inventions +24%);
-- a merged unit migrates as one actor (migration −7%);
-- a group that buds off is merged straight back into its parent at the end of the step unless
-  it moved that same year; at 1 unit per cell this almost stops dispersal.
-
-The statistically correct fix (group-level hazards inside multi-group units, selective
-emigration) belongs to MVP 3's stratified units. Until then the reference mode has no
-aggregation; `aggregation: true, max_units_per_cell: 8` is an accepted approximation.
-
-### 7.2 Perception noise (rerun of the old experiment, item 1)
-
-Aggregation at 3 (runs made before the reference-mode switch; paired, so the comparison
-holds).
-
-| `cognition.observation_noise_sigma` | Migration rate | Sedentary share | Final population | Crowding share of deaths | Runs with ≥ 10% food farmed by year 600 |
-|---|---|---|---|---|---|
-| 0.1 | 0.138 | 0.275 | 12.0k | 4.0% | 1 / 16 (year 582) |
-| 0.3 (default) | 0.202 | 0.141 | 9.8k | 2.8% | 0 / 16 |
-| 0.5 | 0.256 | 0.079 | 6.6k | 2.1% | 0 / 16 |
-
-Perception noise still strongly controls mobility and sedentism (through the winner's curse on
-noisy beliefs) but barely moves invention timing, and it no longer produces early farming.
-**The old conclusion ("low noise → sedentism before farming, farming by ~year 290") does not
-survive the migration fix**; it depended on the Gumbel artifact.
-
-### 7.3 Small-world checks (16×16, 900 years, 8 seeds)
-
-With aggregation at 3 (before the reference-mode switch):
-
-| Variant | Median final population | Final farm share | Sedentary share | Crowding share of deaths |
-|---|---|---|---|---|
-| default | 5,548 | 0.17 | 0.32 | 3.7% |
-| no cultivation | 4,250 | 0 | 0.10 | 1.7% |
-| no crowding mortality | 6,876 | 0.33 | 0.44 | 0 |
-
-In the reference mode (aggregation off) the farming advantage disappears: paired log ratio of
-final population, cultivation vs. no cultivation, is ≈ 0 (mean 0.0003; 3 of 8 seeds
-positive). The statistical test `test_agriculture_supports_higher_population_than_foraging_alone`
-is therefore a strict `xfail` pointing at open issue 1. The other statistical tests pass:
-crowding lowers population, technologies appear within broad ranges, 8-units-per-cell
-aggregation stays within tolerance of the reference.
-
----
-
-## 8. Open issues and known problems
-
-1. **(Resolved for MVP 2, 2026-09-30: P5 steps 1-5.** The bottleneck was the proportional
-   field-growth rule; with A and the replacement cost, cultivation raises carrying capacity
-   ~3× under pressure. Original text kept for history.) **Farming rarely takes hold within
-   1,000 years in the reference mode, and does not raise population.** Cultivation technology appears early (median year ~120) but farming stays
-   below 10% of food in the 600-year ensembles and in the 1,000-year seed-0 run, and on the
-   small world cultivation gives no population gain over foraging alone (Section 7.3). The
-   earlier farming transition was substantially an aggregation artifact. See the baseline
-   (Section 9) for the distribution. This is the main calibration question for the start of MVP 3 and should
-   be investigated as a mechanism question (returns to farming vs. marginal foraging, clearing
-   costs, soil equilibrium without fallow rotation, crowding cost of settling), not tuned to a
-   target.
-2. **Winner's curse through noisy beliefs.** The destination is the best of many noisy
-   observations, so mobility depends on observation noise and on how many cells a group knows.
-   A proper fix is belief-level uncertainty (e.g. shrinking observations toward a prior, or
-   discounting by known noise).
-3. **Map-wide belief maps**: units learn most of the map through relayed gossip; memory now
-   scales with cells × units (Section 6).
-4. **Aggregation is not sociologically neutral** (Section 7.1).
-5. **Stock-vs-yield mismatch in migration food utility (accepted MVP 2 limitation, P5).**
-   The food term compares perceived wild *stock* per head with need, while fields enter the
-   stay term as one year's crop *flow*. Heavy farmers, whose home wild stock is displaced by
-   fields and crowding, can therefore see weaker stay incentives than light farmers (step
-   2b: without an abandonment term, P(move) 0.224 vs 0.082). The field replacement cost
-   evens this out but does not remove it. A sustained-yield food utility is later work; not
-   an MVP 2 freeze blocker.
-6. Modelling simplifications carried over: static vegetation, no seasons, species in one cell
-   forage in id order, equal food sharing inside groups, whole-group migration only, one-good
-   trade, group-level knowledge (no specialists or archives), verbose adoption events.
-7. Small nits: soil state is one pool per cell (newly cleared land inherits it); perception is a
-   Chebyshev square; `README.md` still describes the pre-cleanup status.
-
----
-
-## 9. MVP 2 baseline (item 12)
-
-**Superseded (2026-09-30):** the 32-seed × 1,000-year baseline is no longer required. The
-freeze reference is the small ensemble in `baselines/mvp2/` (Section 0, P7). The text below
-is kept for history.
-
-**Not yet recorded.** Canonical `scenarios/mvp2_neolithic.yaml`, reference mode, 1,000 years.
-After the speed-ups, the estimated wall time on the 2-core codespace is ~13 min for
-seeds 0-15 and ~25 min for seeds 0-31 (the earlier "2 hours" assumed every seed was as slow as
-seed 0 before the speed-up). Command, once approved:
-
-```bash
-uv run madexplorer ensemble scenarios/mvp2_neolithic.yaml --seeds 0:31 --jobs 2 --out baselines/mvp2
+```text
+resource pressure
+    -> cultivation adoption
+    -> substantially higher sustainable population/density
 ```
 
-The manifest records `source_tree_sha256`, so commit (or at
-least freeze) the code before recording.
+Agriculture does **not** need to dominate every abundant-foraging frontier.
+
+### Migration and information
+
+- The old destination-level Gumbel / best-of-many artifact is gone.
+- Social interactions do not synchronize entire remembered maps.
+- Social information bandwidth is bounded and relayed information loses confidence.
+- Direct noisy observations are shrunk toward an experience-based prior.
+- Human migration candidate sets are already bounded by physical reachability; no additional attention cap is active.
+
+### Familiarity
+
+Geographic belief and ecological familiarity are distinct:
+
+- belief = knowledge that a place exists and approximate information about it;
+- familiarity = practiced ability to exploit its ecology efficiently.
+
+Unpracticed familiarity decays exponentially toward the species baseline and is evaluated lazily.
+
+### Agricultural capital and migration
+
+Existing fields increase the value of staying through crop production.
+Leaving incurs the **future labor opportunity cost of recreating equivalent cleared fields**, not a penalty for sunk historical labor and not a second charge on crop output.
+
+### Population growth
+
+MVP 2 does not require an imposed population plateau.
+Food stress, resource competition, soil effects, starvation, and settlement crowding provide negative feedback, but continued growth at the end of a finite run is not itself a model failure.
 
 ---
 
-## 10. Recommended next steps (in order), superseded by Section 0
+## 7. Frozen reference validation
 
-*Written before the stabilization pass. The current plan is Section 0.*
+### 7.1 Canonical Neolithic scenario
 
-1. **Record the MVP 2 baseline** (Section 9).
-2. **Belief memory range** (optional model change): forgetting observations beyond a few
-   relocation ranges would bound memory (dense maps scale with cells × units) and cut sharing
-   cost further; evaluate with paired ensembles before adopting.
-3. **Investigate issue 1** (farming transition) with paired ensembles and `--set` sweeps.
-4. **MVP 3: distributional society** (§33), built on the composition rules:
-   - each large `PopulationUnit` holds ~8-16 weighted strata sharing wealth, health, risk
-     tolerance, autonomy, occupation and status, extending cohorts to `N[sex, age, stratum]`;
-     strata keep correlations that separate marginals would lose (§7.3);
-   - initial wealth support from deterministic quantiles of lognormal body + Pareto tail;
-   - selective migration `n_move,i ~ Binomial(n_i, p(move | stratum))`, which also fixes the
-     aggregation bias in 7.1 (groups inside a unit decide separately);
-   - health as a pathway from wealth (§8.3), adult height from childhood stress (§8.5),
-     building on `population/health.py`;
-   - every new field must be added to `FIELD_RULES`;
-   - switch subsystems to `RngManager.keyed` where split/merge would reorder draws.
-5. Afterwards, MVP 4 (factions, appropriation, state capacity) and MVP 5 (fantasy and
-   multi-species worlds).
+Freeze reference:
+
+- scenario: `scenarios/mvp2_neolithic.yaml`
+- seeds: `0,1,2,3`
+- horizon: 600 years
+
+Across the four freeze seeds at year 600:
+
+- population: approximately **15.8k–33.1k**;
+- occupied cells: approximately **497–790**;
+- final farm share: approximately **0.42–0.50**;
+- final sedentary share: approximately **0.77–0.85**;
+- migration rate: approximately **0.047–0.054**;
+- first cultivation: approximately years **147–238**.
+
+The seeds intentionally diverge in timing and trajectory.
+Do not optimize toward any one seed.
+
+### 7.2 Pressure scenario
+
+Freeze reference:
+
+- scenario: `scenarios/mvp2_pressure.yaml`
+- seeds: `0,1,2,3`
+- horizon: 400 years
+- paired cultivation ON/OFF comparison
+
+Late-run means show a large and consistent carrying-capacity effect:
+
+- farming ON: roughly **3.36k–4.17k** people;
+- farming OFF: roughly **1.13k–1.25k** people;
+- farming ON also produces substantially higher people-per-occupied-cell and sedentism.
+
+This compact paired experiment is the canonical MVP 2 agriculture validation.
 
 ---
 
-## 11. Map of the code
+## 8. Testing contract
 
+### Routine engineering
+
+Keep `make check` green.
+At the freeze it recorded:
+
+- **185 passing tests**.
+
+Golden fixtures live under `tests/regression/golden/`.
+They are numeric-platform sensitive; on a machine with a different NumPy/CPU dispatch signature they may be skipped rather than treated as failed reference behavior.
+
+### Statistical tests
+
+- Compact statistical validation is intentionally small and suitable for routine use.
+- Extended long statistical validation is manual/research-grade and is **not** required for ordinary optimization work.
+- Aggregation remains a documented strict xfail because naive coarsening is scientifically non-neutral.
+
+### Optimization validation
+
+During Performance Hardening:
+
+- exact optimizations should preserve golden outputs;
+- RNG draw order and stream semantics should remain unchanged unless an explicitly tolerated numerical reformulation is approved;
+- numerical reformulations require a documented error tolerance and targeted equivalence test;
+- large ensembles are not required for routine implementation changes.
+
+Use the smallest diagnostic capable of detecting a regression.
+
+---
+
+## 9. Performance baseline
+
+The committed MVP 2 pre-hardening baseline is in:
+
+- `benchmarks/perf/mvp2_freeze_synthetic.json`
+- `benchmarks/perf/mvp2_freeze_seed0_600y.json`
+
+Reference seed-0, 600-year run:
+
+- CPU: **41.88 s**
+- wall: **43.82 s**
+- final active units: **1,212**
+- peak RSS: **123.3 MB**
+- average: approximately **0.293 ms per unit-year**
+
+Late window, years 571–600:
+
+- mean active units: **1,085.5**
+- approximately **328 ms/tick**
+- approximately **0.302 ms/unit/tick**
+
+Synthetic benchmark scaling remains approximately linear over the measured range:
+
+| Approx. units | CPU ms/tick |
+|---:|---:|
+| ~128 | ~31 |
+| ~610 | ~142 |
+| ~1,098 | ~269 |
+| ~1,763 | ~451 |
+
+The dominant diagnosis is therefore not one catastrophic quadratic algorithm in normal ranges.
+The dominant cost is **Python work repeated per active social unit**.
+
+Historically large runtime consumers include:
+
+- geographic information sharing;
+- migration;
+- foraging;
+- knowledge diffusion;
+- demography.
+
+Re-profile after every substantial representation change; do not assume the old ranking remains true.
+
+---
+
+## 10. Current engineering objective: MVP 2 Performance Hardening
+
+The model is frozen. The next work should target implementation overhead and data layout.
+
+### Primary targets
+
+1. **Reduce repeated Python traversal of `PopulationUnit` objects.**
+   - Many subsystems independently loop over `state.units.values()`.
+   - Look for opportunities to batch work across units without altering staging or RNG semantics.
+
+2. **Reduce repeated spatial-index construction.**
+   - Multiple subsystems rebuild units-by-cell or equivalent structures.
+   - Prefer per-tick shared indexes with explicit invalidation when location/unit membership changes.
+
+3. **Move hot scalar state toward hybrid structure-of-arrays storage.**
+   - Preserve higher-level `PopulationUnit` semantics at API boundaries if useful.
+   - Store frequently accessed numeric fields contiguously where profiling supports it.
+   - Keep exact cohort arrays and shared group-level state conceptually separate.
+
+4. **Reduce proposal-object allocation.**
+   - Proposal staging is scientifically useful, but thousands of tiny frozen dataclass instances create allocation/GC overhead.
+   - Consider typed batched proposal buffers or array-backed proposal structures while preserving evaluate/apply semantics.
+
+5. **Improve cache locality and reduce dictionary/set/property lookups in hot loops.**
+   - Technology/capability caches already exist; continue eliminating repeated equivalent object construction.
+
+6. **Review belief-state scaling after profiling.**
+   - Social transmission is already bounded, but every unit still owns dense arrays covering all world cells.
+   - Dense storage is acceptable for the current 40×40 world, but it scales as units × cells.
+   - Do not change belief semantics merely for speed; representation may change.
+
+7. **Use NumPy/batched kernels where they reduce Python overhead.**
+   - Demography is already a useful example of this approach.
+
+8. **Use Numba/Cython/Rust/native kernels only after Python representation/dataflow improvements are measured.**
+   - Do not compile an inefficient object architecture prematurely.
+
+### Non-goals during this phase
+
+Do not add:
+
+- wealth distributions;
+- health strata;
+- occupation classes;
+- political factions;
+- markets/prices;
+- disease epidemiology;
+- warfare;
+- seasons/dynamic vegetation;
+- fantasy species mechanics;
+- new agriculture or migration equations.
+
+Those belong to later scientific milestones.
+
+---
+
+## 11. Performance-hardening acceptance criteria
+
+There is no single mandatory hardware-specific runtime number.
+The phase is successful when:
+
+- frozen scientific semantics remain intact;
+- exact regression fixtures remain stable for exact optimizations;
+- per-unit Python overhead is materially lower than the freeze baseline;
+- memory growth is controlled enough that MVP 3 strata will not immediately make the engine unusable;
+- the main hot paths have been re-profiled after refactoring;
+- further large speed gains would require either compiled kernels or genuine model/representation changes that belong to MVP 3.
+
+A roughly **2× improvement over the freeze baseline on the same machine** is a useful stretch target, not a reason to compromise scientific behavior.
+
+---
+
+## 12. Accepted MVP 2 limitations
+
+These are known and **do not block** Performance Hardening or MVP 3 unless a later milestone explicitly addresses them.
+
+### 12.1 Aggregation is not scientifically neutral
+
+The current coarsening subsystem merges social actors into one decision-maker and changes population, migration, innovation, and dispersal dynamics.
+Canonical scientific scenarios therefore keep aggregation **off**.
+
+Do not use naive coarsening as a performance shortcut.
+Correct adaptive statistical units belong to MVP 3.
+
+### 12.2 Food utility mixes wild stock and crop flow
+
+Migration compares perceived wild-food stock with annual crop flow in the stay utility.
+The field-replacement rule prevents the worst double counting but does not eliminate the conceptual stock-vs-yield mismatch.
+Deferred.
+
+### 12.3 Ecology remains intentionally simple
+
+MVP 2 still has simplifications including:
+
+- static vegetation/resource structure;
+- no seasons;
+- one soil state pool per cell;
+- limited ecological succession;
+- simple one-good trade.
+
+### 12.4 Social state remains group-level
+
+MVP 2 does not yet model:
+
+- wealth inequality;
+- within-group health distributions;
+- occupations/specialists;
+- within-group political preferences;
+- individual elites or factions;
+- selective subpopulation migration.
+
+This is the core reason MVP 3 exists.
+
+### 12.5 Whole-group migration
+
+A `PopulationUnit` still migrates as a social actor.
+Selective emigration of socioeconomic strata is deferred to MVP 3.
+
+### 12.6 Dense per-unit belief maps
+
+Belief semantics are now bounded and plausible, but storage still scales with units × world cells.
+This is an engineering/scalability limitation, not a current behavioral defect.
+
+---
+
+## 13. Resolved issues that should not be reopened casually
+
+The following were explicitly investigated and resolved during MVP 2 stabilization:
+
+- candidate-count/Gumbel migration artifact;
+- map-wide lossless social belief synchronization;
+- uncertainty handling for direct observations;
+- hard saturation of migration food utility;
+- permanent inherited ecological familiarity;
+- agriculture field-growth bootstrap trap;
+- double counting of fields/crop value in migration;
+- innovation ordering bias;
+- RNG-stream coupling across unrelated mechanisms;
+- treating population plateau as a required outcome;
+- treating naive aggregation as scientifically neutral.
+
+If a future change appears to require reopening one of these, first demonstrate a correctness problem against the canonical v2 objective and frozen model rule.
+
+---
+
+## 14. Immediate documentation/housekeeping debt
+
+These are low-risk cleanup tasks and may be completed during performance work:
+
+- update `README.md` so it says MVP 2 is frozen and agriculture validation is complete;
+- remove or update comments that claim `max_units_per_cell=8` is scientifically equivalent to aggregation-off;
+- update stale aggregation-test docstrings while keeping the strict xfail rationale;
+- consider warning when a new scenario enables aggregation, because the global config default may otherwise be misleading.
+
+Do not mix these documentation changes with scientific model changes.
+
+---
+
+## 15. Workflow for performance changes
+
+For each substantial optimization:
+
+1. profile first;
+2. state which Python/data-layout cost is being targeted;
+3. classify the patch:
+   - exact implementation optimization;
+   - numerical reformulation;
+   - bug fix;
+   - model change;
+4. implement the smallest coherent change;
+5. run targeted unit/mechanism tests;
+6. run golden regression where applicable;
+7. run the synthetic/performance benchmark if the hot path changed;
+8. record before/after CPU and memory measurements;
+9. update this file only if the current architecture, limitations, or next-step priorities materially changed.
+
+Avoid large ensemble runs for ordinary optimization work.
+
+### Reproducibility rules
+
+- Use isolated named RNG streams.
+- Vectorizing RNG generation is allowed only when stochastic semantics and deterministic ordering remain equivalent.
+- Do not reduce the number of independent stochastic decisions merely to make code faster.
+- Do not retune coefficients to recover a benchmark trajectory after an optimization.
+
+---
+
+## 16. Gate to MVP 3
+
+Begin substantive MVP 3 work only after Performance Hardening reaches diminishing returns and the frozen MVP 2 model remains reproducible.
+
+MVP 3 should introduce **joint weighted socioeconomic strata**, not unrelated marginal distributions.
+
+Preferred conceptual representation:
+
+```text
+shared group-level state
+    +
+N[sex, age, stratum]
+    +
+stratum attributes:
+    wealth
+    health
+    occupation
+    nutrition
+    preferences
+    migration propensity
+    status / leverage
 ```
+
+Group-level shared state should remain shared where appropriate:
+
+- location;
+- geographic/cultural beliefs;
+- technologies;
+- institutions;
+- social-network relationships.
+
+Do not multiply every subsystem by the number of strata.
+Only distribution-sensitive mechanisms should operate over strata.
+
+MVP 3's adaptive-resolution work must also solve the current aggregation problem by allowing fractions/strata inside a statistical unit to respond differently rather than converting merged populations into one homogeneous decision-maker.
+
+---
+
+## 17. Next scientific milestones after MVP 3
+
+### MVP 4 — politics and hierarchy
+
+Planned mechanisms include:
+
+- surplus appropriation;
+- wealth concentration;
+- status competition;
+- factions and coalitions;
+- inheritance;
+- coercive capacity;
+- state capacity versus elite capture;
+- public goods versus extraction;
+- exit, rebellion, and counter-dominance.
+
+### MVP 5+ — richer species and worlds
+
+Planned extensions include:
+
+- fantasy species profiles;
+- different life histories/body plans;
+- flight and alternative mobility;
+- multi-species interaction;
+- richer disease/ecology;
+- longer-run biological evolution if justified.
+
+These remain future scientific work and should not enter the current performance milestone.
+
+---
+
+## 18. Compact code map
+
+```text
 src/madexplorer/
-  config/        schema.py (scenario models), loader.py (Scenario, overrides, with_settings, hashing)
-  core/          simulation.py, state.py, subsystem.py, rng.py, ids.py, events.py, invariants.py,
-                 governance.py, provenance.py
-  world/         grid.py, generation.py, hydrology.py, climate.py, subsystems.py
-  ecology/       resources.py, subsystems.py
-  species/       profile.py (SpeciesProfile, incl. Health), life_history.py (LifeTables)
-  population/    unit.py, composition.py (merge/split rules), health.py (crowding),
-                 energetics.py, demography.py, groups.py, initialization.py
-  economy/       foraging.py, agriculture.py, trade.py
-  mobility/      movement.py, exploration.py (perception, belief sharing), migration.py
-  knowledge/     system.py, learning.py, diffusion.py, innovation.py
-  resolution/    coarsening.py
-  experiments/   ensemble.py (ensembles, summaries, paired comparisons), benchmark.py
-  metrics/       recorder.py
-  persistence/   output.py
-  cli/           main.py
-scenarios/       mvp1_sandbox.yaml, mvp2_neolithic.yaml
-species/         human.yaml
-technologies/    neolithic.yaml
-tests/           mechanism tests; regression/ (golden fixtures); statistical/ (make test-stat,
-                 make test-stat-long for the `slow` research suite)
-benchmarks/perf/ benchmark reports (JSON), p0_pre_reform_* = pre-stabilization reference
-baselines/       mvp2/ (MVP 2 freeze: freeze_manifest.json, 4-seed reference runs)
+  config/        scenario schema / loading / overrides
+  core/          simulation, state, subsystems, RNG, invariants, provenance
+  world/         grid, generation, hydrology, climate
+  ecology/       resources and ecology subsystems
+  species/       species profile and life history
+  population/    units, composition, health, energetics, demography, groups
+  economy/       foraging, agriculture, trade
+  mobility/      movement, perception/information, migration
+  knowledge/     learning, diffusion, innovation
+  resolution/    experimental coarsening
+  experiments/   ensembles and benchmarks
+  metrics/       recorders
+  persistence/   outputs
+  cli/           command-line interface
+
+scenarios/       canonical MVP scenarios
+species/         species profiles
+technologies/    technology definitions
+tests/           mechanism, regression, statistical tests
+benchmarks/perf/ committed performance baselines
+baselines/mvp2/  MVP 2 freeze manifest and compact reference runs
 ```
 
-### Conventions to keep
+---
 
-- A new mechanism gets a pure function decorated with `@model_rule`, a subsystem with
-  `evaluate()` → proposals → `apply()`, a `mechanisms:` switch, a metric, mechanism tests, and
-  (if it changes results) re-recorded golden fixtures.
-- A new `PopulationUnit` field gets merge and split rules in `population/composition.py`.
-- Each stochastic mechanism draws from its own named stream, in deterministic order.
-- Units are in field names (`_km`, `_kcal`, `_years`, `_c`, `_mm`, `_ha`).
-- Never mutate cohort arrays in place; assign new arrays (the descriptor clears caches).
-- Compare model variants with paired ensembles (`ensemble` + `compare`), never one seed.
+## 19. Working conventions that still matter
+
+- The user commits/tags unless explicitly asking the implementation agent to do so.
+- Keep the repository runnable and tests green.
+- Prefer checkpoints after coherent phases rather than large opaque batches of changes.
+- Do not tune toward a desired historical narrative.
+- Model assumptions belong in explicit rules/configuration, not hidden magic constants.
+- Every new `PopulationUnit` field must define merge/split semantics.
+- Every new stochastic mechanism needs an isolated deterministic RNG strategy.
+- Units belong in field names where practical (`_km`, `_kcal`, `_years`, `_ha`, etc.).
+- Use the smallest experiment capable of falsifying a claim.
+
+---
+
+## 20. Current one-line handoff
+
+> **MVP 2 science is frozen and validated. The next task is to reduce Python/object/dataflow overhead while reproducing the frozen model; do not start distributional sociology until that performance-hardening phase reaches diminishing returns.**

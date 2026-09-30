@@ -1,11 +1,99 @@
 # Social-Ecological Civilization Simulator
 
-## Objective, Model Specification, and Software Engineering Guidelines
+## Canonical Objective, Model Specification, and Software Engineering Guidelines
 
-**Working title:** `madexplorer`
-**Primary implementation language:** Python 3.12+
-**Document status:** Initial objective/specification
+**Working title:** `madexplorer`  
+**Primary implementation language:** Python 3.12+  
+**Document version:** 2.0  
+**Canonicalized through:** MVP 2 model freeze, 2026-09-30  
+**Frozen MVP 2 commit:** `f505fd118aa17bda3cc1cbb92afed13008bf102b`  
+**Frozen source-tree SHA-256:** `7692ac03a2c75ad598e771098231b1f8bfb74bf918cd4b148227837b0be6bea5`  
+**Document status:** Canonical project objective and forward specification  
 **Primary goal:** Build a reproducible, extensible simulation engine in which populations, cultures, institutions, technologies, and political structures emerge from interactions among species biology, environment, resources, ecology, incentives, social behavior, and stochastic events.
+
+This version incorporates the settled design lessons and model decisions made through the MVP 2 freeze. It is intentionally **not** an experiment log. Historical probes, rejected alternatives, and implementation chronology belong in `objective/status.md`; exact frozen run fingerprints and baseline values belong in `baselines/mvp2/freeze_manifest.json`.
+
+---
+
+## 0. Canonical Project State and Authority
+
+### 0.1 Current milestone
+
+MVP 1 and MVP 2 are complete. **MVP 2 model semantics are frozen.** The current development milestone is **MVP 2 Performance Hardening**: make the frozen model substantially faster without changing its scientific behavior, except for genuine correctness bugs.
+
+MVP 3 begins only after performance hardening and introduces the first distributional social layer: wealth, health, occupations, within-unit heterogeneity, selective migration, biological welfare, and scientifically defensible adaptive population resolution.
+
+### 0.2 Source-of-truth hierarchy
+
+Use the following hierarchy when documents differ:
+
+1. **This document** defines the canonical scientific objective, architecture, frozen MVP 2 contract, and forward roadmap.
+2. **`baselines/mvp2/freeze_manifest.json`** defines exact MVP 2 freeze fingerprints, scenarios, seeds, reference outcomes, test status, and performance baselines.
+3. **Scenario files and source code** define the executable frozen model.
+4. **`objective/status.md`** is the historical engineering and experiment record. It may contain superseded plans and old open issues; it is not the primary specification.
+
+### 0.3 Frozen MVP 2 contract
+
+The canonical MVP 2 model uses:
+
+- annual discrete timesteps;
+- a spatial grid with topology, climate, hydrology, ecological food stocks, soil and arable land;
+- group-level `PopulationUnit` actors with exact age/sex demographic cohorts;
+- bounded local perception and bounded social geographic reports rather than map-wide information synchronization;
+- confidence-aware direct observations and confidence decay for relayed information;
+- practical ecological familiarity that decays toward a baseline when not practiced;
+- foraging, storage, trade, cultivation, field expansion, energetics, fertility, mortality and crowding;
+- domain knowledge, learning, diffusion, need-sensitive innovation, and technology capabilities;
+- fission, fusion and migration;
+- explicit field replacement cost when farmers leave productive cleared land;
+- `log1p` food utility in migration;
+- deterministic named RNG streams and versioned run provenance;
+- staged subsystem evaluation and application with conservation/invariant checks.
+
+The following mechanism defaults are part of the freeze:
+
+- `direct_observation_shrinkage = true`;
+- `familiarity_decay = true`;
+- `field_growth_to_target = true`;
+- `field_replacement_cost = true`;
+- `expected_tenure = false`;
+- **aggregation is disabled in canonical scientific scenarios**.
+
+### 0.4 Canonical validation scenarios
+
+Two scenarios define the MVP 2 scientific reference:
+
+- **`scenarios/mvp2_neolithic.yaml`**: open-ended migration, technology and agricultural transition in the main world. Four 600-year freeze seeds all undergo substantial cultivation, with final populations ranging from roughly 15.8k to 33.1k and final farm shares around 0.42-0.50.
+- **`scenarios/mvp2_pressure.yaml`**: a bounded intensification-pressure ablation. Across four matched 400-year freeze seeds, cultivation raises late population by roughly 2.7-3.7x relative to cultivation-disabled controls and roughly doubles density while reducing food stress.
+
+These are **mechanism validations**, not historical calibration targets. Future implementations must preserve the causal behavior, not force exact narrative similarity outside documented deterministic regression conditions.
+
+### 0.5 Pre-optimization performance baseline
+
+The frozen seed-0, 600-year benchmark records approximately:
+
+- 43.8 s wall time / 41.9 s CPU on the recorded 2-core x86_64 environment;
+- 1,212 final population units;
+- about 0.293 ms per unit-year;
+- about 328 ms/tick in years 571-600 at about 1,086 active units;
+- about 123 MB peak RSS.
+
+The dominant late-stage costs are belief sharing, migration, foraging, knowledge diffusion, demography, field planning, learning and perception. Scaling over the measured range is approximately linear in active population units; the immediate engineering problem is therefore Python per-unit overhead and state representation, not a single catastrophic asymptotic algorithm.
+
+### 0.6 Accepted MVP 2 limitations
+
+The following are deliberately **not** blockers for MVP 2 and should not be reopened during performance hardening unless they cause a correctness failure:
+
+1. Computational aggregation is not scientifically neutral and is disabled in canonical runs. Correct adaptive aggregation belongs to MVP 3.
+2. Migration still contains a stock-versus-yield simplification when comparing wild food and annual crop output.
+3. Field replacement uses home-cell clearing conditions; destination-specific reconstruction, rebuild downtime and soil capital are deferred.
+4. No forced population plateau exists. Food, competition, soil and crowding are the density feedbacks currently modeled.
+5. Noisy beliefs retain some winner's-curse bias despite shrinkage.
+6. The technology-frontier x practitioner-knowledge efficiency formulation remains the frozen MVP 2 rule.
+7. Hazard-based expected tenure was tested and rejected; clearing investment remains based on the frozen formulation.
+8. Migration decisions apply to whole population units; there are no wealth/health/occupation strata yet.
+9. Vegetation is static, the timestep is annual, trade is one-good, knowledge is group-level, perception uses simplified neighborhoods, and soil is one pool per cell.
+10. Exact seeded floating-point replay is platform-sensitive; golden fixtures are authoritative only on supported matching numeric platforms.
 
 ---
 
@@ -83,11 +171,11 @@ Examples:
 
 ### 2.3 Preserve heterogeneity
 
-Population units must represent distributions, not average persons. Aggregation should preserve important variation in wealth, health, age, political attitudes, occupations, skills, and other variables.
+The **long-term** representation must preserve distributions rather than collapse populations to average persons. MVP 2 currently preserves exact age/sex heterogeneity but treats most social/economic traits at group level. MVP 3 extends this principle to wealth, health, occupation, preferences and other correlated variables. Any aggregation introduced from MVP 3 onward must preserve the heterogeneity that materially changes behavior.
 
 ### 2.4 Use adaptive resolution
 
-The simulation should dynamically alter agent resolution as population and complexity increase. Small populations may be represented person-by-person. Large populations should be represented by weighted statistical population units. Politically or historically consequential tails, such as ruling families or elite factions, may remain at higher resolution than the mass population.
+Adaptive resolution is a core architectural objective, but it is **not yet a validated MVP 2 capability**. The frozen MVP 2 reference uses unaggregated social units because naive coarsening changes outcomes. MVP 3 should introduce weighted statistical population units whose internal strata can respond selectively, while high-leverage actors or tails may remain at finer resolution.
 
 ### 2.5 Treat "civilization" as multidimensional
 
@@ -461,6 +549,8 @@ Possible emergent outcomes include high information connectivity and low bulk-tr
 
 ## 6. Adaptive Population Representation
 
+> **Canonical MVP 2 state:** adaptive population resolution is a design target, not yet a scientifically valid feature. MVP 2 represents social actors as group-level `PopulationUnit` objects with exact age/sex cohort arrays. The existing computational coarsening subsystem is empirically non-neutral and is disabled in canonical scenarios. MVP 3 must redesign aggregation so a large statistical unit can preserve heterogeneous subpopulations and selective behavior instead of becoming one homogeneous decision-maker.
+
 ### 6.1 PopulationUnit
 
 The core simulation actor is a `PopulationUnit`. It may represent one person or many people.
@@ -578,6 +668,8 @@ Do not remove rare high-leverage individual events simply because a population i
 
 ## 7. Distribution Model
 
+> **MVP 3 boundary:** the distributional model below is not yet implemented in the frozen MVP 2 scientific state. MVP 2 retains exact age/sex cohorts and group-level scalars. MVP 3 should preferentially use **joint weighted representative strata / quantile particles** rather than unrelated marginal distributions, so wealth, health, occupation, preferences and migration propensity can remain correlated. A practical target is `N[sex, age, stratum]` plus shared group-level cultural/geographic state.
+
 ### 7.1 Use distributions appropriate to each variable
 
 Examples:
@@ -642,6 +734,8 @@ They should not be represented by the same random variable.
 ---
 
 ## 8. Demography and Health
+
+> **Canonical MVP 2 state:** demography is already cohort-based and stochastic. Health is intentionally minimal: food/energy balance affects fertility and starvation risk, while settlement concentration adds crowding mortality. Wealth-dependent health, disease-specific epidemiology, childhood developmental stress and adult stature are deferred to MVP 3+. The frozen model does not contain or require an imposed carrying-capacity ceiling.
 
 ### 8.1 Population dynamics
 
@@ -788,6 +882,8 @@ These affect the ease with which surplus can be accumulated or appropriated.
 
 ## 10. Migration, Exploration, and Settlement
 
+> **Canonical MVP 2 state:** migration uses perceived rather than omniscient information. Direct observations are uncertainty-shrunk toward a prior; social information is transmitted as a bounded set of reports with degrading confidence; geographic beliefs and practiced ecological familiarity are separate concepts. Familiarity decays toward the species baseline when a cell is not practiced. Physical reachability bounds current human destination choice; an optional utility-blind attention cap exists for future species with much larger reachable sets. Food utility uses `log1p`, and migration makes one stochastic move/stay draw after evaluating the best perceived reachable alternative.
+
 ### 10.1 Local knowledge
 
 Agents should not know the entire map.
@@ -848,6 +944,8 @@ This enables open Near-Eastern-like agricultural cores to emerge under some conf
 ---
 
 ## 11. Knowledge, Technology, and Innovation
+
+> **Canonical MVP 2 state:** knowledge is group-level and domain-specific. Frozen domains include ecology, agriculture, storage and construction. Knowledge changes through activity, learning and diffusion. Technologies have prerequisites and capability effects; invention uses need/capacity-sensitive competing hazards rather than configuration-order priority. This is sufficient for MVP 2; archives, specialist-specific knowledge, writing and distributional education belong to later milestones.
 
 ### 11.1 Knowledge stock
 
@@ -1350,46 +1448,42 @@ Species may have different niche-construction capabilities.
 
 ## 19. Core Simulation Tick
 
-The MVP can use a discrete timestep, likely seasonal or annual. The architecture should later support substeps or event-driven subsystems.
+MVP 2 uses an annual discrete timestep and a staged subsystem pipeline. **Order is part of the frozen model because later subsystems observe state changes applied by earlier subsystems.**
 
-Conceptual order:
+Canonical pipeline, subject to mechanism switches:
 
 ```text
-for each timestep:
-
-    1. update climate and weather
-    2. update hydrology and environmental shocks
-    3. update plant and animal ecology
-    4. update pathogens
-
-    5. update local resource availability
-
-    6. for each population unit:
-        perceive / update local knowledge
-        forage / hunt / farm / herd / work
-        produce resources
-        consume resources
-        update wealth and storage
-        update nutrition and health
-        update births and deaths
-        update learning and knowledge
-        evaluate movement / migration
-        evaluate trade and social interactions
-
-    7. update trade and knowledge networks
-    8. update factions and elite competition
-    9. update political institutions and state capacity
-   10. update conflict / coercion / rebellion
-   11. update infrastructure and niche construction
-   12. attempt innovations
-   13. diffuse technology and culture
-   14. execute migrations, splits, mergers, and political changes
-   15. adaptive-resolution split/merge pass
-   16. calculate observables and diagnostics
-   17. persist checkpoints/events/metrics
+1. climate
+2. ecology
+3. perception
+4. bounded knowledge sharing
+5. crop harvest / farming
+6. foraging
+7. trade
+8. energetics
+9. demography
+10. extinction
+11. field planning
+12. knowledge learning
+13. knowledge diffusion
+14. innovation
+15. fission
+16. fusion
+17. migration
+18. optional computational coarsening
+19. invariants, metrics, events and persistence
 ```
 
-Order-dependent effects should be minimized. Where order matters, document it explicitly and use staged state updates rather than in-place mutation.
+Canonical scientific scenarios disable step 18. Each subsystem follows the staged contract:
+
+```text
+evaluate(state, context) -> proposals
+proposal.apply(state, context)
+```
+
+This design makes causal order explicit and auditable. During performance hardening, internal batching or storage may change, but the observable semantics and ordering of the frozen pipeline must remain equivalent unless an explicit model revision is approved.
+
+Long-term versions may add seasonal/subannual or event-driven processes, but changing the time engine is a scientific model change rather than a pure optimization.
 
 ---
 
@@ -1431,119 +1525,49 @@ simulation outcomes should be replayable within documented numerical tolerances.
 
 ## 21. Software Architecture
 
-Use a modular architecture with domain boundaries. Avoid a single monolithic `Simulation` class containing all behavior.
-
-Suggested package structure:
+Use explicit domain boundaries and keep the simulation engine thin. The current package structure is already modular and should be evolved rather than replaced wholesale:
 
 ```text
-socioecology_sim/
-    __init__.py
-
-    config/
-        schema.py
-        loader.py
-        defaults.py
-
-    core/
-        simulation.py
-        clock.py
-        rng.py
-        events.py
-        scheduler.py
-        ids.py
-
-    world/
-        grid.py
-        topology.py
-        climate.py
-        hydrology.py
-        soil.py
-        environment.py
-
-    ecology/
-        plants.py
-        animals.py
-        biomass.py
-        foodweb.py
-
-    species/
-        profile.py
-        physiology.py
-        life_history.py
-        cognition.py
-        movement.py
-
-    population/
-        unit.py
-        distributions.py
-        demography.py
-        health.py
-        split_merge.py
-
-    economy/
-        production.py
-        subsistence.py
-        storage.py
-        wealth.py
-        trade.py
-
-    society/
-        culture.py
-        status.py
-        factions.py
-        institutions.py
-        state.py
-        politics.py
-
-    knowledge/
-        domains.py
-        innovation.py
-        diffusion.py
-
-    mobility/
-        movement.py
-        migration.py
-        exploration.py
-        pathfinding.py
-
-    disease/
-        pathogen.py
-        transmission.py
-        immunity.py
-
-    conflict/
-        warfare.py
-        coercion.py
-        rebellion.py
-
-    resolution/
-        refinement.py
-        coarsening.py
-        similarity.py
-
-    metrics/
-        observables.py
-        recorder.py
-        aggregations.py
-
-    persistence/
-        checkpoints.py
-        event_log.py
-        formats.py
-
-    experiments/
-        runner.py
-        sweeps.py
-        ensembles.py
-
-    cli/
-        main.py
-
-    tests/
-        ...
+madexplorer/
+    config/          typed scenario schema and loading
+    core/            simulator, state, RNG, invariants, provenance, static context
+    world/           grid, generation, climate, hydrology
+    ecology/         resource state and ecological updates
+    species/         species profiles and life-history tables
+    population/      units, demography, energetics, familiarity, composition, groups, health
+    economy/         foraging, agriculture, trade
+    mobility/        movement, exploration, beliefs, knowledge sharing, migration
+    knowledge/       knowledge state, learning, diffusion, innovation
+    resolution/      experimental coarsening
+    metrics/         full/light recorders and observables
+    experiments/     ensembles and benchmarks
+    persistence/     run outputs
+    cli/             command-line interface
 ```
 
-The exact structure may evolve, but subsystem boundaries should remain explicit.
+### 21.1 Frozen scientific layer vs. replaceable implementation layer
+
+Treat the codebase as three conceptual layers:
+
+1. **Frozen scientific semantics** - model equations, subsystem ordering, mechanism defaults and canonical scenario behavior.
+2. **Performance implementation** - storage layout, batching, indexes, proposal representation, temporary allocation, vectorization and compiled kernels. This layer may be aggressively refactored if frozen behavior is preserved.
+3. **Future scientific extensions** - MVP 3+ distributional society, politics, disease, richer ecology and fantasy species. These should not be mixed into performance-hardening patches.
+
+### 21.2 State representation direction
+
+The current `dict[str, PopulationUnit]` / object-rich architecture is readable and scientifically auditable but expensive at thousands of units. The preferred performance direction is a **structure-of-arrays or hybrid columnar state** for hot numeric fields, with stable unit IDs mapped to row indices. Group-level sparse/irregular objects may remain separate where vectorization provides little benefit.
+
+Do not blindly convert every field to a dense matrix. In particular:
+
+- age/sex cohorts are good candidates for batched arrays;
+- frequently accessed scalar state is a strong structure-of-arrays candidate;
+- technology/capability states should use interned/cached immutable representations;
+- beliefs need careful treatment because dense `units x cells` storage may itself become a scaling limit;
+- social links and variable-length reports may remain compressed/sparse.
+
+### 21.3 Proposal/apply semantics
+
+The proposal/apply model is scientifically useful because it exposes state transitions and model rules, but per-unit proposal dataclass allocation is a measurable implementation cost. Performance work may replace many small Python proposal objects with batched arrays or typed buffers **provided the same ordering, conservation rules, RNG semantics and state transitions are preserved**.
 
 ---
 
@@ -1784,46 +1808,59 @@ A mechanism should be removable. If the model only generates an expected result 
 
 ## 27. Performance Strategy
 
-### 27.1 Correctness before optimization
+### 27.1 Current phase: performance hardening under frozen semantics
 
-Build a transparent reference implementation first.
+MVP 2 performance work is now a first-class milestone. Do **not** simplify the scientific model merely to make it faster. The freeze baseline exists so representation and implementation can change aggressively while model behavior remains fixed.
 
-### 27.2 Profile before optimizing
+### 27.2 Measure against the committed freeze baseline
 
-Use profiling to find actual hotspots.
+Every optimization should report, where relevant:
 
-Likely hotspots:
+- total CPU and wall time;
+- ms/tick and ms/unit/tick;
+- active unit counts;
+- subsystem time shares;
+- peak RSS;
+- exact or tolerance-based comparison to frozen reference outputs.
 
-- pathfinding;
-- environmental updates;
-- distribution transforms;
-- contact networks;
-- split/merge logic;
-- large-scale trade flows.
+The synthetic benchmark and seed-0 600-year benchmark in `benchmarks/perf/` are the primary performance regression references.
 
-### 27.3 Vectorization
+### 27.3 Optimize in this order
 
-Use NumPy for large homogeneous numeric operations.
+Prefer:
 
-### 27.4 Compiled acceleration
+1. eliminate repeated work and allocations;
+2. cache immutable/static scenario state;
+3. move hot scalar state from Python objects/dicts to contiguous arrays;
+4. batch unit-level operations;
+5. replace streams of tiny proposal objects with batched transition buffers where semantics permit;
+6. improve memory locality and reduce Python dispatch;
+7. use compiled kernels only for stable, measured hotspots;
+8. parallelize independent seeds for ensemble throughput.
 
-Only after profiling, consider:
+The freeze profile identifies belief sharing, migration, foraging, knowledge diffusion and demography as the first places to inspect.
 
-- Numba;
-- Cython;
-- Rust extensions;
-- JAX;
-- GPU acceleration.
+### 27.4 Structure-of-arrays before premature native rewrites
 
-Do not tie domain logic to one accelerator prematurely.
+Most measured MVP 2 cost is Python traversal and allocation around many small units, while arithmetic kernels are small. Therefore first attempt a structure-of-arrays/hybrid refactor and coarse NumPy batching. Numba, Cython or Rust should be introduced only where profiling after that refactor shows substantial residual kernel cost.
 
-### 27.5 Spatial indexing
+### 27.5 Preserve RNG and numerical semantics deliberately
 
-Use spatial indexes or neighborhood caches rather than global scans.
+Vectorization may change draw order even when probability laws are nominally identical. Classify optimizations as:
 
-### 27.6 Parallel ensembles first
+- **exact behavior-preserving** - same seeded outcomes on the supported numeric platform;
+- **numerically equivalent** - differences bounded by a documented tolerance;
+- **stochastically equivalent** - same probability law but different exact draws.
 
-The easiest parallelism is independent simulation runs. Prioritize ensemble-level parallel execution before adding complex within-run concurrency.
+The latter two require explicit approval and statistical validation; they must not be smuggled in as ordinary speed-ups.
+
+### 27.6 Adaptive resolution is not a performance shortcut for MVP 2
+
+Naive group merging changes sociology and demographics. Canonical runs therefore keep aggregation off. The principled performance solution is MVP 3 adaptive statistical units that preserve internal heterogeneity and allow only selected fractions/strata to migrate, die, adopt technologies or change class.
+
+### 27.7 Parallel ensembles remain useful
+
+Independent seeds are embarrassingly parallel. Reuse static scenario state within workers, avoid BLAS/OpenMP oversubscription, and keep expensive research-scale ensembles separate from normal development validation.
 
 ---
 
@@ -1914,40 +1951,45 @@ Model constants must live in versioned parameter sets, not scattered source lite
 
 ## 29. Testing Strategy
 
-### 29.1 Unit tests
+Maintain separate test classes because they answer different scientific and engineering questions.
 
-Test each mathematical relationship independently.
+### 29.1 Unit and mechanism tests
 
-Examples:
+Test mathematical relationships and local causal rules independently. Examples include:
 
 - forest density increases movement cost for baseline humans;
-- flight reduces slope and river crossing penalties;
-- higher wealth increases expected food access under the selected policy;
-- split operations preserve weighted moments within tolerance;
-- mergers preserve total population and wealth;
-- innovation hazard rises with need at moderate conditions but can fall under extreme instability if configured.
+- worse soil does not improve crop yield;
+- uncertainty shrinkage reduces reliance on noisy observations;
+- relayed geographic reports lose confidence;
+- familiarity decays toward its baseline without practice;
+- field replacement cost depends on future reconstruction labor, not sunk clearing effort;
+- crowding does not reduce crowding mortality;
+- split/merge operations conserve required totals.
 
-### 29.2 Property-based testing
+### 29.2 Property-based tests
 
-Use Hypothesis for invariants:
+Use property testing for invariants such as non-negative stocks, population conservation, valid distributions, bounded probabilities and composition-rule completeness.
 
-- populations never become negative;
-- migration cannot move more people than exist;
-- split + merge approximately reconstructs original moments;
-- normalized distributions sum to one;
-- state reach never becomes negative.
+### 29.3 Golden regression tests
 
-### 29.3 Regression tests
+Maintain small deterministic scenarios with fixed seeds and expected outputs. For the frozen MVP 2 model, golden fixtures are a primary guard against accidental semantic changes during performance refactors. Exact replay is numeric-platform specific and must be treated accordingly.
 
-Maintain small deterministic worlds with fixed seeds and expected output summaries.
+### 29.4 Statistical mechanism tests
 
-### 29.4 Statistical tests
+Use small matched ensembles only where stochastic system behavior cannot be established locally. The compact pressure scenario is the canonical MVP 2 agriculture test: under resource pressure, cultivation-enabled runs must support materially higher sustainable population/density than cultivation-disabled matched controls.
 
-Stochastic models should be tested over many samples for distributional behavior, not exact single draws.
+### 29.5 Long research validation is manual
 
-### 29.5 Performance tests
+Large multi-seed, long-horizon statistical suites are not required for ordinary CI, small refactors or every MVP freeze. Keep them available as explicitly slow/manual research tests. Use the smallest experiment capable of falsifying the mechanism under review.
 
-Maintain benchmark scenarios at increasing scales.
+### 29.6 Performance tests
+
+Maintain both:
+
+- synthetic controlled-unit-count benchmarks for scaling and subsystem attribution;
+- at least one realistic frozen scenario benchmark for end-to-end cost.
+
+Performance changes should not be judged from wall time alone; record CPU time, active units and per-unit/tick metrics.
 
 ---
 
@@ -2059,82 +2101,113 @@ These are experiment targets, not truths hard-coded into the engine.
 
 ---
 
-## 33. MVP Scope
+## 33. MVP Scope and Current Roadmap
 
-The first implementation should be deliberately smaller than the full vision.
+### MVP 1: Ecological-demographic sandbox - COMPLETE
 
-### MVP 1: Ecological-demographic sandbox
+Implemented and frozen as part of the current codebase:
 
-Implement:
+- grid world, topology and climate;
+- ecological food resources;
+- baseline human species profile;
+- group-level population units with age/sex cohorts;
+- movement and foraging;
+- energetics, fertility and mortality;
+- local perception and beliefs;
+- migration;
+- reproducible runs, events, metrics and provenance.
 
-- grid world;
-- topology;
-- climate fields;
-- basic plants/food resources;
-- one human species profile;
-- individual/small-group population units;
-- movement;
-- foraging;
-- energy balance;
-- birth/death;
-- local knowledge;
-- simple migration;
-- reproducible run/output.
+### MVP 2: Agriculture and technology - COMPLETE / MODEL FROZEN
 
-Goal: demonstrate plausible settlement and movement patterns.
+Implemented and validated:
 
-### MVP 2: Agriculture and technology
+- cultivation and field investment;
+- soil effects;
+- food storage;
+- simple trade;
+- domain knowledge, learning and diffusion;
+- technology invention and capability effects;
+- bounded social geographic information;
+- familiarity and relearning;
+- settlement crowding mortality;
+- fission and fusion;
+- migration with agricultural capital replacement cost;
+- ensemble tooling, regression baselines and performance benchmarks.
+
+MVP 2 deliberately does **not** claim scientifically neutral population aggregation. The coarsening subsystem is experimental and disabled in canonical scenarios.
+
+### Inter-MVP milestone: MVP 2 Performance Hardening - CURRENT
+
+Objective: make the frozen MVP 2 simulation substantially faster without changing its model semantics.
+
+Primary work:
+
+- reduce Python object and dictionary overhead;
+- redesign hot state into structure-of-arrays/hybrid storage;
+- batch subsystem work;
+- reduce proposal allocation;
+- improve cache locality;
+- preserve exact/tolerance-validated frozen outcomes;
+- use compiled kernels only after post-refactor profiling.
+
+This milestone should finish before substantial MVP 3 science is added.
+
+### MVP 3: Distributional society - NEXT SCIENTIFIC MILESTONE
 
 Add:
 
-- cultivation;
-- storage;
-- technologies;
-- innovation;
-- knowledge diffusion;
-- trade;
-- population aggregation.
+- weighted socioeconomic strata / representative quantile particles;
+- wealth distributions with heavy upper tails where appropriate;
+- health and nutrition distributions;
+- occupations and specialization;
+- within-unit preference heterogeneity;
+- selective migration, mortality, fertility and technology adoption;
+- wealth-health pathways;
+- biological welfare and developmental outcomes such as adult stature;
+- scientifically defensible adaptive split/merge and resolution.
 
-Goal: allow sedentary high-density populations to emerge.
+Preferred representation:
 
-### MVP 3: Distributional society
+```text
+shared group-level state
+    +
+N[sex, age, stratum]
+    +
+stratum attributes (wealth, health, occupation, preferences, ...)
+```
+
+The key requirement is to preserve **joint correlations**. Do not implement independent marginal distributions that lose the relation between wealth, health, occupation, migration propensity and political leverage.
+
+Goal: represent inequality and selective social processes without individualizing millions of people, while reducing the number of independent group actors required for large populations.
+
+### MVP 4: Politics and hierarchy
 
 Add:
 
-- wealth distributions;
-- health distributions;
-- occupations;
-- adaptive split/merge;
-- wealth-health relationship;
-- biological welfare.
+- status systems;
+- factions and coalitions;
+- appropriability and wealth concentration;
+- inheritance;
+- coercive capacity;
+- state capacity and elite capture as separate dimensions;
+- public goods and extraction;
+- exit, rebellion and counter-dominance;
+- infrastructure and political reach.
 
-Goal: represent inequality without individualizing millions of people.
-
-### MVP 4: Politics
-
-Add:
-
-- factions;
-- status competition;
-- appropriation;
-- coercion;
-- state capacity;
-- elite capture;
-- exit/rebellion;
-- infrastructure/public goods.
-
-Goal: allow decentralized societies, states, and hierarchical systems to emerge.
+Goal: allow decentralized societies, extractive states, cooperative states, frontier populations and collapse dynamics to emerge from explicit mechanisms.
 
 ### MVP 5: Fantasy species and multi-species worlds
 
-Add:
+Generalize the already configurable species layer to support:
 
-- arbitrary species profiles;
-- flight;
-- different lifespans;
-- different metabolism;
+- substantially different lifespans and maturation schedules;
+- body-size/metabolic differences;
+- flight and other movement modes;
+- different sensory and cognitive profiles;
 - cross-species ecology;
-- multi-species trade/conflict.
+- multi-species trade, competition and conflict.
+
+Goal: use fantasy biology as controlled counterfactual experimentation about which social patterns are species-specific and which arise from more general coordination/ecological pressures.
 
 ---
 
@@ -2303,6 +2376,8 @@ Splits and merges must conserve weighted totals within numerical tolerance.
 
 ## 39. Model Governance
 
+### 39.1 Rule metadata
+
 Every model equation or rule should have metadata:
 
 ```text
@@ -2324,6 +2399,21 @@ The codebase should make it easy to answer:
 and
 
 > What happens if we remove or change it?
+
+### 39.2 Frozen-model change protocol
+
+After an MVP model freeze, classify every subsequent change explicitly:
+
+- **implementation optimization** - intended to preserve frozen semantics exactly;
+- **numerical reformulation** - same mechanism with documented tolerance;
+- **model change** - changes a scientific assumption or causal relationship;
+- **bug fix** - corrects behavior that contradicts the documented rule.
+
+During MVP 2 Performance Hardening, model changes are prohibited unless a genuine correctness bug is demonstrated. Any accepted model change invalidates the previous semantic freeze and must update regression fixtures, provenance, baselines and this document if the canonical rule changes.
+
+### 39.3 Experiment discipline
+
+Use the smallest experiment capable of falsifying a proposed mechanism. Prefer analytical checks, unit tests, decision-level probes and short matched runs before expensive ensembles. Large research ensembles are for uncertainty estimation and publication-grade analysis, not routine engineering decisions.
 
 ---
 
@@ -2372,6 +2462,8 @@ The simulator should therefore be capable of producing histories that are plausi
 
 ## 41. Definition of Success
 
+The project has already satisfied a meaningful subset of this definition through MVP 2: users can provide a world/scenario, initial populations, time horizon and seed and obtain reproducible ecological-demographic-technological histories with endogenous migration and agriculture. The remaining items below describe the **full project ambition**, not the current implementation state.
+
 The project is successful when a user can provide:
 
 1. a topology/environment;
@@ -2398,3 +2490,19 @@ and receive a reproducible simulation containing:
 Crucially, the engine should not require the user to specify in advance where civilizations, states, empires, frontiers, elites, or collapses will occur.
 
 Those should be outputs.
+
+---
+
+## 42. Canonical Reminder for Future Implementation Agents
+
+When extending this project:
+
+1. Do not infer current requirements from old experiment plans in `status.md` without checking this objective and the freeze manifest.
+2. Do not tune the model to reproduce one seed or a desired historical narrative.
+3. Do not use naive aggregation to obtain speed; it is known to change scientific behavior.
+4. Keep group-level shared state separate from future distributional strata so MVP 3 does not multiply every subsystem by the number of strata.
+5. Preserve the frozen MVP 2 behavior during performance hardening.
+6. Treat wealth, health, hierarchy, state capacity and fantasy-species effects as future explicit mechanisms, not labels or hard-coded outcomes.
+7. Prefer interpretable mechanisms, conservation rules, reproducibility and falsifiable experiments over opaque realism.
+
+The long-term purpose remains unchanged: build a computational laboratory in which large-scale social history is an emergent consequence of ecology, biology, information, incentives, culture, technology and stochastic path dependence rather than a scripted sequence.
