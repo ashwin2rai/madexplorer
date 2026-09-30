@@ -263,8 +263,12 @@ def test_packed_sharing_equals_the_reference_selection_and_receipt(seed: int) ->
     reference = select_reports_batch(inputs, state.year, n_cells)
     info = profile.social_information
     k = len(senders)
+    from madexplorer.population.unit import belief_slot
+
+    store = state.belief_store
     packed = select_reports_packed(
-        [u.beliefs for u in senders],
+        store,
+        np.array([belief_slot(u) for u in senders]),
         pools,
         np.array([u.cell for u in senders]),
         np.array([u.food_log_prior for u in senders]),
@@ -284,7 +288,15 @@ def test_packed_sharing_equals_the_reference_selection_and_receipt(seed: int) ->
     pair_receiver, pair_sender = pair_receiver[order], pair_sender[order]
     receivers = [(u.id, u.beliefs) for u in receivers_units]
     patches = receive_reports_batch(receivers, pair_receiver, pair_sender, reference, n_cells)
-    proposal = receive_reports_packed(receivers, pair_receiver, pair_sender, reference, n_cells)
+    proposal = receive_reports_packed(
+        [u.id for u in receivers_units],
+        np.array([belief_slot(u) for u in receivers_units]),
+        store,
+        pair_receiver,
+        pair_sender,
+        reference,
+        n_cells,
+    )
     state_a, state_b = copy.deepcopy(state), copy.deepcopy(state)
     for patch in patches:
         patch.apply(state_a, ctx)
@@ -500,3 +512,87 @@ def test_single_unit_foraging_fast_path_equals_cell_harvest(
     assert (p_removed, g_removed) == (float(outcome.removal[0]), float(outcome.removal[1]))
     assert fraction == outcome.effort_fraction
     assert marginal == outcome.marginal_kcal_per_effective_hour
+
+
+def _beliefs_equal(a, b) -> bool:  # type: ignore[no-untyped-def]
+    return all(
+        np.array_equal(getattr(a, f), getattr(b, f))
+        for f in ("year", "food_kcal", "population", "hops")
+    )
+
+
+def test_belief_store_slot_reuse_never_leaks_old_beliefs() -> None:
+    from madexplorer.population.unit import BeliefMap, belief_slot
+
+    sim = _warm_state(40, 1)
+    units = sim.state.units
+    victim = next(u for u in units.values() if (u.beliefs.year > 0).any())
+    kept = victim.beliefs.copy()
+    slot = belief_slot(victim)
+    units.pop(victim.id)
+    assert belief_slot(victim) == -1 and _beliefs_equal(victim.beliefs, kept)  # detached copy
+    newcomer = type(victim)(
+        id="u_new",
+        species_id=victim.species_id,
+        cell=victim.cell,
+        females=victim.females,
+        males=victim.males,
+        reserve_kcal_per_capita=0.0,
+        founded_year=sim.state.year,
+    )
+    units[newcomer.id] = newcomer
+    assert belief_slot(newcomer) == slot  # the freed row was reused ...
+    assert _beliefs_equal(newcomer.beliefs, BeliefMap.empty(sim.world.n_cells))  # ... cleanly
+
+
+def test_belief_store_growth_preserves_every_row() -> None:
+    sim = _warm_state(30, 2)
+    store = sim.state.belief_store
+    before = {uid: u.beliefs.copy() for uid, u in sim.state.units.items()}
+    template = next(iter(sim.state.units.values()))
+    for k in range(store.capacity + 5):  # force at least one resize
+        extra = type(template)(
+            id=f"x{k}",
+            species_id=template.species_id,
+            cell=template.cell,
+            females=template.females,
+            males=template.males,
+            reserve_kcal_per_capita=0.0,
+            founded_year=0,
+        )
+        sim.state.units[extra.id] = extra
+    assert store.resizes >= 1
+    for uid, beliefs in before.items():
+        assert _beliefs_equal(sim.state.units[uid].beliefs, beliefs)
+
+
+def test_structural_events_give_the_object_reference_beliefs() -> None:
+    """Fission and fusion on store-backed units equal the same operations on detached,
+    object-held beliefs (the pre-PH3a representation)."""
+    import copy
+
+    from madexplorer.population.composition import MergeMode, merge_state, split_off
+    from madexplorer.population.familiarity import familiarity_rule
+    from madexplorer.population.unit import detach_beliefs
+
+    sim = _warm_state(60, 5)
+    state, ctx = sim.state, step_context(sim)
+    rule = familiarity_rule(ctx.species("human"), ctx.mechanisms)
+    a, b = list(state.units.values())[:2]
+    b.cell = a.cell  # co-locate them (merging requires one cell)
+    # Reference: detached deep copies.
+    ra, rb = copy.deepcopy(a), copy.deepcopy(b)
+    detach_beliefs(ra)
+    detach_beliefs(rb)
+    merge_state(ra, rb, MergeMode.FUSION, state.year, rule)
+    merge_state(a, b, MergeMode.FUSION, state.year, rule)
+    assert _beliefs_equal(a.beliefs, ra.beliefs)
+    # Fission: the daughter inherits a copy; parent and daughter then diverge independently.
+    leave_f, leave_m = a.females // 2, a.males // 2
+    rd = split_off(ra, leave_f, leave_m, "ref_d", state.year, rule)
+    daughter = split_off(a, leave_f, leave_m, "d", state.year, rule)
+    state.units[daughter.id] = daughter
+    assert _beliefs_equal(daughter.beliefs, rd.beliefs)
+    cell = int(np.flatnonzero(daughter.beliefs.year > 0)[0])
+    daughter.beliefs.write(np.array([cell]), 9999, np.array([1.0]), np.array([0]), 0)
+    assert a.beliefs.year[cell] != 9999  # separate rows

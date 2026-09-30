@@ -20,6 +20,7 @@ from madexplorer.population.familiarity import FamiliarityMap
 
 if TYPE_CHECKING:
     from madexplorer.core.state import SimulationState, StepContext
+    from madexplorer.population.beliefs import DenseBeliefStore
 
 HARVEST_MEMORY_YEARS = 10
 
@@ -343,3 +344,64 @@ for _name in ("females", "males"):
     _descriptor = _Cohort()
     _descriptor.__set_name__(PopulationUnit, _name)
     setattr(PopulationUnit, _name, _descriptor)
+
+
+class _Beliefs:
+    """Descriptor for ``unit.beliefs``: the unit's row of a belief store while it is in a
+    registry (a compatibility view; assignment copies into the row), else a private map.
+
+    Hot subsystems read and write the store directly through ``unit.belief_slot``.
+    """
+
+    def __get__(self, instance: object, owner: type | None = None) -> BeliefMap:
+        if instance is None:
+            raise AttributeError("beliefs")  # no class-level default for the dataclass
+        state = instance.__dict__
+        store = state.get("_belief_store")
+        if store is not None:
+            view: BeliefMap = store.view(state["_belief_slot"])
+            return view
+        detached: BeliefMap = state["_beliefs"]
+        return detached
+
+    def __set__(self, instance: object, value: BeliefMap) -> None:
+        state = instance.__dict__
+        store = state.get("_belief_store")
+        if store is not None:
+            store.assign(state["_belief_slot"], value)
+        else:
+            state["_beliefs"] = value
+
+
+PopulationUnit.beliefs = _Beliefs()  # type: ignore[assignment]
+
+
+def belief_slot(unit: PopulationUnit) -> int:
+    """The unit's belief-store row (``-1`` when detached)."""
+    slot: int = unit.__dict__.get("_belief_slot", -1)
+    return slot
+
+
+def attach_beliefs(unit: PopulationUnit, store: "DenseBeliefStore") -> None:
+    """Move a unit's beliefs into a row of ``store`` (on entering a registry)."""
+    state = unit.__dict__
+    current = state.get("_belief_store")
+    if current is store:
+        return
+    if current is not None:
+        detach_beliefs(unit)
+    slot = store.allocate()
+    store.assign(slot, state.pop("_beliefs", BeliefMap.empty(0)))
+    state["_belief_store"], state["_belief_slot"] = store, slot
+
+
+def detach_beliefs(unit: PopulationUnit) -> None:
+    """Copy a unit's beliefs out of its store row and free the row (on leaving a registry)."""
+    state = unit.__dict__
+    store = state.get("_belief_store")
+    if store is None:
+        return
+    slot = state["_belief_slot"]
+    state["_beliefs"] = store.detached(slot)
+    store.release(slot)
+    state["_belief_store"], state["_belief_slot"] = None, -1

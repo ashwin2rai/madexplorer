@@ -24,7 +24,7 @@ from madexplorer.economy.agriculture import clearing_hours_per_ha
 from madexplorer.mobility.exploration import report_confidence
 from madexplorer.population.energetics import annual_need_batch, annual_need_kcal
 from madexplorer.population.groups import sigmoid
-from madexplorer.population.unit import Observation, PopulationUnit
+from madexplorer.population.unit import Observation, PopulationUnit, belief_slot
 from madexplorer.species.profile import MigrationBehavior
 
 FOOD_RATIO_FLOOR = 0.05  # numerical guard: log of an empty cell
@@ -722,47 +722,49 @@ class MigrationSubsystem:
         year = state.year
         memory = [p.cognition.memory_years for p in profiles]
         reach = [ctx.movement[sid].reachable_arrays for sid in compiled.species_ids]
-        # Per unit: reachable cells with a current belief, and their belief fields.
-        rows: list[int] = []
-        parts = []
-        for i, (unit, code) in enumerate(zip(units_all, species_all.tolist(), strict=True)):
-            beliefs = unit.beliefs
-            if beliefs.n_cells == 0 or unit.population == 0:
-                continue
-            cells, costs = reach[code](unit.cell)
-            known = beliefs.year[cells] > year - memory[code]
-            c = cells[known]
-            parts.append(
-                (c, costs[known], beliefs.year[c], beliefs.population[c], beliefs.hops[c],
-                 beliefs.food_kcal[c])
-            )  # fmt: skip
-            rows.append(i)
+        # Per unit: reachable cells with a current belief, and their belief fields, gathered
+        # from the belief store for all units at once.
+        rows = [i for i, u in enumerate(units_all) if u.population > 0]
         if not rows:
             return [MoveHazards({})]
+        store = state.belief_store
+        reachable = [
+            reach[code](units_all[i].cell)
+            for i, code in zip(rows, species_all[rows].tolist(), strict=True)
+        ]
+        sizes = np.array([len(r[0]) for r in reachable], dtype=np.int64)
+        all_cells = np.concatenate([r[0] for r in reachable])
+        all_costs = np.concatenate([r[1] for r in reachable])
+        slots = np.array([belief_slot(units_all[i]) for i in rows], dtype=np.int64)
+        horizon = year - np.array(memory, dtype=np.int64)[species_all[rows]]
+        slot_rep = np.repeat(slots, sizes)
+        known = store.year[slot_rep, all_cells] > np.repeat(horizon, sizes)
+        cells = all_cells[known]
+        owner = np.repeat(np.arange(len(rows)), sizes)[known]
+        counts = np.bincount(owner, minlength=len(rows)).astype(np.int64)
         index = np.array(rows, dtype=np.int64)
-        counts = np.array([len(p[0]) for p in parts], dtype=np.int64)
-        cells = np.concatenate([p[0] for p in parts])
-        owner = np.repeat(np.arange(index.size), counts)
         home_cell = np.array([units_all[i].cell for i in rows], dtype=np.int64)
         staying = cells == home_cell[owner]
         has_home = np.bincount(owner, weights=staying, minlength=index.size) > 0
+        path_costs = all_costs[known]
+        observed, believed_food, others, hops = store.gather(slot_rep[known], cells)
         if not has_home.all():  # cannot evaluate staying without a current observation
             keep_units = np.flatnonzero(has_home)
             keep_rows = has_home[owner]
             index, counts = index[keep_units], counts[keep_units]
-            parts = [parts[k] for k in keep_units.tolist()]
             cells, staying = cells[keep_rows], staying[keep_rows]
+            path_costs, observed = path_costs[keep_rows], observed[keep_rows]
+            believed_food, others, hops = (
+                believed_food[keep_rows],
+                others[keep_rows],
+                hops[keep_rows],
+            )
             owner = np.repeat(np.arange(index.size), counts)
             home_cell = home_cell[keep_units]
             if index.size == 0:
                 return [MoveHazards({})]
         units = [units_all[i] for i in index.tolist()]
         species = species_all[index]
-        path_costs = np.concatenate([p[1] for p in parts])
-        observed = np.concatenate([p[2] for p in parts])
-        others = np.concatenate([p[3] for p in parts])
-        hops = np.concatenate([p[4] for p in parts])
-        believed_food = np.concatenate([p[5] for p in parts])
         # Per-unit scalars (the operations of _prepare, elementwise).
         p_ = compiled.parameter
         need = annual_need_batch(units, state, ctx) - np.array(

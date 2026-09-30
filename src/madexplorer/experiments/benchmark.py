@@ -33,6 +33,7 @@ from madexplorer.config.schema import InitialPopulation
 from madexplorer.core.provenance import numeric_platform, run_manifest
 from madexplorer.core.simulation import Simulator
 from madexplorer.core.static import StaticContext
+from madexplorer.population.beliefs import BYTES_PER_CELL
 from madexplorer.population.initialization import found_unit
 
 # Subsystems that build belief maps; the synthetic warm-up runs only these.
@@ -124,19 +125,19 @@ def state_storage(sim: Simulator) -> dict[str, float]:
     are per-unit dictionaries (entries counted, not bytes).
     """
     units = list(sim.state.units.values())
-    belief_bytes = sum(
-        u.beliefs.year.nbytes
-        + u.beliefs.food_kcal.nbytes
-        + u.beliefs.population.nbytes
-        + u.beliefs.hops.nbytes
-        for u in units
-    )
+    store = sim.state.belief_store
+    belief_bytes = store.active * store.n_cells * BYTES_PER_CELL  # rows in use
     n = max(len(units), 1)
     return {
         "units": len(units),
         "cells": sim.world.n_cells,
         "belief_mb": round(belief_bytes / 2**20, 2),
         "belief_bytes_per_unit": round(belief_bytes / n, 1),
+        "belief_store_mb": round(store.nbytes / 2**20, 2),
+        "belief_store_rows": store.capacity,
+        "belief_store_active_rows": store.active,
+        "belief_store_resizes": store.resizes,
+        "belief_store_peak_resize_mb": round(store.peak_resize_bytes / 2**20, 2),
         "familiarity_entries": sum(len(u.familiarity) for u in units),
         "familiarity_entries_per_unit": round(sum(len(u.familiarity) for u in units) / n, 1),
         "residence_entries_per_unit": round(sum(len(u.recent_residence) for u in units) / n, 1),

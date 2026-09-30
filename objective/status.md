@@ -467,6 +467,34 @@ foraging 10%, field planning 9%, diffusion 8%, perception 6%. The early window (
 - Remaining proposal objects are per event (trade transfers ~0.56 per unit per tick,
   relocations, rare fission/fusion); each batched subsystem emits one proposal per tick.
 
+| PH3a | Global dense `BeliefStore` (`population/beliefs.py`): the four belief fields as `(capacity, cells)` matrices with the frozen dtypes and sentinel, one row per storage slot. `state.units` is a `UnitRegistry` that allocates a slot on insertion and releases it on removal (copying beliefs back out); the processing order stays the registry's insertion order. `unit.beliefs` is a compatibility row view (cold paths, tests); perception, sharing and migration gather and scatter through the store with slot arrays in one indexing operation per field. Growth: +25% per resize, in place (numpy realloc; falls back to copying if a view is alive) | A | seed 0, 600 y: CPU 29.7 → 24.9 s; 1k synthetic 157 → 130 ms/tick | unchanged |
+
+PH3a lifecycle tests: a reused slot never leaks a dead unit's beliefs; growth preserves
+every row; fusion and fission on store-backed units equal the same operations on
+detached, object-held beliefs (the PH2 representation). The first growth policy (doubling,
+copying resize) doubled peak RSS for large stores (4k units at fixed density: 1,586 MB);
+the in-place +25% policy fixed it (918 MB, versus 788 MB in PH2).
+
+**PH3a results** (CPU; seeded output identical: seed 0 over 600 years ends with 33,070 people and 1,212 units).
+
+| Benchmark | PH2 | PH3a |
+|---|---:|---:|
+| Seed 0, 600 y: CPU s / late window ms/tick | 29.7 / 198 | 24.9 / 183 |
+| ... migration / sharing / perception, s | 3.97 / 5.87 / 1.89 | 2.09 / 3.82 / 0.84 |
+| 1k synthetic: CPU ms/tick / calls/unit/tick | 157 / 300 | 130 / 296 |
+| 10k synthetic: CPU ms/tick / calls/unit/tick | 2,327 / 232 | 2,022 / 231 |
+| Fixed density, 500 / 1k / 2k / 4k: µs/unit/tick | 156 / 146 / 164 / 169 | 150 / 146 / 148 / 157 |
+| Varied density, 250 / 1k / 4k: µs/unit/tick | 149 / 159 / 169 | 133 / 128 / 148 |
+| Peak RSS: 1k / 2k / 4k at fixed density; 1k on 100×100 | 131 / 291 / 788; 244 MB | 136 / 309 / 918; 258 MB |
+| Belief store at 4k units (fixed density): allocated / active rows | per-unit arrays | 736 MB, 4,651 / 4,355 rows, 16 in-place resizes |
+
+- Belief memory is unchanged in kind: active beliefs still cost 13 bytes per unit per cell
+  (689 MB for 4,355 units on 12,769 cells). The store adds up to 25% of allocated but
+  unused rows (7% in this case), and RSS for large stores is +5-16% over PH2. **The dense
+  belief memory problem is not solved**; the sparse backend is later work.
+- Migration and sharing lost their per-unit belief loops. Calls per unit barely changed:
+  those loops were numpy-heavy rather than call-heavy.
+
 Differential tests (`tests/test_performance_layer.py`): the spatial index against
 `units_by_cell()`, invalidation, compiled data against the configuration, energy balance,
 compensated sums, batched need, labor, crop yield and learning against their per-unit

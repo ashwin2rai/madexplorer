@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -16,7 +16,8 @@ from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.ecology.resources import EcologyState
 from madexplorer.knowledge.system import Capability, KnowledgeModel, default_capabilities
 from madexplorer.mobility.movement import MovementModel
-from madexplorer.population.unit import PopulationUnit
+from madexplorer.population.beliefs import DenseBeliefStore
+from madexplorer.population.unit import PopulationUnit, attach_beliefs, detach_beliefs
 from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import SpeciesProfile
 from madexplorer.world.climate import ClimateYear
@@ -31,6 +32,72 @@ if TYPE_CHECKING:
 CapabilityMap = Mapping[Capability, float]
 
 
+class UnitRegistry(dict[str, PopulationUnit]):
+    """``state.units``: units in stable insertion order (the semantic processing order),
+    whose beliefs live in the state's belief store while they are registered.
+
+    Inserting a unit allocates a store slot for its beliefs; removing one copies its
+    beliefs back out and frees the slot. Reads are plain dict operations. Slots are
+    storage only and never define iteration order.
+    """
+
+    def __init__(
+        self,
+        store: DenseBeliefStore | None = None,
+        units: Mapping[str, PopulationUnit] | None = None,
+    ) -> None:
+        super().__init__()
+        self.store = store
+        for unit_id, unit in (units or {}).items():
+            self[unit_id] = unit
+
+    def __setitem__(self, unit_id: str, unit: PopulationUnit) -> None:
+        previous = self.get(unit_id)
+        if previous is not None and previous is not unit:
+            detach_beliefs(previous)
+        if self.store is not None:
+            attach_beliefs(unit, self.store)
+        super().__setitem__(unit_id, unit)
+
+    def __delitem__(self, unit_id: str) -> None:
+        unit = self[unit_id]
+        super().__delitem__(unit_id)
+        detach_beliefs(unit)
+
+    def pop(self, unit_id: str, *default: PopulationUnit) -> PopulationUnit:  # type: ignore[override]
+        """Remove and return a unit (its beliefs are detached)."""
+        if unit_id not in self:
+            if default:
+                return default[0]
+            raise KeyError(unit_id)
+        unit = super().pop(unit_id)
+        detach_beliefs(unit)
+        return unit
+
+    def popitem(self) -> tuple[str, PopulationUnit]:
+        """Remove and return the last unit (its beliefs are detached)."""
+        unit_id, unit = super().popitem()
+        detach_beliefs(unit)
+        return unit_id, unit
+
+    def clear(self) -> None:
+        """Remove every unit (beliefs detached)."""
+        for unit in self.values():
+            detach_beliefs(unit)
+        super().clear()
+
+    def update(self, *args: Any, **kwargs: PopulationUnit) -> None:
+        """Insert units one by one (so each gets a slot)."""
+        for unit_id, unit in dict(*args, **kwargs).items():
+            self[unit_id] = unit
+
+    def setdefault(self, unit_id: str, unit: PopulationUnit) -> PopulationUnit:
+        """Insert ``unit`` if ``unit_id`` is absent; return the registered unit."""
+        if unit_id not in self:
+            self[unit_id] = unit
+        return self[unit_id]
+
+
 @dataclass(eq=False)
 class SimulationState:
     """Everything that changes during a run. Units are kept in stable insertion order."""
@@ -40,6 +107,26 @@ class SimulationState:
     climate: ClimateYear
     ecology: EcologyState
     units: dict[str, PopulationUnit]
+    beliefs: DenseBeliefStore | None = None
+
+    def __post_init__(self) -> None:
+        if self.beliefs is None:
+            self.beliefs = DenseBeliefStore.empty(self.world.n_cells)
+        self.units = self.units  # wrap in a registry bound to the store
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        store = self.__dict__.get("beliefs")
+        bound = isinstance(value, UnitRegistry) and value.store is store
+        if name == "units" and store is not None and not bound:
+            value = UnitRegistry(store, value)
+        object.__setattr__(self, name, value)
+
+    @property
+    def belief_store(self) -> DenseBeliefStore:
+        """The dense belief store (always present after construction)."""
+        store = self.beliefs
+        assert store is not None
+        return store
 
     def cell_population(self) -> IntArray:
         """People per cell."""

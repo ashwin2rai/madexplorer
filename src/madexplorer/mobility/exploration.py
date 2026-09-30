@@ -23,6 +23,7 @@ from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.economy.foraging import accessible_food_kcal
+from madexplorer.population.beliefs import DenseBeliefStore
 from madexplorer.population.unit import (
     HOPS_DTYPE,
     MAX_HOPS,
@@ -34,6 +35,7 @@ from madexplorer.population.unit import (
     HopsArray,
     PopulationUnit,
     YearArray,
+    belief_slot,
 )
 from madexplorer.species.profile import Cognition, SocialInformation
 
@@ -101,6 +103,7 @@ class PerceptionSubsystem:
         return [
             Perceptions(
                 tuple(units),
+                np.repeat(np.array([belief_slot(u) for u in units], dtype=np.int64), sizes),
                 np.concatenate([starts, [cells.size]]).astype(np.int64),
                 cells,
                 food,
@@ -120,6 +123,7 @@ class Perceptions:
     """
 
     units: tuple[PopulationUnit, ...]
+    slots: IntArray  # belief-store row of each observation
     bounds: IntArray  # (units + 1,)
     cells: IntArray
     food_kcal: FloatArray
@@ -150,18 +154,16 @@ class Perceptions:
         return patches
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Write each unit's observations, food prior and residence."""
-        n_cells = state.world.n_cells
+        """Write every observation into the belief store at once, then each unit's food
+        prior and residence."""
+        state.belief_store.scatter(
+            self.slots, self.cells, state.year, self.food_kcal, self.population, 0
+        )
         year = state.year
-        bounds = self.bounds.tolist()
         memory = {sid: ctx.species(sid).cognition.memory_years for sid in ctx.scenario.species}
-        for k, (unit, prior, variance) in enumerate(
-            zip(self.units, self.log_prior.tolist(), self.signal_var.tolist(), strict=True)
+        for unit, prior, variance in zip(
+            self.units, self.log_prior.tolist(), self.signal_var.tolist(), strict=True
         ):
-            rows = slice(bounds[k], bounds[k + 1])
-            beliefs = unit.beliefs.sized(n_cells)
-            unit.beliefs = beliefs
-            beliefs.write(self.cells[rows], year, self.food_kcal[rows], self.population[rows], 0)
             unit.food_log_prior = prior
             unit.food_log_signal_var = variance
             unit.note_residence(unit.cell, year, memory[unit.species_id])
@@ -396,7 +398,8 @@ def select_reports_batch(senders: Sequence[SenderInputs], year: int, n_cells: in
 
 
 def select_reports_packed(
-    beliefs: Sequence[BeliefMap],
+    store: DenseBeliefStore,
+    slots: IntArray,
     pools: Sequence[IntArray],
     current_cell: IntArray,
     log_prior: FloatArray,
@@ -408,31 +411,18 @@ def select_reports_packed(
     n_cells: int,
 ) -> ReportTable:
     """:func:`select_reports_batch` with per-sender parameters as arrays (no per-sender
-    objects) and one gathering pass over senders; identical output (differential test).
+    objects) and one gather from the belief store; identical output (differential test).
 
-    Sender ``i`` has beliefs ``beliefs[i]``, candidate pool ``pools[i]`` and the ``i``-th
-    entry of each parameter array.
+    Sender ``i`` has belief-store row ``slots[i]``, candidate pool ``pools[i]`` and the
+    ``i``-th entry of each parameter array.
     """
-    n = len(beliefs)
+    n = len(pools)
     sizes = np.array([p.size for p in pools], dtype=np.int64)
     owner = np.repeat(np.arange(n), sizes)
     cells = np.concatenate(pools).astype(np.int64) if n else np.zeros(0, dtype=np.int64)
     _, unique = np.unique(owner * n_cells + cells, return_index=True)
     owner, cells = owner[unique], cells[unique]
-    counts = np.bincount(owner, minlength=n)
-    bounds = np.concatenate([[0], np.cumsum(counts)]).tolist()
-    parts = [
-        (b.year[c], b.hops[c], b.food_kcal[c], b.population[c])
-        for b, c in zip(beliefs, (cells[bounds[i] : bounds[i + 1]] for i in range(n)), strict=True)
-    ]
-    if parts:
-        years, hop_parts, foods, pops = zip(*parts, strict=True)
-        observed, hops = np.concatenate(years), np.concatenate(hop_parts)
-        food, population = np.concatenate(foods), np.concatenate(pops)
-    else:
-        observed = np.zeros(0, dtype=YEAR_DTYPE)
-        hops = np.zeros(0, dtype=HOPS_DTYPE)
-        food, population = np.zeros(0, dtype=np.float32), np.zeros(0, dtype=np.int32)
+    observed, food, population, hops = store.gather(slots[owner], cells)
     memory = memory_years[owner]
     max_age = max_report_age[owner]
     age = year - observed.astype(np.int64)
@@ -559,33 +549,37 @@ class ReceivedReports:
     food_kcal: FoodArray
     population: CountArray
     hops: HopsArray
+    slots: IntArray | None = None  # belief-store row of each accepted report
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Write each receiver's accepted reports and remember the cells for relaying."""
-        n_cells = state.world.n_cells
-        bounds = self.bounds.tolist()
+        """Write every accepted report into the belief store at once and remember each
+        receiver's cells for relaying."""
         units = state.units
-        for k, unit_id in enumerate(self.unit_ids):
-            rows = slice(bounds[k], bounds[k + 1])
-            unit = units[unit_id]
-            beliefs = unit.beliefs.sized(n_cells)
-            unit.beliefs = beliefs
-            cells = self.cells[rows]
-            beliefs.write(
-                cells, self.year[rows], self.food_kcal[rows], self.population[rows], self.hops[rows]
+        bounds = self.bounds.tolist()
+        slots = self.slots
+        if slots is None:
+            slots = np.repeat(
+                np.array([belief_slot(units[u]) for u in self.unit_ids], dtype=np.int64),
+                np.diff(self.bounds),
             )
-            unit.report_cells = cells
+        state.belief_store.scatter(
+            slots, self.cells, self.year, self.food_kcal, self.population, self.hops
+        )
+        for k, unit_id in enumerate(self.unit_ids):
+            units[unit_id].report_cells = self.cells[bounds[k] : bounds[k + 1]]
 
 
 def receive_reports_packed(
-    receivers: Sequence[tuple[str, BeliefMap]],
+    receiver_ids: Sequence[str],
+    receiver_slots: IntArray,
+    store: DenseBeliefStore,
     pair_receiver: IntArray,
     pair_sender: IntArray,
     table: ReportTable,
     n_cells: int,
 ) -> ReceivedReports:
-    """:func:`receive_reports_batch` as one packed proposal: the comparison with each
-    receiver's own beliefs is vectorized over all receivers (identical acceptances)."""
+    """:func:`receive_reports_batch` as one packed proposal: each receiver's own beliefs
+    are gathered from the store in one operation (identical acceptances)."""
     lengths = table.count[pair_sender]
     pair = np.repeat(np.arange(pair_sender.size), lengths)
     within = np.arange(pair.size) - np.repeat(np.cumsum(lengths) - lengths, lengths)
@@ -609,29 +603,24 @@ def receive_reports_packed(
     first = np.r_[True, (receiver[1:] != receiver[:-1]) | (cells[1:] != cells[:-1])]
     order, receiver, cells = order[first], receiver[first], cells[first]
     year, hops, rows = year[order], hops[order], rows[order]
-    bounds = np.searchsorted(receiver, np.arange(len(receivers) + 1)).tolist()
-    active = [i for i in range(len(receivers)) if bounds[i] < bounds[i + 1]]
-    own = [
-        (b.year[cells[bounds[i] : bounds[i + 1]]], b.hops[cells[bounds[i] : bounds[i + 1]]])
-        for i, b in ((i, receivers[i][1].sized(n_cells)) for i in active)
-    ]
-    own_year = np.concatenate([o[0] for o in own])
-    own_hops = np.concatenate([o[1] for o in own])
+    own_year = store.year[receiver_slots[receiver], cells]
+    own_hops = store.hops[receiver_slots[receiver], cells]
     better = (year > own_year) | ((year == own_year) & (hops < own_hops))
     if not better.any():
         return empty
     kept_receiver = receiver[better]
-    counts = np.bincount(kept_receiver, minlength=len(receivers))
+    counts = np.bincount(kept_receiver, minlength=len(receiver_ids))
     accepting = np.flatnonzero(counts)
     take = rows[better]
     return ReceivedReports(
-        tuple(receivers[i][0] for i in accepting.tolist()),
+        tuple(receiver_ids[i] for i in accepting.tolist()),
         np.concatenate([[0], np.cumsum(counts[accepting])]).astype(np.int64),
         cells[better],
         table.year[take],
         table.food_kcal[take],
         table.population[take],
         hops[better].astype(HOPS_DTYPE),
+        receiver_slots[kept_receiver],
     )
 
 
@@ -747,8 +736,10 @@ class KnowledgeSharingSubsystem:
             for u in senders
         ]
         sender_species = species[sender_ids]
+        store = state.belief_store
         table = select_reports_packed(
-            [u.beliefs for u in senders],
+            store,
+            np.array([belief_slot(u) for u in senders], dtype=np.int64),
             pools,
             np.array([u.cell for u in senders], dtype=np.int64),
             np.array([u.food_log_prior for u in senders], dtype=np.float64),
@@ -759,5 +750,15 @@ class KnowledgeSharingSubsystem:
             state.year,
             world.n_cells,
         )
-        receivers = [(units[i].id, units[i].beliefs) for i in receiver_ids.tolist()]
-        return [receive_reports_packed(receivers, pair_receiver, pair_sender, table, world.n_cells)]
+        receiving = [units[i] for i in receiver_ids.tolist()]
+        return [
+            receive_reports_packed(
+                [u.id for u in receiving],
+                np.array([belief_slot(u) for u in receiving], dtype=np.int64),
+                store,
+                pair_receiver,
+                pair_sender,
+                table,
+                world.n_cells,
+            )
+        ]
