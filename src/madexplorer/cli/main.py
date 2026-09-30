@@ -253,7 +253,9 @@ def cmd_bench(args: argparse.Namespace) -> int:
                 f"ms/tick={case['ms_per_tick']:>8} cpu={case['cpu_ms_per_tick']:>8} "
                 f"ms/unit/tick={case['ms_per_unit_tick']:.4f} "
                 f"rss={case['peak_rss_mb']}MB calls/unit/tick="
-                f"{case['python_calls_per_unit_tick']} beliefs={case['storage']['belief_mb']}MB"
+                f"{case['python_calls_per_unit_tick']} beliefs={case['storage']['belief_mb']}MB "
+                f"transient={case['transient_python_mb_per_tick']}MB "
+                f"contacts={case['storage']['social_contacts']}"
                 f" | {top}"
             )
     else:

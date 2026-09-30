@@ -40,6 +40,18 @@ SPECIES_PARAMETERS: tuple[str, ...] = (
     "cognition.teaching_efficiency",
     "social.knowledge_sharing_probability",
     "social.food_sharing_propensity",
+    "social_information.reports_per_interaction",
+    "social_information.max_report_age_years",
+    "social_information.transmission_confidence_decay",
+    "migration.food_weight",
+    "migration.water_weight",
+    "migration.movement_cost_weight",
+    "migration.movement_reference_km",
+    "migration.uncertainty_weight",
+    "migration.abandoned_stores_weight",
+    "migration.abandoned_fields_weight",
+    "movement.carry_kcal_per_capita",
+    "movement.travel_kcal_per_km",
 )
 
 

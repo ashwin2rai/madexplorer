@@ -106,31 +106,41 @@ class DiffusionUpdate:
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Commit gains, adoptions, and losses with provenance events."""
-        unit = state.units[self.unit_id]
-        unit.knowledge = unit.knowledge + self.gain
-        held = set(unit.technologies) - set(self.lost)
-        for tech in self.lost:
-            ctx.ledger.technology_losses += 1
-            ctx.events.emit(
-                state.year,
-                "technology_lost",
-                unit_id=unit.id,
-                technology=tech,
-                reason="knowledge_below_requirement",
-                cell=list(state.world.coords(unit.cell)),
-            )
-        for tech, source in self.adopted:
-            held.add(tech)
-            ctx.ledger.adoptions += 1
-            ctx.events.emit(
-                state.year,
-                "technology_adopted",
-                unit_id=unit.id,
-                technology=tech,
-                source_unit=source,
-                cell=list(state.world.coords(unit.cell)),
-            )
-        unit.technologies = frozenset(held)
+        _commit_diffusion(state.units[self.unit_id], self.gain, self.adopted, self.lost, state, ctx)
+
+
+def _commit_diffusion(
+    unit: PopulationUnit,
+    gain: FloatArray,
+    adopted: tuple[tuple[str, str], ...],
+    lost: tuple[str, ...],
+    state: SimulationState,
+    ctx: StepContext,
+) -> None:
+    unit.knowledge = unit.knowledge + gain
+    held = set(unit.technologies) - set(lost)
+    for tech in lost:
+        ctx.ledger.technology_losses += 1
+        ctx.events.emit(
+            state.year,
+            "technology_lost",
+            unit_id=unit.id,
+            technology=tech,
+            reason="knowledge_below_requirement",
+            cell=list(state.world.coords(unit.cell)),
+        )
+    for tech, source in adopted:
+        held.add(tech)
+        ctx.ledger.adoptions += 1
+        ctx.events.emit(
+            state.year,
+            "technology_adopted",
+            unit_id=unit.id,
+            technology=tech,
+            source_unit=source,
+            cell=list(state.world.coords(unit.cell)),
+        )
+    unit.technologies = frozenset(held)
 
 
 class DiffusionSubsystem:
@@ -141,8 +151,12 @@ class DiffusionSubsystem:
     def __init__(self, model: KnowledgeModel) -> None:
         self.model = model
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[DiffusionUpdate]:
-        """All units read pre-diffusion knowledge (staged update)."""
+    def _evaluate_reference(
+        self, state: SimulationState, ctx: StepContext
+    ) -> Sequence[DiffusionUpdate]:
+        """Reference form of :meth:`evaluate` (per-unit contact dictionaries and loops).
+
+        All units read pre-diffusion knowledge (staged update)."""
         rng = ctx.rng.stream(Streams.TECHNOLOGY_ADOPTION)
         spec = self.model.system.diffusion
         by_cell = ctx.spatial(state).by_cell
@@ -197,3 +211,157 @@ class DiffusionSubsystem:
             if gain.any() or adopted or lost:
                 updates.append(DiffusionUpdate(unit.id, gain, tuple(adopted), lost))
         return updates
+
+    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence["DiffusionBatch"]:
+        """All units read pre-diffusion knowledge (staged update), batched.
+
+        Same gains, adoptions, losses, events and draws as :meth:`_evaluate_reference`:
+        local contacts are the shared same-species neighbor pairs (same order), trade ties
+        are merged per receiver as the contact dictionary did; technology loss and adoption
+        run their scalar rules only for units where a bitmask test shows they can apply.
+        """
+        rng = ctx.rng.stream(Streams.TECHNOLOGY_ADOPTION)
+        spec = self.model.system.diffusion
+        index = ctx.spatial(state)
+        units = index.units
+        if not units:
+            return []
+        compiled = ctx.compiled
+        assert compiled is not None and compiled.technologies is not None
+        table = compiled.technologies
+        n = len(units)
+        receiver, partner = index.local_pairs(ctx.static.neighborhood_table(1))
+        same_cell = index.cell[receiver] == index.cell[partner]
+        weight = np.where(same_cell, spec.same_cell_contact, spec.adjacent_contact)
+        position = np.arange(receiver.size) - np.searchsorted(receiver, receiver)
+        # Trade ties: add to an existing local contact, or append after the local ones.
+        bounds = np.searchsorted(receiver, np.arange(n + 1)).tolist()
+        extra_receiver: list[int] = []
+        extra_source: list[int] = []
+        extra_weight: list[float] = []
+        extra_position: list[int] = []
+        live = state.units
+        row_of = index.row_of
+        trade = spec.trade_contact
+        for i, unit in enumerate(units):
+            ties = unit.trade_ties
+            if not ties:
+                continue
+            lo, hi = bounds[i], bounds[i + 1]
+            local = {int(j): lo + k for k, j in enumerate(partner[lo:hi].tolist())}
+            appended: dict[int, int] = {}
+            for partner_id, tie in ties.items():
+                if partner_id not in live:
+                    continue
+                j = row_of[partner_id]
+                edge = local.get(j)
+                if edge is not None:
+                    weight[edge] = weight[edge] + trade * tie
+                elif j in appended:
+                    k = appended[j]
+                    extra_weight[k] = extra_weight[k] + trade * tie
+                else:
+                    appended[j] = len(extra_weight)
+                    extra_receiver.append(i)
+                    extra_source.append(j)
+                    extra_weight.append(0.0 + trade * tie)
+                    extra_position.append(hi - lo + len(appended) - 1)
+        receivers = np.concatenate([receiver, np.array(extra_receiver, dtype=np.int64)])
+        sources = np.concatenate([partner, np.array(extra_source, dtype=np.int64)])
+        weights = np.concatenate([weight, np.array(extra_weight, dtype=np.float64)])
+        order = np.lexsort(
+            (np.concatenate([position, np.array(extra_position, dtype=np.int64)]), receivers)
+        )
+        receivers, sources, weights = receivers[order], sources[order], weights[order]
+        knowledge = np.stack([u.knowledge for u in units])
+        teaching = compiled.parameter("cognition.teaching_efficiency")[
+            compiled.species_of([u.species_id for u in units])
+        ]
+        gains = diffusion_gains(
+            knowledge, receivers, sources, weights, self.model.transmissibility, teaching
+        )
+        supported = self.model.knowledge_supported(knowledge, spec.loss_knowledge_fraction)
+        masks = table.masks([u.technologies for u in units])
+        held = table.holds(masks)
+        # Losses need the scalar rule only where a held technology is unsupported or its
+        # required technologies are not all held (the rule then iterates to a fixed point).
+        missing_requires = (table.requires_mask[None, :] & ~masks[:, None]) != 0
+        maybe_lost = (held & (~supported | missing_requires)).any(axis=1)
+        # Adoption needs the scalar loop only where some contact holds a technology the
+        # unit lacks.
+        contact_union = np.zeros(n, dtype=np.int64)
+        if receivers.size:
+            starts = np.flatnonzero(np.r_[True, receivers[1:] != receivers[:-1]])
+            contact_union[receivers[starts]] = np.bitwise_or.reduceat(masks[sources], starts)
+        edge_bounds = np.searchsorted(receivers, np.arange(n + 1)).tolist()
+        changed = gains.any(axis=1)
+        adopted_by: dict[int, tuple[tuple[str, str], ...]] = {}
+        lost_by: dict[int, tuple[str, ...]] = {}
+        maybe_lost_list = maybe_lost.tolist()
+        candidate_units = (contact_union & ~masks) != 0
+        for i in np.flatnonzero(maybe_lost | candidate_units).tolist():
+            unit = units[i]
+            lost = (
+                self.model.unsupported_given(unit.technologies, supported[i])
+                if maybe_lost_list[i]
+                else ()
+            )
+            held_now = unit.technologies - frozenset(lost)
+            lo, hi = edge_bounds[i], edge_bounds[i + 1]
+            strength = {
+                units[j].id: w
+                for j, w in zip(sources[lo:hi].tolist(), weights[lo:hi].tolist(), strict=True)
+            }
+            adopted: list[tuple[str, str]] = []
+            candidates: dict[str, str] = {}
+            for j in sorted(strength):
+                for tech in sorted(live[j].technologies - held_now):
+                    candidates.setdefault(tech, j)
+            for tech, source in sorted(candidates.items()):
+                spec_t = self.model.technologies[tech]
+                probability = spec.adoption_probability * min(1.0, strength[source])
+                ok = self.model.prerequisites_met(
+                    spec_t,
+                    unit.knowledge,
+                    held_now | {t for t, _ in adopted},
+                    spec.adoption_knowledge_fraction,
+                )
+                if ok and rng.random() < probability:
+                    adopted.append((tech, source))
+            if adopted:
+                adopted_by[i] = tuple(adopted)
+            if lost:
+                lost_by[i] = lost
+        update = changed.copy()
+        for i in list(adopted_by) + list(lost_by):
+            update[i] = True
+        if not update.any():
+            return []
+        rows = np.flatnonzero(update)
+        return [
+            DiffusionBatch(
+                tuple(units[i].id for i in rows.tolist()),
+                gains[rows],
+                tuple(adopted_by.get(i, ()) for i in rows.tolist()),
+                tuple(lost_by.get(i, ()) for i in rows.tolist()),
+            )
+        ]
+
+
+@dataclass(frozen=True, eq=False)
+class DiffusionBatch:
+    """Knowledge gains, adoptions and losses of many units, committed in unit order.
+
+    Equivalent to one :class:`DiffusionUpdate` per listed unit, applied in that order
+    (events included).
+    """
+
+    unit_ids: tuple[str, ...]
+    gains: FloatArray  # (listed units, domains)
+    adopted: tuple[tuple[tuple[str, str], ...], ...]
+    lost: tuple[tuple[str, ...], ...]
+
+    def apply(self, state: SimulationState, ctx: StepContext) -> None:
+        """Apply each unit's update exactly as :meth:`DiffusionUpdate.apply` does."""
+        for k, unit_id in enumerate(self.unit_ids):
+            DiffusionUpdate(unit_id, self.gains[k], self.adopted[k], self.lost[k]).apply(state, ctx)

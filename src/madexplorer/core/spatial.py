@@ -13,7 +13,7 @@ exact seeded replay depends on it.
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -32,6 +32,7 @@ class SpatialIndex:
     starts: IntArray  # (len(cells) + 1,): rows of cells[k] are order[starts[k]:starts[k+1]]
     by_cell: Mapping[int, list[PopulationUnit]]  # same content and order as units_by_cell()
     row_of: Mapping[str, int]  # unit id -> row
+    _pairs: dict[int, tuple[IntArray, IntArray]] = field(default_factory=dict)
 
     @classmethod
     def build(cls, units: tuple[PopulationUnit, ...]) -> "SpatialIndex":
@@ -51,6 +52,24 @@ class SpatialIndex:
             by_cell[c] = [units[r] for r in order[starts[k] : starts[k + 1]].tolist()]
         row_of = {u.id: i for i, u in enumerate(units)}
         return cls(units, cell, cells, order, starts, by_cell, row_of)
+
+    def local_pairs(self, neighborhoods: IntArray) -> tuple[IntArray, IntArray]:
+        """``(receiver, partner)`` rows of same-species units in the same or a neighboring
+        cell (:func:`~madexplorer.mobility.exploration.candidate_encounters` order), built
+        once per index and neighborhood table.
+
+        Belief sharing draws encounters from these pairs and diffusion uses them as local
+        contacts: the same semantic contact set, so one construction serves both while no
+        membership or location change intervenes (which rebuilds the index).
+        """
+        key = id(neighborhoods)
+        pairs = self._pairs.get(key)
+        if pairs is None:
+            from madexplorer.mobility.exploration import candidate_encounters
+
+            pairs = candidate_encounters(self.units, neighborhoods)
+            self._pairs[key] = pairs
+        return pairs
 
     def rows_in(self, cell: int) -> list[PopulationUnit]:
         """Units in ``cell`` in unit order (empty if unoccupied)."""

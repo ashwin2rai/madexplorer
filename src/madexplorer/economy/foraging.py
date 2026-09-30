@@ -17,6 +17,7 @@ from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray
 from madexplorer.population.energetics import annual_need_batch
 from madexplorer.population.familiarity import FamiliarityRule, familiarity_rule
+from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import Foraging
 from madexplorer.world.grid import WorldGrid
 
@@ -192,6 +193,76 @@ def cell_harvest(
     return CellForagingOutcome(shares, removal, fraction, marginal)
 
 
+def single_unit_harvest(
+    stock: tuple[float, float],
+    returns: tuple[float, float],
+    labor_hours: float,
+    efficiency: float,
+    target_kcal: float,
+) -> tuple[float, float, float, float, float]:
+    """:func:`cell_harvest` for a cell with one group, in Python floats (bit-identical).
+
+    Returns ``(share, plant_removed, game_removed, effort_fraction, marginal)``. With one
+    group numpy's sums reduce to the element itself (effort) and ``a + b`` (removal), so
+    scalar arithmetic reproduces the array path exactly (differential test).
+    """
+    effective = labor_hours * efficiency
+    capacity = effective
+    if capacity <= 0:
+        return 0.0, 0.0, 0.0, 0.0, _marginal_return(stock, returns, 0.0)
+    fraction = 1.0
+    if sum(_harvest(stock, returns, capacity)) > target_kcal:
+        fraction = _effort_fraction(stock, returns, capacity, target_kcal)
+    plant, game = _harvest(stock, returns, capacity * fraction)
+    share = (plant + game) * effective / capacity
+    return share, plant, game, fraction, _marginal_return(stock, returns, capacity * fraction)
+
+
+@dataclass(frozen=True, eq=False)
+class CellHarvests:
+    """Foraging outcomes of every (cell, species) group, packed; applied in group order.
+
+    Equivalent to one :class:`CellHarvest` per group, applied in that order.
+    """
+
+    cells: tuple[int, ...]
+    bounds: tuple[int, ...]  # (groups + 1,) rows of each group in the unit arrays
+    units: tuple[PopulationUnit, ...]
+    harvest_kcal: tuple[float, ...]
+    hours: tuple[float, ...]
+    marginal_kcal_per_hour: tuple[float, ...]
+    plant_removed_kcal: tuple[float, ...]
+    game_removed_kcal: tuple[float, ...]
+    learning_rate: tuple[float, ...]
+    familiarity: tuple[FamiliarityRule, ...]
+
+    def apply(self, state: SimulationState, ctx: StepContext) -> None:
+        """Deplete stocks, credit harvests, and grow local familiarity (learning by doing)."""
+        eco = state.ecology
+        plant_stock, game_stock = eco.plant_stock_kcal, eco.game_stock_kcal
+        ledger = ctx.ledger
+        year = state.year
+        bounds = self.bounds
+        for k, cell in enumerate(self.cells):
+            plant_removed, game_removed = self.plant_removed_kcal[k], self.game_removed_kcal[k]
+            plant_stock[cell] = max(plant_stock[cell] - plant_removed, 0.0)
+            game_stock[cell] = max(game_stock[cell] - game_removed, 0.0)
+            removed = plant_removed + game_removed
+            plant_share = plant_removed / removed if removed > 0 else 0.0
+            rate, rule = self.learning_rate[k], self.familiarity[k]
+            for r in range(bounds[k], bounds[k + 1]):
+                unit = self.units[r]
+                harvest = self.harvest_kcal[r]
+                unit.forage_harvest_kcal = harvest
+                unit.forage_hours = self.hours[r]
+                unit.forage_marginal_kcal_per_hour = self.marginal_kcal_per_hour[r]
+                unit.forage_plant_share = plant_share
+                unit.harvest_kcal = unit.farm_harvest_kcal + harvest
+                unit.labor_debt_hours = 0.0
+                unit.familiarity.practice(cell, year, rate, rule)
+                ledger.harvest_kcal += unit.harvest_kcal
+
+
 @dataclass(frozen=True)
 class CellHarvest:
     """Foraging outcome for one species group in one cell."""
@@ -240,7 +311,7 @@ class ForagingSubsystem:
 
     name = "foraging"
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[CellHarvest]:
+    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[CellHarvests]:
         """Compute harvests; groups of different species in one cell forage in id order.
 
         Per-unit inputs (labor, efficiency, target share) are computed for all units in one
@@ -287,41 +358,81 @@ class ForagingSubsystem:
         access = {sid: forage.as_tuple() for sid, forage in ctx.forage.items()}
         plant_left = state.ecology.plant_stock_kcal.copy()
         game_left = state.ecology.game_stock_kcal.copy()
-        proposals: list[CellHarvest] = []
+        labor_list, efficiency_list = labor.tolist(), efficiency.tolist()
+        single_species = len(compiled.species_ids) == 1
+        group_cells: list[int] = []
+        bounds = [0]
+        order_units: list[PopulationUnit] = []
+        harvests: list[float] = []
+        hours: list[float] = []
+        marginals: list[float] = []
+        plant_removed: list[float] = []
+        game_removed: list[float] = []
+        rates: list[float] = []
+        rules_used: list[FamiliarityRule] = []
         order, starts = index.order, index.starts
         for k, cell in enumerate(index.cells.tolist()):
             rows = order[starts[k] : starts[k + 1]]
-            codes = species[rows]
-            for code in np.unique(codes).tolist():  # species indices are in sorted id order
-                group = rows[codes == code] if codes.size > 1 else rows
+            if single_species:
+                groups = [(0, rows)]
+            else:
+                codes = species[rows]
+                groups = [(c, rows[codes == c]) for c in np.unique(codes).tolist()]
+            for code, group in groups:
                 species_id = compiled.species_ids[code]
                 profile = ctx.species(species_id)
                 plant_access, game_access, plant_return, game_return = access[species_id]
-                accessible = np.array(
-                    [plant_left[cell] * plant_access[cell], game_left[cell] * game_access[cell]]
-                )
-                rates = np.array([plant_return[cell], game_return[cell]])
-                group_labor = labor[group]
-                group_efficiency = efficiency[group]
-                target = sum([target_share[r] for r in group.tolist()])
-                outcome = cell_harvest(accessible, rates, group_labor, group_efficiency, target)
-                plant_left[cell] -= outcome.removal[0]
-                game_left[cell] -= outcome.removal[1]
-                fraction = outcome.effort_fraction
-                marginal = outcome.marginal_kcal_per_effective_hour
-                proposals.append(
-                    CellHarvest(
-                        cell=cell,
-                        unit_ids=tuple(units[r].id for r in group.tolist()),
-                        unit_harvest_kcal=tuple(outcome.shares.tolist()),
-                        unit_hours=tuple(x * fraction for x in group_labor.tolist()),
-                        unit_marginal_kcal_per_hour=tuple(
-                            marginal * e for e in group_efficiency.tolist()
-                        ),
-                        plant_removed_kcal=float(outcome.removal[0]),
-                        game_removed_kcal=float(outcome.removal[1]),
-                        learning_rate=profile.cognition.familiarity_learning_rate,
-                        familiarity=rules[species_id],
+                members = group.tolist()
+                if len(members) == 1:
+                    r = members[0]
+                    stock = (
+                        float(plant_left[cell] * plant_access[cell]),
+                        float(game_left[cell] * game_access[cell]),
                     )
-                )
-        return proposals
+                    returns = (float(plant_return[cell]), float(game_return[cell]))
+                    share, plant, game, fraction, marginal = single_unit_harvest(
+                        stock, returns, labor_list[r], efficiency_list[r], 0 + target_share[r]
+                    )
+                    harvests.append(share)
+                    hours.append(labor_list[r] * fraction)
+                    marginals.append(marginal * efficiency_list[r])
+                else:
+                    accessible = np.array(
+                        [plant_left[cell] * plant_access[cell], game_left[cell] * game_access[cell]]
+                    )
+                    rates_cell = np.array([plant_return[cell], game_return[cell]])
+                    group_labor = labor[group]
+                    group_efficiency = efficiency[group]
+                    target = sum([target_share[r] for r in members])
+                    outcome = cell_harvest(
+                        accessible, rates_cell, group_labor, group_efficiency, target
+                    )
+                    plant, game = float(outcome.removal[0]), float(outcome.removal[1])
+                    fraction = outcome.effort_fraction
+                    marginal = outcome.marginal_kcal_per_effective_hour
+                    harvests.extend(outcome.shares.tolist())
+                    hours.extend(x * fraction for x in group_labor.tolist())
+                    marginals.extend(marginal * e for e in group_efficiency.tolist())
+                plant_left[cell] -= plant
+                game_left[cell] -= game
+                group_cells.append(cell)
+                order_units.extend(units[r] for r in members)
+                bounds.append(len(order_units))
+                plant_removed.append(plant)
+                game_removed.append(game)
+                rates.append(profile.cognition.familiarity_learning_rate)
+                rules_used.append(rules[species_id])
+        return [
+            CellHarvests(
+                tuple(group_cells),
+                tuple(bounds),
+                tuple(order_units),
+                tuple(harvests),
+                tuple(hours),
+                tuple(marginals),
+                tuple(plant_removed),
+                tuple(game_removed),
+                tuple(rates),
+                tuple(rules_used),
+            )
+        ]

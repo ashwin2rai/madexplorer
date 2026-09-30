@@ -174,8 +174,112 @@ class InnovationSubsystem:
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Invention]:
         """Evaluate hazards against the current state."""
         rng = ctx.rng.stream(Streams.INNOVATION)
+        index = ctx.spatial(state)
+        units = index.units
+        if not units:
+            return []
+        compiled = ctx.compiled
+        assert compiled is not None and compiled.technologies is not None
+        table = compiled.technologies
+        # Candidates (technology not held, required technologies held, knowledge at each
+        # minimum): the prerequisites_met test for every unit and technology at once.
+        masks = table.masks([u.technologies for u in units])
+        knowledge_matrix = np.stack([u.knowledge for u in units])
+        known = (
+            (knowledge_matrix[:, None, :] >= table.min_knowledge[None, :, :])
+            | ~table.has_minimum[None, :, :]
+        ).all(axis=2)
+        requires_held = (table.requires_mask[None, :] & ~masks[:, None]) == 0
+        eligible = ~table.holds(masks) & requires_held & known
+        by_id = sorted(range(len(table.ids)), key=lambda t: table.ids[t])
+        technologies = self.model.technologies
+        # Neighbors: units in the 3 x 3 neighborhood (all species), minus the unit itself.
+        per_cell = np.bincount(index.cell, minlength=state.world.n_cells)
+        neighborhood = ctx.static.neighborhood_table(1)[index.cell]
+        neighbor_counts = (
+            np.where(neighborhood >= 0, per_cell[np.maximum(neighborhood, 0)], 0).sum(axis=1) - 1
+        ).tolist()
+        proposals: list[Invention] = []
+        for i in np.flatnonzero(eligible.any(axis=1)).tolist():
+            unit = units[i]
+            row = eligible[i]
+            candidates = [technologies[table.ids[t]] for t in by_id if row[t]]
+            invention = self._invention(unit, candidates, neighbor_counts[i], state, ctx, rng)
+            if invention is not None:
+                proposals.append(invention)
+        return proposals
+
+    def _invention(
+        self,
+        unit: PopulationUnit,
+        candidates: list[TechnologySpec],
+        neighbors: int,
+        state: SimulationState,
+        ctx: StepContext,
+        rng: np.random.Generator,
+    ) -> Invention | None:
+        """Hazards of one unit's candidates and its competing-risk draw (one uniform)."""
         spec = self.model.system.innovation
-        by_cell = ctx.spatial(state).by_cell
+        profile = ctx.species(unit.species_id)
+        signals = need_signals(unit, state, ctx)
+        connectivity = neighbors + sum(unit.trade_ties.values())
+        need = annual_need_kcal(
+            unit,
+            profile,
+            ctx.tables[unit.species_id],
+            float(state.climate.temperature_c[unit.cell]),
+        )
+        surplus = (
+            min(1.0, unit.stores_kcal / need + max(0.0, unit.food_ratio - 1.0)) if need > 0 else 0.0
+        )
+        evaluated: list[tuple[TechnologySpec, float, dict[str, float]]] = []
+        for tech in candidates:
+            ratios = [
+                self.model.level(unit.knowledge, d) / v
+                for d, v in tech.min_knowledge.items()
+                if v > 0
+            ]
+            knowledge_ratio = (
+                min(ratios) if ratios else 1.0 + self.model.level(unit.knowledge, tech.domain)
+            )
+            hazard, components = innovation_hazard(
+                tech,
+                signals[tech.need],
+                knowledge_ratio,
+                unit.population,
+                connectivity,
+                surplus,
+                unit.energy_deficit,
+                spec,
+                profile.cognition.invention_propensity,
+            )
+            evaluated.append((tech, hazard, components))
+            if unit.id in ctx.trace_units:
+                ctx.events.emit(
+                    state.year,
+                    "trace_innovation",
+                    unit_id=unit.id,
+                    technology=tech.id,
+                    hazard=round(hazard, 6),
+                    components={k: round(v, 3) for k, v in components.items()},
+                )
+        chosen = choose_invention([h for _, h, _ in evaluated], rng)
+        if chosen is not None:
+            tech, hazard, components = evaluated[chosen]
+            return Invention(
+                unit.id,
+                tech.id,
+                hazard,
+                components,
+                self.model.index[tech.domain],
+                tech.knowledge_bonus,
+            )
+        return None
+
+    def _evaluate_reference(self, state: SimulationState, ctx: StepContext) -> Sequence[Invention]:
+        """Reference form of :meth:`evaluate`: per-unit candidate filtering and neighbor sums."""
+        rng = ctx.rng.stream(Streams.INNOVATION)
+        by_cell = state.units_by_cell()
         proposals: list[Invention] = []
         for unit in state.units.values():
             candidates = sorted(
@@ -189,65 +293,10 @@ class InnovationSubsystem:
             )
             if not candidates:
                 continue
-            profile = ctx.species(unit.species_id)
-            signals = need_signals(unit, state, ctx)
             neighbors = (
                 sum(len(by_cell.get(c, [])) for c in state.world.cells_within(unit.cell, 1)) - 1
             )
-            connectivity = neighbors + sum(unit.trade_ties.values())
-            need = annual_need_kcal(
-                unit,
-                profile,
-                ctx.tables[unit.species_id],
-                float(state.climate.temperature_c[unit.cell]),
-            )
-            surplus = (
-                min(1.0, unit.stores_kcal / need + max(0.0, unit.food_ratio - 1.0))
-                if need > 0
-                else 0.0
-            )
-            evaluated: list[tuple[TechnologySpec, float, dict[str, float]]] = []
-            for tech in candidates:
-                ratios = [
-                    self.model.level(unit.knowledge, d) / v
-                    for d, v in tech.min_knowledge.items()
-                    if v > 0
-                ]
-                knowledge_ratio = (
-                    min(ratios) if ratios else 1.0 + self.model.level(unit.knowledge, tech.domain)
-                )
-                hazard, components = innovation_hazard(
-                    tech,
-                    signals[tech.need],
-                    knowledge_ratio,
-                    unit.population,
-                    connectivity,
-                    surplus,
-                    unit.energy_deficit,
-                    spec,
-                    profile.cognition.invention_propensity,
-                )
-                evaluated.append((tech, hazard, components))
-                if unit.id in ctx.trace_units:
-                    ctx.events.emit(
-                        state.year,
-                        "trace_innovation",
-                        unit_id=unit.id,
-                        technology=tech.id,
-                        hazard=round(hazard, 6),
-                        components={k: round(v, 3) for k, v in components.items()},
-                    )
-            chosen = choose_invention([h for _, h, _ in evaluated], rng)
-            if chosen is not None:
-                tech, hazard, components = evaluated[chosen]
-                proposals.append(
-                    Invention(
-                        unit.id,
-                        tech.id,
-                        hazard,
-                        components,
-                        self.model.index[tech.domain],
-                        tech.knowledge_bonus,
-                    )
-                )
+            invention = self._invention(unit, candidates, neighbors, state, ctx, rng)
+            if invention is not None:
+                proposals.append(invention)
         return proposals

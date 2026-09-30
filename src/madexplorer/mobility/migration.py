@@ -22,7 +22,7 @@ from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.economy.agriculture import clearing_hours_per_ha
 from madexplorer.mobility.exploration import report_confidence
-from madexplorer.population.energetics import annual_need_kcal
+from madexplorer.population.energetics import annual_need_batch, annual_need_kcal
 from madexplorer.population.groups import sigmoid
 from madexplorer.population.unit import Observation, PopulationUnit
 from madexplorer.species.profile import MigrationBehavior
@@ -648,10 +648,12 @@ class MigrationSubsystem:
         ((scores, _),) = self._scores([prepared], state.year, state.world.water_access)
         return self._finish(prepared, scores, state, ctx, rng)
 
-    def evaluate(
+    def _evaluate_reference(
         self, state: SimulationState, ctx: StepContext
     ) -> Sequence[MoveHazards | Relocation]:
-        """Decide which units move where this year (all units scored and chosen at once).
+        """Reference form of :meth:`evaluate` (per-unit preparation; also the fallback for
+        exact ties, traced units and attention caps). Decides which units move where this
+        year (all units scored and chosen at once).
 
         Equivalent to deciding unit by unit in order: the best destination is the first
         maximum excluding the current cell, the hazard is :func:`migration_probability`, and
@@ -695,6 +697,210 @@ class MigrationSubsystem:
                 proposals.append(self._relocation(item, destination, hazard, ctx))
         self._record_saturation(prepared, chosen, ratios[home_rows[chosen]], ctx)
         return proposals
+
+    def evaluate(
+        self, state: SimulationState, ctx: StepContext
+    ) -> Sequence[MoveHazards | Relocation]:
+        """Decide which units move where this year, batched across units.
+
+        The same decisions, hazards and draws as :meth:`_evaluate_reference`: per-unit
+        scalar inputs are computed as arrays with the scalar rules' operations; each unit's
+        candidates are its reachable cells with a current belief (gathered from its own
+        belief arrays); the destination is the first maximum excluding the current cell;
+        one uniform per deciding unit in unit order. Exact ties (a tie-break draw), traced
+        units and attention caps go through the reference path, before any draw.
+        """
+        units_all = ctx.spatial(state).units
+        compiled = ctx.compiled
+        assert compiled is not None
+        species_all = compiled.species_of([u.species_id for u in units_all])
+        profiles = [ctx.species(sid) for sid in compiled.species_ids]
+        if any(
+            p.migration.max_considered_destinations is not None for p in profiles
+        ) or not ctx.trace_units.isdisjoint(u.id for u in units_all):
+            return self._evaluate_reference(state, ctx)
+        year = state.year
+        memory = [p.cognition.memory_years for p in profiles]
+        reach = [ctx.movement[sid].reachable_arrays for sid in compiled.species_ids]
+        # Per unit: reachable cells with a current belief, and their belief fields.
+        rows: list[int] = []
+        parts = []
+        for i, (unit, code) in enumerate(zip(units_all, species_all.tolist(), strict=True)):
+            beliefs = unit.beliefs
+            if beliefs.n_cells == 0 or unit.population == 0:
+                continue
+            cells, costs = reach[code](unit.cell)
+            known = beliefs.year[cells] > year - memory[code]
+            c = cells[known]
+            parts.append(
+                (c, costs[known], beliefs.year[c], beliefs.population[c], beliefs.hops[c],
+                 beliefs.food_kcal[c])
+            )  # fmt: skip
+            rows.append(i)
+        if not rows:
+            return [MoveHazards({})]
+        index = np.array(rows, dtype=np.int64)
+        counts = np.array([len(p[0]) for p in parts], dtype=np.int64)
+        cells = np.concatenate([p[0] for p in parts])
+        owner = np.repeat(np.arange(index.size), counts)
+        home_cell = np.array([units_all[i].cell for i in rows], dtype=np.int64)
+        staying = cells == home_cell[owner]
+        has_home = np.bincount(owner, weights=staying, minlength=index.size) > 0
+        if not has_home.all():  # cannot evaluate staying without a current observation
+            keep_units = np.flatnonzero(has_home)
+            keep_rows = has_home[owner]
+            index, counts = index[keep_units], counts[keep_units]
+            parts = [parts[k] for k in keep_units.tolist()]
+            cells, staying = cells[keep_rows], staying[keep_rows]
+            owner = np.repeat(np.arange(index.size), counts)
+            home_cell = home_cell[keep_units]
+            if index.size == 0:
+                return [MoveHazards({})]
+        units = [units_all[i] for i in index.tolist()]
+        species = species_all[index]
+        path_costs = np.concatenate([p[1] for p in parts])
+        observed = np.concatenate([p[2] for p in parts])
+        others = np.concatenate([p[3] for p in parts])
+        hops = np.concatenate([p[4] for p in parts])
+        believed_food = np.concatenate([p[5] for p in parts])
+        # Per-unit scalars (the operations of _prepare, elementwise).
+        p_ = compiled.parameter
+        need = annual_need_batch(units, state, ctx) - np.array(
+            [u.energy_debt_kcal for u in units], dtype=np.float64
+        )
+        population = np.array([u.population for u in units], dtype=np.int64)
+        fields = np.array([u.fields_ha for u in units], dtype=np.float64)
+        farm_kcal = fields * np.array([u.crop_yield_kcal_per_ha for u in units], dtype=np.float64)
+        carry = population * p_("movement.carry_kcal_per_capita")[species]
+        stores = np.array([u.stores_kcal for u in units], dtype=np.float64)
+        abandoned = np.maximum(stores - carry, 0.0)
+        positive = need > 0
+        safe_need = np.where(positive, need, 1.0)
+        stores_weight = p_("migration.abandoned_stores_weight")[species]
+        stores_cost = np.where(positive, stores_weight * abandoned / safe_need, 0.0)
+        if not ctx.mechanisms.field_replacement_cost:
+            fields_weight = p_("migration.abandoned_fields_weight")[species]
+            fields_cost = np.where(positive, fields_weight * farm_kcal / safe_need, 0.0)
+        else:
+            config = ctx.scenario.config.agriculture
+            farming = (fields > 0) & positive
+            efficiency = np.array(
+                [ctx.capabilities(u)["clearing_efficiency"] if f else 1.0
+                 for u, f in zip(units, farming.tolist(), strict=True)],
+                dtype=np.float64,
+            )  # fmt: skip
+            vegetation = state.world.vegetation_density[home_cell].astype(np.float64)
+            clearing = (
+                config.clearing_hours_per_ha
+                * (1.0 + config.clearing_vegetation_multiplier * vegetation)
+            ) / np.maximum(efficiency, 1e-6)
+            marginal = np.array([u.forage_marginal_kcal_per_hour for u in units], dtype=np.float64)
+            replacement = fields * clearing * np.maximum(marginal, 0.0) / safe_need
+            fields_cost = np.where(farming, stores_weight * replacement, 0.0)
+        signal = np.array([u.food_log_signal_var for u in units], dtype=np.float64)
+        noise = np.array([p.cognition.observation_noise_sigma**2 for p in profiles])[species]
+        if ctx.mechanisms.direct_observation_shrinkage:
+            direct = np.where(noise == 0, 1.0, signal / np.where(noise == 0, 1.0, signal + noise))
+        else:
+            direct = np.ones(index.size)
+        decay = p_("social_information.transmission_confidence_decay")[species]
+        log_prior = np.array([u.food_log_prior for u in units], dtype=np.float64)
+        # Candidate utilities (the operations of _scores).
+        confidence = direct[owner] * np.power(decay[owner], hops.astype(np.float64))
+        food = shrunk_food_kcal(believed_food.astype(np.float64), confidence, log_prior[owner])
+        farm = farm_kcal[owner]
+        food = np.where(staying & (farm > 0), food + farm, food)
+        ratio = food_ratio(
+            food, others.astype(np.float64), population[owner].astype(np.float64), need[owner]
+        )
+        food_term = np.empty_like(ratio)
+        candidate_species = species[owner]
+        for code in np.unique(species).tolist():
+            chosen_rows = candidate_species == code
+            behavior = profiles[code].migration
+            food_term[chosen_rows] = behavior.food_weight * food_utility(
+                ratio[chosen_rows], behavior
+            )
+        weights = np.stack(
+            [
+                p_("migration.food_weight")[candidate_species],
+                p_("migration.water_weight")[candidate_species],
+                p_("migration.movement_cost_weight")[candidate_species],
+                p_("migration.movement_reference_km")[candidate_species],
+                p_("migration.uncertainty_weight")[candidate_species],
+            ],
+            axis=1,
+        )
+        memory_years = np.array(memory, dtype=np.float64)[candidate_species]
+        scores = candidate_utilities(
+            food_term,
+            state.world.water_access[cells],
+            (year - observed).astype(np.float64),
+            path_costs,
+            staying,
+            stores_cost[owner],
+            fields_cost[owner],
+            memory_years,
+            weights,
+        )
+        # Destination choice and move draws (as in the reference evaluate).
+        starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
+        values = np.where(staying, -np.inf, scores)
+        best_value = np.maximum.reduceat(values, starts)
+        decided = np.isfinite(best_value)
+        is_best = (values == best_value[owner]) & decided[owner]
+        if (np.add.reduceat(is_best, starts)[decided] > 1).any():
+            return self._evaluate_reference(state, ctx)
+        rng = ctx.rng.stream(Streams.MIGRATION)
+        best_rows = np.flatnonzero(is_best)
+        home_rows = np.flatnonzero(staying)
+        chosen = np.flatnonzero(decided)
+        gains = (scores[best_rows] - scores[home_rows[chosen]]).tolist()
+        draws = rng.random(chosen.size).tolist()
+        hazards = {u.id: 0.0 for u in units}
+        proposals: list[MoveHazards | Relocation] = [MoveHazards(hazards)]
+        behaviors = [p.migration for p in profiles]
+        travel = p_("movement.travel_kcal_per_km")[species]
+        for k, i in enumerate(chosen.tolist()):
+            unit = units[i]
+            behavior = behaviors[species[i]]
+            hazard = migration_probability(gains[k], behavior)
+            hazards[unit.id] = hazard
+            if draws[k] < hazard:
+                row = int(best_rows[k])
+                destination = int(cells[row])
+                cost = float(path_costs[row])
+                proposals.append(
+                    Relocation(
+                        unit.id,
+                        unit.cell,
+                        destination,
+                        cost,
+                        float(unit.population * travel[i]) * cost,
+                        hazard,
+                        float(carry[i]),
+                    )
+                )
+        home_ratio = ratio[home_rows[chosen]]
+        self._record_saturation_batch(behaviors, species[chosen], home_ratio, ctx)
+        return proposals
+
+    @staticmethod
+    def _record_saturation_batch(
+        behaviors: Sequence[MigrationBehavior],
+        species: IntArray,
+        home_ratio: FloatArray,
+        ctx: StepContext,
+    ) -> None:
+        """:meth:`_record_saturation` from species codes (same counts)."""
+        if species.size == 0:
+            return
+        for code in np.unique(species).tolist():
+            behavior = behaviors[code]
+            ratio = home_ratio[species == code]
+            flat = (food_utility_slope(ratio, behavior) < SATURATED_SLOPE) & (ratio > 1.0)
+            ctx.ledger.migration_decisions += int(ratio.size)
+            ctx.ledger.food_saturated_decisions += int(flat.sum())
 
     def _evaluate_sequentially(
         self,

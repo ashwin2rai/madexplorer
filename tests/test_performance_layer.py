@@ -218,3 +218,285 @@ def test_batched_unit_kernels_equal_their_per_unit_references() -> None:
         )
         assert np.array_equal(proposal.knowledge[i], expected)
     assert (crop > 0).any() and any(u.fields_ha > 0 for u in units)
+
+
+def _warm_state(n_units: int, seed: int, ticks: int = 6):  # type: ignore[no-untyped-def]
+    scenario = Scenario.from_yaml(ROOT / "scenarios" / "mvp2_neolithic.yaml").with_overrides(
+        seed=seed
+    )
+    sim = synthetic_simulator(scenario, n_units)
+    for _ in range(ticks):
+        sim.step()
+    return sim
+
+
+@settings(max_examples=6, deadline=None)
+@given(st.integers(0, 10_000))
+def test_packed_sharing_equals_the_reference_selection_and_receipt(seed: int) -> None:
+    import copy
+
+    from madexplorer.mobility.exploration import (
+        ReportTable,
+        SenderInputs,
+        receive_reports_batch,
+        receive_reports_packed,
+        report_pool,
+        select_reports_batch,
+        select_reports_packed,
+    )
+
+    sim = _warm_state(80, seed)
+    state, ctx = sim.state, step_context(sim)
+    units = list(state.units.values())
+    rng = np.random.default_rng(seed)
+    senders = [units[i] for i in rng.choice(len(units), size=min(30, len(units)), replace=False)]
+    profile = ctx.species("human")
+    pools = [
+        report_pool(u, ctx.static.perceived_cells(u.species_id, u.cell, profile.cognition))
+        for u in senders
+    ]
+    n_cells = state.world.n_cells
+    inputs = [
+        SenderInputs(u, pool, profile.cognition.memory_years, profile.social_information)
+        for u, pool in zip(senders, pools, strict=True)
+    ]
+    reference = select_reports_batch(inputs, state.year, n_cells)
+    info = profile.social_information
+    k = len(senders)
+    packed = select_reports_packed(
+        [u.beliefs for u in senders],
+        pools,
+        np.array([u.cell for u in senders]),
+        np.array([u.food_log_prior for u in senders]),
+        np.full(k, float(profile.cognition.memory_years)),
+        np.full(k, float(info.max_report_age_years)),
+        np.full(k, info.transmission_confidence_decay),
+        np.full(k, info.reports_per_interaction, dtype=np.int64),
+        state.year,
+        n_cells,
+    )
+    for name in ReportTable.__dataclass_fields__:
+        assert np.array_equal(getattr(reference, name), getattr(packed, name))
+    receivers_units = [units[i] for i in rng.choice(len(units), size=25, replace=False)]
+    pair_receiver = rng.integers(0, len(receivers_units), size=120)
+    pair_sender = rng.integers(0, k, size=120)
+    order = np.argsort(pair_receiver, kind="stable")
+    pair_receiver, pair_sender = pair_receiver[order], pair_sender[order]
+    receivers = [(u.id, u.beliefs) for u in receivers_units]
+    patches = receive_reports_batch(receivers, pair_receiver, pair_sender, reference, n_cells)
+    proposal = receive_reports_packed(receivers, pair_receiver, pair_sender, reference, n_cells)
+    state_a, state_b = copy.deepcopy(state), copy.deepcopy(state)
+    for patch in patches:
+        patch.apply(state_a, ctx)
+    proposal.apply(state_b, ctx)
+    assert proposal.unit_ids == tuple(p.unit_id for p in patches)
+    for uid in state.units:
+        a, b = state_a.units[uid], state_b.units[uid]
+        for field in ("year", "food_kcal", "population", "hops"):
+            assert np.array_equal(getattr(a.beliefs, field), getattr(b.beliefs, field))
+        assert np.array_equal(a.report_cells, b.report_cells)
+
+
+@settings(max_examples=6, deadline=None)
+@given(st.integers(0, 10_000), st.booleans())
+def test_batched_migration_equals_the_reference_evaluate(seed: int, farming: bool) -> None:
+    from madexplorer.core.rng import Streams
+    from madexplorer.mobility.migration import MigrationSubsystem, MoveHazards, Relocation
+
+    scenario = Scenario.from_yaml(ROOT / "scenarios" / "mvp2_neolithic.yaml").with_overrides(
+        seed=seed
+    )
+    sim = synthetic_simulator(scenario, 90, farming=farming)
+    for _ in range(7):
+        sim.step()
+    subsystem = MigrationSubsystem()
+    outcomes = []
+    for method in (subsystem.evaluate, subsystem._evaluate_reference):
+        ctx = step_context(sim)
+        rng = ctx.rng.stream(Streams.MIGRATION)
+        saved = rng.bit_generator.state
+        proposals = method(sim.state, ctx)
+        hazards = [p.hazards for p in proposals if isinstance(p, MoveHazards)]
+        moves = [
+            (m.unit_id, m.destination, m.path_cost_km, m.travel_kcal, m.hazard, m.carry_kcal)
+            for m in proposals
+            if isinstance(m, Relocation)
+        ]
+        ledger = (ctx.ledger.migration_decisions, ctx.ledger.food_saturated_decisions)
+        outcomes.append((hazards, moves, ledger, rng.bit_generator.state))
+        rng.bit_generator.state = saved
+    assert outcomes[0] == outcomes[1]
+    assert any(h > 0 for h in outcomes[0][0][0].values())
+    if farming:
+        assert any(u.fields_ha > 0 for u in sim.state.units.values())
+
+
+def test_batched_migration_with_exact_ties_uses_the_reference_tie_break() -> None:
+    from dataclasses import replace
+
+    from madexplorer.core.rng import Streams
+    from madexplorer.mobility.migration import MigrationSubsystem, Relocation
+    from madexplorer.population.unit import BeliefMap, Observation
+
+    sim = Simulator(_mvp2())
+    sim.state.world = replace(sim.world, water_access=np.full(sim.world.n_cells, 0.5))
+    (unit,) = sim.state.units.values()
+    movement = sim.movement[unit.species_id]  # this simulator's own static context
+    reachable = {c: 0.0 if c == unit.cell else 20.0 for c in movement.reachable(unit.cell)}
+    movement._reachable[unit.cell] = reachable  # equal path costs: exact utility ties
+    movement._reachable_arrays.pop(unit.cell, None)
+    rich = {c: Observation(year=sim.state.year, food_kcal=4e7, population=0) for c in reachable}
+    rich[unit.cell] = Observation(year=sim.state.year, food_kcal=1e5, population=0)
+    unit.beliefs = BeliefMap.from_observations(sim.world.n_cells, rich)
+    unit.food_log_prior, unit.food_log_signal_var = float(np.log(1e6)), 1.0  # finite utilities
+    subsystem = MigrationSubsystem()
+    fallbacks: list[int] = []
+    reference = subsystem._evaluate_reference
+
+    def counted(state, ctx):  # type: ignore[no-untyped-def]
+        fallbacks.append(1)
+        return reference(state, ctx)
+
+    subsystem._evaluate_reference = counted  # type: ignore[method-assign]
+    results = []
+    for method in ("evaluate", "_evaluate_reference"):
+        ctx = step_context(sim)
+        rng = ctx.rng.stream(Streams.MIGRATION)
+        saved = rng.bit_generator.state
+        proposals = getattr(subsystem, method)(sim.state, ctx)
+        results.append(
+            ([(p.destination, p.hazard) for p in proposals if isinstance(p, Relocation)],
+             rng.bit_generator.state)
+        )  # fmt: skip
+        rng.bit_generator.state = saved
+    assert results[0] == results[1]
+    assert len(fallbacks) == 2  # evaluate handed the tie to the reference path
+    assert results[0][0]  # the move happened, to one of the tied cells
+
+
+@settings(max_examples=6, deadline=None)
+@given(st.integers(0, 10_000), st.booleans(), st.booleans())
+def test_batched_diffusion_equals_the_reference_evaluate(
+    seed: int, farming: bool, forget: bool
+) -> None:
+    from madexplorer.core.rng import Streams
+    from madexplorer.knowledge.diffusion import DiffusionBatch, DiffusionSubsystem
+
+    scenario = Scenario.from_yaml(ROOT / "scenarios" / "mvp2_neolithic.yaml").with_overrides(
+        seed=seed
+    )
+    sim = synthetic_simulator(scenario, 90, farming=farming)
+    for _ in range(6):
+        sim.step()
+    rng = np.random.default_rng(seed)
+    units = list(sim.state.units.values())
+    for k in rng.choice(len(units), size=len(units) // 3, replace=False).tolist():
+        unit = units[k]
+        if forget:  # knowledge below requirements: technology loss and cascades
+            unit.knowledge = unit.knowledge * rng.uniform(0.0, 0.2)
+        elif unit.technologies:  # drop a technology so neighbors can pass it on
+            unit.technologies = frozenset(sorted(unit.technologies)[1:])
+    assert sim.knowledge is not None
+    subsystem = DiffusionSubsystem(sim.knowledge)
+    outcomes = []
+    for method in (subsystem.evaluate, subsystem._evaluate_reference):
+        ctx = step_context(sim)
+        stream = ctx.rng.stream(Streams.TECHNOLOGY_ADOPTION)
+        saved = stream.bit_generator.state
+        rows = []
+        for proposal in method(sim.state, ctx):
+            if isinstance(proposal, DiffusionBatch):
+                for k, uid in enumerate(proposal.unit_ids):
+                    rows.append((uid, proposal.gains[k].tolist(), proposal.adopted[k],
+                                 proposal.lost[k]))  # fmt: skip
+            else:
+                rows.append((proposal.unit_id, proposal.gain.tolist(), proposal.adopted,
+                             proposal.lost))  # fmt: skip
+        outcomes.append((rows, stream.bit_generator.state))
+        stream.bit_generator.state = saved
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0][0]
+    if forget and farming:  # every technology is held, so losses must occur
+        assert any(r[3] for r in outcomes[0][0])
+
+
+@settings(max_examples=6, deadline=None)
+@given(st.integers(0, 10_000))
+def test_batched_innovation_equals_the_reference_evaluate(seed: int) -> None:
+    from madexplorer.core.rng import Streams
+    from madexplorer.knowledge.innovation import InnovationSubsystem
+
+    sim = _warm_state(90, seed)
+    rng = np.random.default_rng(seed)
+    units = list(sim.state.units.values())
+    assert sim.knowledge is not None
+    ids = [t.id for t in sim.knowledge.system.technologies]
+    for k in rng.choice(len(units), size=len(units) // 2, replace=False).tolist():
+        unit = units[k]  # varied knowledge and holdings: many candidate technologies
+        unit.knowledge = unit.knowledge + rng.uniform(0.0, 6.0, size=unit.knowledge.size)
+        unit.technologies = frozenset(t for t in ids if rng.random() < 0.3)
+    subsystem = InnovationSubsystem(sim.knowledge)
+    outcomes = []
+    for method in (subsystem.evaluate, subsystem._evaluate_reference):
+        ctx = step_context(sim)
+        stream = ctx.rng.stream(Streams.INNOVATION)
+        saved = stream.bit_generator.state
+        proposals = [
+            (p.unit_id, p.technology, p.hazard, p.components) for p in method(sim.state, ctx)
+        ]
+        outcomes.append((proposals, stream.bit_generator.state))
+        stream.bit_generator.state = saved
+    assert outcomes[0] == outcomes[1]
+    assert outcomes[0][1] != saved  # candidates existed and drew
+
+
+def test_packed_perception_equals_per_unit_patches() -> None:
+    import copy
+
+    from madexplorer.mobility.exploration import PerceptionSubsystem
+
+    sim = _warm_state(70, 3)
+    ctx = step_context(sim)
+    (packed,) = PerceptionSubsystem().evaluate(sim.state, ctx)
+    state_a, state_b = copy.deepcopy(sim.state), copy.deepcopy(sim.state)
+    packed_b = copy.deepcopy(packed)  # the proposal holds unit objects: bind to state_b
+    object.__setattr__(packed_b, "units", tuple(state_b.units[u.id] for u in packed.units))
+    for patch in packed.as_patches(sim.state.year):
+        patch.apply(state_a, ctx)
+    packed_b.apply(state_b, ctx)
+    for uid, a in state_a.units.items():
+        b = state_b.units[uid]
+        for field in ("year", "food_kcal", "population", "hops"):
+            assert np.array_equal(getattr(a.beliefs, field), getattr(b.beliefs, field))
+        assert a.food_log_prior == b.food_log_prior or (
+            np.isnan(a.food_log_prior) and np.isnan(b.food_log_prior)
+        )
+        assert a.food_log_signal_var == b.food_log_signal_var
+        assert a.recent_residence == b.recent_residence
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    st.floats(0.0, 5e7),
+    st.floats(0.0, 5e7),
+    st.floats(0.0, 2000.0),
+    st.floats(0.0, 2000.0),
+    st.sampled_from([0.0]) | st.floats(0.0, 3e5),
+    st.floats(0.05, 1.0),
+    st.sampled_from([0.0, 1e12]) | st.floats(0.0, 3e7),
+)
+def test_single_unit_foraging_fast_path_equals_cell_harvest(
+    plant: float, game: float, r_p: float, r_g: float, labor: float, eff: float, target: float
+) -> None:
+    from madexplorer.economy.foraging import cell_harvest, single_unit_harvest
+
+    outcome = cell_harvest(
+        np.array([plant, game]), np.array([r_p, r_g]), np.array([labor]), np.array([eff]), target
+    )
+    share, p_removed, g_removed, fraction, marginal = single_unit_harvest(
+        (plant, game), (r_p, r_g), labor, eff, target
+    )
+    assert share == float(outcome.shares[0])
+    assert (p_removed, g_removed) == (float(outcome.removal[0]), float(outcome.removal[1]))
+    assert fraction == outcome.effort_fraction
+    assert marginal == outcome.marginal_kcal_per_effective_hour

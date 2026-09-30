@@ -412,6 +412,61 @@ benchmarks/perf/oracle_ph0.json`. It hashes metrics, events and final unit state
 | PH1.8 | Fusion tie rewiring O(degree): holders of the source's ties are its own live partners (ties are symmetric among live units; invariant tested) | A | 10k units: fusion 805 ms → out of the top five | unchanged |
 | PH1.9 | Learning: batched activity shares and learning law; practice weights reproduce Python's compensated `sum()` via `core/exactsum.py` (tested against the builtin) | A | 2.59 → 0.62 s | unchanged |
 
+| PH2.1 | Sharing: packed report selection (`select_reports_packed`: per-sender parameters as compiled arrays, one gathering pass) and packed receipt (`receive_reports_packed`: acceptance vectorized over all receivers, one `ReceivedReports` proposal); references `select_reports_batch` / `receive_reports_batch` kept | A | sharing 19.5 → 9.8 calls/unit, 51 → 31 ms/tick at 1k (profiled) | unchanged |
+| PH2.2 | Shared phase-local pair index (`SpatialIndex.local_pairs`): sharing encounters and diffusion's local contacts are the same pair set, built once while no membership change intervenes | A | one construction instead of two | unchanged |
+| PH2.3 | Migration: batched evaluate (per-unit scalars from compiled parameters; the only per-unit work is the gather from the unit's own belief arrays); exact ties, traced units and attention caps fall back to `_evaluate_reference` before any draw; the hazard stays the scalar `migration_probability` | A | 56 → 21 calls/unit, 64 → 31 ms; no fallback in 400 years of seed 0 | unchanged |
+| PH2.4 | Diffusion: contacts from the shared pair index plus per-receiver trade merge; scalar loss and adoption rules only where a bitmask test shows they can apply; one `DiffusionBatch` proposal; reference `_evaluate_reference` kept | A | 83 → 36 calls/unit | unchanged |
+| PH2.5 | Innovation: candidate eligibility from technology bitmasks and the knowledge matrix; vectorized neighbor counts; scalar hazard and competing-risk draw only for units with candidates; reference kept | A | 26 → 3 calls/unit | unchanged |
+| PH2.6 | Perception: one packed `Perceptions` proposal (`as_patches()` gives the reference per-unit patches) | A | 15 → 10 calls/unit | unchanged |
+| PH2.7 | Foraging: scalar fast path for single-group cells (`single_unit_harvest`, bit-identical because a one-element numpy sum is the element and a two-element sum is `a + b`); multi-group cells keep the numpy path; one packed `CellHarvests` proposal | A | 67 → 50 calls/unit, 59 → 28 ms | unchanged |
+| — | Benchmark: social contacts per tick, µs per contact, transient Python memory per tick (tracemalloc peak within a tick, an allocation-pressure proxy) | tooling | — | — |
+
+**Correction (found in PH2):** the PH0 and PH1 *synthetic* reports (`ph0_scale_*`,
+`ph0_density_*`, `ph1_scale_*`, `ph1_density_*`) have inflated per-subsystem ms/tick. The
+untimed call-count pass added its two profiled ticks to the breakdown. Their totals, CPU
+time and calls per unit are correct. The timed-run reports (`*_seed0_600y.json`) and
+`mvp2_freeze_synthetic.json` are unaffected. Fixed from PH2a onward.
+
+**PH2 results** (CPU; same machine; seeded output identical throughout: seed 0 over 600
+years ends with 33,070 people and 1,212 units).
+
+| Benchmark | PH0 | PH1 | PH2 |
+|---|---:|---:|---:|
+| Seed 0, 600 y: CPU s | 41.9 | 35.8 | 29.7 (−29%) |
+| Seed 0, late window (1,086 units): ms/tick | 328 | 273 | 198 (−40%) |
+| 1k synthetic: CPU ms/tick / calls/unit/tick | 264 / 509 | 210 / 435 | 157 / 300 |
+| 10k synthetic (40×40): CPU ms/tick / calls/unit/tick | 5,092 / 1,064 | 3,589 / 799 | 2,327 / 232 |
+| Fixed density, 500 / 1k / 2k / 4k units: µs/unit/tick | 234 / 221 / 246 / 263 | 230 / 190 / 216 / 227 | 156 / 146 / 164 / 169 |
+| ... calls/unit/tick | 479-493 | 414-425 | 291-299 |
+| Varied density on 40×40, 250 / 1k / 4k units: µs/unit/tick | 228 / 251 / 291 | 185 / 202 / 246 | 149 / 159 / 169 |
+| ... calls/unit/tick | 475 / 500 / 754 | 411 / 426 / 586 | 295 / 289 / 242 |
+| µs per candidate contact (4k units on 40×40; 10k units) | — | 4.1 / 4.2 (PH2a) | 3.3 / 3.1 |
+| Peak RSS / dense beliefs (4k units, fixed density) | 787 / 689 MB | 785 / 689 MB | 788 / 689 MB |
+| Transient Python memory per tick (1k units) | — | — | ~11 MB |
+
+Seed 0, 600 years, time shares in PH2: sharing 18%, migration 12%, demography 11%,
+foraging 10%, field planning 9%, diffusion 8%, perception 6%. The early window (years
+61-90, ~8 units) is 4.0-4.8 ms/tick CPU measured directly, the same as the freeze. The
+12.4 ms/tick in `ph2_seed0_600y.json` is wall-clock window noise.
+
+**Where the remaining cost is** (1k units, measured on warmed synthetic states):
+- *Object access and syncing* (`PopulationUnit` authoritative): ~239 attribute reads and
+  ~35 writes per unit per tick. At ~40 ns per read that is ≈ 13 ms; turning gathered lists
+  into arrays adds ≈ 12 ms (~60 µs per field at 1k units). Together ≈ 25 ms, about 15% of a
+  ~160 ms tick. The batch representation itself is transient: ~11 MB per tick at 1k units
+  (~11 kB per unit), with no persistent overhead.
+- *Per-unit belief arrays*: migration (~28 ms), sharing (select and receive) and perception
+  still gather from each unit's own four belief arrays. That per-unit loop cannot be
+  vectorized while beliefs are separate objects; a global belief matrix would remove it.
+- *Remaining per-unit calls*: the cached `population` / `weighted_count` accessors, the
+  familiarity dictionaries (effective value, practice), the scalar rules kept for exactness
+  (field planning's investment rule, fission hazards with their interleaved draws, trade's
+  deficit loop), and the per-cell Newton solver for multi-group cells.
+- *Pairwise work at high density*: sharing's array work over 740k candidate pairs is
+  ~1.0 s of 2.3 s per tick at 10k units (1.4 µs per pair), which is real model work.
+- Remaining proposal objects are per event (trade transfers ~0.56 per unit per tick,
+  relocations, rare fission/fusion); each batched subsystem emits one proposal per tick.
+
 Differential tests (`tests/test_performance_layer.py`): the spatial index against
 `units_by_cell()`, invalidation, compiled data against the configuration, energy balance,
 compensated sums, batched need, labor, crop yield and learning against their per-unit

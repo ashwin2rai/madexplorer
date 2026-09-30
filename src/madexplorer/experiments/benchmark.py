@@ -22,6 +22,7 @@ import multiprocessing
 import pstats
 import resource
 import time
+import tracemalloc
 from collections.abc import Sequence
 from typing import Any
 
@@ -144,6 +145,39 @@ def state_storage(sim: Simulator) -> dict[str, float]:
     }
 
 
+def social_contacts(sim: Simulator) -> int:
+    """Candidate encounter pairs among co-located and adjacent same-species groups.
+
+    The pairwise contact set that belief sharing draws encounters from (diffusion's local
+    contacts are the same pairs, plus trade ties); it grows with local density.
+    """
+    from madexplorer.mobility.exploration import candidate_encounters
+
+    units = list(sim.state.units.values())
+    receiver, _ = candidate_encounters(units, sim.static.neighborhood_table(1))
+    return int(receiver.size)
+
+
+def transient_python_memory_mb(sim: Simulator, ticks: int) -> float:
+    """Mean peak of Python-traced memory allocated and released within a tick (MB).
+
+    An allocation-pressure proxy (tracemalloc, a separate untimed pass): temporary tuples,
+    dicts, dataclasses and numpy buffers raise it; state that persists does not.
+    """
+    tracemalloc.start()
+    peaks = []
+    try:
+        for _ in range(ticks):
+            current, _ = tracemalloc.get_traced_memory()
+            tracemalloc.reset_peak()
+            sim.step()
+            _, peak = tracemalloc.get_traced_memory()
+            peaks.append(peak - current)
+    finally:
+        tracemalloc.stop()
+    return float(np.mean(peaks)) / 2**20
+
+
 def python_calls_per_tick(sim: Simulator, ticks: int) -> float:
     """Python function calls per tick, counted under cProfile (a separate, untimed pass).
 
@@ -190,9 +224,13 @@ def synthetic_case(
     cpu_total = time.process_time() - cpu_started
     mean_units = float(np.mean(unit_counts))
     total = float(np.sum(tick_seconds))
+    timings = dict(sim.timings)
+    sim.timings = None  # the untimed passes below must not add to the breakdown
     storage = state_storage(sim)
+    storage["social_contacts"] = social_contacts(sim)
     rss = _peak_rss_mb()
     calls = python_calls_per_tick(sim, 2) if count_calls else float("nan")
+    transient = transient_python_memory_mb(sim, 2) if count_calls else float("nan")
     return {
         "n_units": n_units,
         "farming": farming,
@@ -210,7 +248,7 @@ def synthetic_case(
         "ms_per_unit_tick": round(1000.0 * total / ticks / max(mean_units, 1.0), 4),
         "subsystem_ms_per_tick": {
             k: round(1000.0 * v / ticks, 2)
-            for k, v in sorted(sim.timings.items(), key=lambda kv: -kv[1])
+            for k, v in sorted(timings.items(), key=lambda kv: -kv[1])
         },
         "peak_rss_mb": round(rss, 1),
         "cells": sim.world.n_cells,
@@ -218,6 +256,10 @@ def synthetic_case(
         "storage": storage,
         "python_calls_per_tick": round(calls),
         "python_calls_per_unit_tick": round(calls / max(storage["units"], 1), 1),
+        "transient_python_mb_per_tick": round(transient, 2),
+        "us_per_contact_tick_cpu": round(
+            1e6 * cpu_total / ticks / max(storage["social_contacts"], 1), 2
+        ),
     }
 
 
