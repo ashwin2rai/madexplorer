@@ -20,6 +20,7 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
+from madexplorer.economy.agriculture import clearing_hours_per_ha
 from madexplorer.mobility.exploration import report_confidence
 from madexplorer.population.energetics import annual_need_kcal
 from madexplorer.population.groups import sigmoid
@@ -190,6 +191,44 @@ def choose_destination(
 
 
 @model_rule(
+    name="field_replacement_cost",
+    version="1.0",
+    rationale=(
+        "Leaving a cell abandons its cultivated land. The crop those fields would yield is "
+        "already counted in the utility of staying (added to the home food stock), so it is not "
+        "charged again. What the stay term lacks is the loss of the field capital itself: to "
+        "have comparable fields elsewhere, the group must clear them again. That future "
+        "reconstruction labor (current fields x clearing hours per ha) is valued at the group's "
+        "marginal foraging return, the opportunity cost of labor that field planning also uses, "
+        "and expressed in years of need, the scale of the abandoned-stores cost. The labor "
+        "already spent clearing the current fields is sunk and plays no part. Switchable "
+        "(mechanisms.field_replacement_cost); off restores the earlier penalty "
+        "abandoned_fields_weight x crop output / need, which counted the crop a second time."
+    ),
+    source_type="heuristic",
+    parameters=("clearing_hours_per_ha", "clearing_vegetation_multiplier"),
+    expected_domain="years of need, >= 0; 0 without fields",
+    known_limitations=(
+        "Reconstruction is priced at the home cell's clearing conditions (vegetation, the "
+        "group's clearing efficiency), not the destination's; destination-specific costs are "
+        "deferred. Only clearing labor is counted: output forgone while new fields are built "
+        "and the loss of improved soil are not."
+    ),
+)
+def field_replacement_cost(
+    fields_ha: float,
+    clearing_hours_per_ha: float,
+    marginal_forage_kcal_per_hour: float,
+    need_kcal: float,
+) -> float:
+    """Years of need forgone to re-clear the current fields elsewhere (0 without need)."""
+    if need_kcal <= 0 or fields_ha <= 0:
+        return 0.0
+    labor_hours = fields_ha * clearing_hours_per_ha
+    return labor_hours * max(marginal_forage_kcal_per_hour, 0.0) / need_kcal
+
+
+@model_rule(
     name="direct_observation_confidence",
     version="1.0",
     rationale=(
@@ -266,7 +305,7 @@ class MoveCosts:
     reachable: Mapping[int, float]  # path cost (km) to each reachable cell
     need_kcal: float
     stores_cost: float  # utility lost by abandoning stores beyond carrying capacity
-    fields_cost: float  # utility lost by abandoning fields
+    fields_cost: float  # utility lost by abandoning fields (see field_replacement_cost)
     farm_kcal: float  # expected crop output of the current fields
 
 
@@ -443,7 +482,19 @@ class MigrationSubsystem:
         carry = n * profile.movement.carry_kcal_per_capita
         abandoned = max(unit.stores_kcal - carry, 0.0)
         stores_cost = behavior.abandoned_stores_weight * abandoned / need if need > 0 else 0.0
-        fields_cost = behavior.abandoned_fields_weight * farm_kcal / need if need > 0 else 0.0
+        if not ctx.mechanisms.field_replacement_cost:
+            fields_cost = behavior.abandoned_fields_weight * farm_kcal / need if need > 0 else 0.0
+        elif unit.fields_ha > 0 and need > 0:
+            clearing = clearing_hours_per_ha(
+                float(state.world.vegetation_density[unit.cell]),
+                ctx.scenario.config.agriculture,
+                ctx.capabilities(unit)["clearing_efficiency"],
+            )
+            fields_cost = behavior.abandoned_stores_weight * field_replacement_cost(
+                unit.fields_ha, clearing, unit.forage_marginal_kcal_per_hour, need
+            )
+        else:
+            fields_cost = 0.0
         costs = MoveCosts(movement.reachable(unit.cell), need, stores_cost, fields_cost, farm_kcal)
         return _Prepared(
             unit,

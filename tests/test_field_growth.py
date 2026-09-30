@@ -1,4 +1,4 @@
-"""P5 field investment: growth toward a target (A) and expected tenure (B)."""
+"""P5 field investment: growth toward a target (A, accepted) and expected tenure (B, off)."""
 
 import itertools
 import math
@@ -178,7 +178,8 @@ def test_field_planning_amortizes_over_tenure_expected_from_the_stored_hazard(
     monkeypatch.setattr(agriculture, "adjusted_fields_ha", spy)
     cases = ((True, 0.5, 1 - 0.5**10), (True, math.nan, 7.0), (False, 0.5, 7.0))
     for enabled, hazard, expected in cases:
-        sim = _farmers(expected_tenure=enabled)
+        # The spy watches the proportional rule, so pin it (A, the default, bypasses it).
+        sim = _farmers(expected_tenure=enabled, field_growth_to_target=False)
         unit = next(iter(sim.state.units.values()))
         unit.move_hazard, unit.residence_years = hazard, 7
         seen.clear()

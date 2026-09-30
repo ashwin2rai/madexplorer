@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 
 from madexplorer.config.loader import Scenario
+from madexplorer.core.simulation import Simulator
 from madexplorer.experiments.ensemble import Row, paired_differences, run_ensemble
 from tests.conftest import ROOT, mvp2_scenario_dict
 
@@ -43,19 +44,40 @@ def _log_ratio(baseline: tuple[Row, ...], variant: tuple[Row, ...], key: str) ->
     return ratio
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Open issue 1 (objective/status.md): in the aggregation-free reference mode farming "
-    "does not yet raise population over the forager-only baseline; the earlier gain came from "
-    "the aggregation bias. Remove this marker when the mechanism question is resolved.",
-)
-def test_agriculture_supports_higher_population_than_foraging_alone() -> None:
-    farming = _ensemble()
-    foraging = _ensemble(("mechanisms.cultivation", False))
-    ratio = _log_ratio(foraging, farming, "final_population")
-    assert ratio.mean() > 0
-    assert (ratio > 0).mean() >= 0.6
-    assert np.nanmean([float(r["final_farm_share"]) for r in farming]) > 0.05
+PRESSURE_SEEDS = (0, 1)
+PRESSURE_YEARS = 400
+PRESSURE_WINDOW = 50
+
+
+@cache
+def _pressure_tail(seed: int, cultivation: bool) -> dict[str, float]:
+    """Last-window means of the intensification-pressure scenario for one seed and arm."""
+    scenario = Scenario.from_yaml(ROOT / "scenarios" / "mvp2_pressure.yaml").with_settings(
+        {"mechanisms.cultivation": cultivation}
+    )
+    sim = Simulator(scenario.with_overrides(seed=seed, n_years=PRESSURE_YEARS))
+    tail = sim.run(light=False).metrics[-PRESSURE_WINDOW:]
+    keys = ("population", "occupied_cells", "farm_share_of_harvest", "mean_energy_deficit")
+    means = {k: float(np.mean([float(r[k]) for r in tail])) for k in keys}
+    means["density"] = float(
+        np.mean([float(r["population"]) / max(float(r["occupied_cells"]), 1.0) for r in tail])
+    )
+    return means
+
+
+@pytest.mark.parametrize("seed", PRESSURE_SEEDS)
+def test_cultivation_raises_carrying_capacity_under_intensification_pressure(seed: int) -> None:
+    """P5 validation (objective/status.md): in a bounded world that foragers saturate early,
+    cultivation emerges and sustains a materially denser, less food-stressed population than
+    the same system without cultivation. Matched seeds; thresholds far below the observed
+    effect (population ~3x, density ~2x, farm share ~0.6 in years 351-400)."""
+    farming = _pressure_tail(seed, cultivation=True)
+    foraging = _pressure_tail(seed, cultivation=False)
+    assert farming["farm_share_of_harvest"] > 0.25
+    assert foraging["farm_share_of_harvest"] == 0.0
+    assert farming["population"] > 1.5 * foraging["population"]
+    assert farming["density"] > 1.3 * foraging["density"]
+    assert farming["mean_energy_deficit"] <= foraging["mean_energy_deficit"]
 
 
 def test_crowding_mortality_reduces_population_growth() -> None:
@@ -79,13 +101,12 @@ def test_technologies_appear_within_broad_stochastic_ranges() -> None:
 AGGREGATION_POPULATION_XFAIL = pytest.mark.xfail(
     strict=True,
     reason=(
-        "Known approximation failure, to be resolved in P6 (objective/status.md, Section 0). "
-        "Aggregation off is the canonical MVP 2 reference. After the P3 belief/migration "
-        "changes, max_units_per_cell=8 changes population dynamics materially (final "
-        "population ~2.6x the reference on every seed). P6 reruns the aggregation sensitivity "
-        "experiment and either establishes a defensible approximation range or documents "
-        "aggregation as performance-only for MVP 2. Strict, so an unexpected pass forces a "
-        "review of this assumption."
+        "Accepted MVP 2 limitation (objective/status.md, P6): computational aggregation is not "
+        "scientifically neutral and is disabled for canonical/reference runs. With "
+        "max_units_per_cell=8, final population is ~2.6x the reference on every seed here "
+        "(after P3), and even rare merges shift trajectories (mvp2_pressure, 2 seeds: +9%). "
+        "Correct aggregation belongs to MVP 3's statistical super-agents. Strict, so an "
+        "unexpected pass forces a review of this assumption."
     ),
 )
 

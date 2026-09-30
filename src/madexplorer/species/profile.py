@@ -175,7 +175,9 @@ class MigrationBehavior(FrozenModel):
     food_ratio_cap: float = Field(gt=0)  # capped_log only: stock (years of need) valued at most
     food_half_saturation_years: float = Field(gt=0)  # saturating only: R with half the value
     abandoned_stores_weight: float = Field(ge=0)  # per year of need left behind when moving
-    abandoned_fields_weight: float = Field(ge=0)  # per year of need of crop output forgone
+    # Per year of need of crop output forgone; used only with mechanisms.field_replacement_cost
+    # off (that rule charges re-clearing labor at abandoned_stores_weight instead).
+    abandoned_fields_weight: float = Field(ge=0)
     # Optional cap on destinations evaluated per year (nearest by path cost, utility-blind);
     # null = every reachable known cell (physical reachability is the bound).
     max_considered_destinations: int | None = Field(ge=2)

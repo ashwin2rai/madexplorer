@@ -129,7 +129,12 @@ migration:
   food_utility: log1p
   food_ratio_cap: 2.0
   food_half_saturation_years: 1.0
+  # Utility per year of need of accumulated resources lost by moving: stores beyond carrying
+  # capacity and, with mechanisms.field_replacement_cost, the labor to re-clear abandoned
+  # fields (valued at the marginal foraging return).
   abandoned_stores_weight: 1.0
+  # Legacy placeholder, used only with field_replacement_cost off: charged the fields' crop
+  # output a second time (it is already in the utility of staying); objective/status.md P5.
   abandoned_fields_weight: 2.0
   # No attention cap: one relocation reaches ~20 cells, which bounds the choice already.
   max_considered_destinations: null
