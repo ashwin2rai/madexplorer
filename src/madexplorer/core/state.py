@@ -83,6 +83,37 @@ class UnitRegistry(dict[str, PopulationUnit]):
         if slot >= 0:
             self._free.append(slot)
 
+    def claim_slot(self) -> int:
+        """A free slot with addressable table and belief rows, for a unit built in place
+        (``population.lifecycle``); the unit is then inserted already bound to it."""
+        assert self.store is not None
+        slot = self._allocate()
+        if self.table is not None:
+            self.table.ensure(slot, 0, 0)
+        self.store.claim(slot)
+        return slot
+
+    def discard(self, unit_id: str) -> PopulationUnit:
+        """Remove a unit and free its rows *without* copying its state back onto the object.
+
+        For units that leave the simulation for good (absorbed, extinct): the returned
+        object keeps only its external fields (id, species, ties, ...); its table fields
+        and beliefs are gone.
+        """
+        unit = super().pop(unit_id)
+        self._slots = None
+        state = unit.__dict__
+        store = state.get("_belief_store")
+        if store is not None:
+            slot: int = state["_slot"]
+            table = state.get("_table")
+            if table is not None:
+                table.reset(slot)
+            store.release(slot)
+            state["_table"], state["_belief_store"], state["_slot"] = None, None, -1
+            self._free.append(slot)
+        return unit
+
     def slots(self) -> IntArray:
         """Storage slots of the registered units, in insertion (processing) order."""
         cached = self._slots

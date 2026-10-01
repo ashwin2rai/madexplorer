@@ -38,6 +38,7 @@ from madexplorer.population.demography import DemographySubsystem
 from madexplorer.population.energetics import EnergeticsSubsystem
 from madexplorer.population.groups import ExtinctionSubsystem, FissionSubsystem, FusionSubsystem
 from madexplorer.population.initialization import found_unit
+from madexplorer.population.lifecycle import create_unit
 from madexplorer.resolution.coarsening import CoarseningSubsystem
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
@@ -166,7 +167,7 @@ class Simulator:
                 rng,
                 self.knowledge,
             )
-            self.state.units[unit.id] = unit
+            create_unit(self.state.units, unit)
             self.events.emit(
                 self.state.year,
                 "unit_founded",

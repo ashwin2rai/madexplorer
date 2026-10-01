@@ -1,0 +1,205 @@
+"""Unit lifecycle on the authoritative rows: create, remove, split, merge (PH3b).
+
+The model rules for combining and dividing unit state are declared in
+:mod:`madexplorer.population.composition` (``FIELD_RULES``, :func:`merge_state`,
+:func:`split_off`); this module adds no semantics. With a unit table (production), the same
+rules are applied directly to unit-table rows and belief-store rows: a daughter's row is
+copied from its parent's and then divided, a merge folds the source row into the target
+row, and a unit that leaves the simulation frees its rows without its state being copied
+back onto the object. Only the irregular external state (familiarity, residence, report
+cells, harvest history, trade ties) is handled on objects, by the same code paths.
+
+Without a table (the object-authoritative reference engine) every function delegates to
+the composition functions, so whole-engine differential tests compare the two paths.
+Floating-point operations are the reference's, in the same order, on the same operands
+(Python floats read from the rows), so results are bit-identical.
+"""
+
+import math
+from collections import deque
+from collections.abc import MutableMapping
+
+import numpy as np
+
+from madexplorer.core.state import UnitRegistry
+from madexplorer.core.types import IntArray
+from madexplorer.population.composition import (
+    _SUMMED,
+    _WEIGHTED_MEAN,
+    MergeMode,
+    _weighted,
+    absorb,
+    rewire_ties,
+    split_off,
+)
+from madexplorer.population.familiarity import FamiliarityRule
+from madexplorer.population.unit import (
+    HARVEST_MEMORY_YEARS,
+    PopulationUnit,
+    belief_slot,
+    bound_unit,
+)
+
+
+def _rows(units: MutableMapping[str, PopulationUnit]) -> UnitRegistry | None:
+    """The registry if unit state lives in its table (row operations apply), else None."""
+    if isinstance(units, UnitRegistry) and units.table is not None:
+        return units
+    return None
+
+
+def create_unit(units: MutableMapping[str, PopulationUnit], unit: PopulationUnit) -> None:
+    """Insert a detached unit (founding, synthetic states); it gets a slot at the end of
+    the processing order."""
+    units[unit.id] = unit
+
+
+def remove_unit(units: MutableMapping[str, PopulationUnit], unit_id: str) -> PopulationUnit:
+    """Remove a unit that leaves the simulation (extinction).
+
+    With a table its rows are freed without copying state back: read what is needed (an
+    event's fields) before removing it.
+    """
+    registry = _rows(units)
+    if registry is not None:
+        return registry.discard(unit_id)
+    return units.pop(unit_id)
+
+
+def split_unit(
+    units: MutableMapping[str, PopulationUnit],
+    parent_id: str,
+    leave_f: IntArray,
+    leave_m: IntArray,
+    daughter_id: str,
+    year: int,
+    familiarity: FamiliarityRule,
+) -> PopulationUnit:
+    """Split the people in ``leave_f``/``leave_m`` off ``parent_id`` as a new unit, inserted
+    at the end of the processing order (:func:`~madexplorer.population.composition.split_off`)."""
+    parent = units[parent_id]
+    registry = _rows(units)
+    if registry is None:
+        daughter = split_off(parent, leave_f, leave_m, daughter_id, year, familiarity)
+        units[daughter.id] = daughter
+        return daughter
+    table, store = registry.table, registry.store
+    assert table is not None and store is not None
+    p = belief_slot(parent)
+    before = int(table.population[p])
+    moved = int(leave_f.sum() + leave_m.sum())
+    if not 0 < moved < before:
+        raise ValueError("a split must leave people on both sides")
+    n = int(table.n_ages[p])
+    remain_f = table.females[p, :n] - leave_f
+    remain_m = table.males[p, :n] - leave_m
+    if (remain_f < 0).any() or (remain_m < 0).any():
+        raise ValueError("departing cohorts exceed the parent's")
+    share = moved / before
+    d = registry.claim_slot()  # may grow the table: take column references afterwards
+    table.copy_row(p, d)
+    store.copy_row(p, d)
+    columns = table.columns
+    columns["founded_year"][d] = year
+    groups = columns["groups"]
+    groups[d] = 1
+    for name in _SUMMED:
+        column = columns[name]
+        value = float(column[p])
+        portion = value * share
+        column[d] = portion
+        column[p] = value - portion
+    if groups[p] > 1:
+        groups[p] -= 1
+    table.set_cohorts(d, leave_f, leave_m)
+    table.set_cohorts(p, remain_f, remain_m)
+    daughter = bound_unit(
+        d,
+        store,
+        table,
+        id=daughter_id,
+        species_id=parent.species_id,
+        parent_id=parent.id,
+        report_cells=parent.report_cells.copy(),
+        recent_residence=dict(parent.recent_residence),
+        familiarity=parent.familiarity.materialized(year, familiarity),
+        harvest_history=deque(parent.harvest_history, maxlen=HARVEST_MEMORY_YEARS),
+        trade_ties={},
+    )
+    units[daughter_id] = daughter
+    return daughter
+
+
+def merge_units(
+    units: MutableMapping[str, PopulationUnit],
+    source_id: str,
+    target_id: str,
+    mode: MergeMode,
+    year: int,
+    familiarity: FamiliarityRule,
+) -> None:
+    """Merge ``source_id`` into ``target_id``, rewire the trade network and remove the source
+    (:func:`~madexplorer.population.composition.absorb`)."""
+    registry = _rows(units)
+    if registry is None:
+        absorb(units, source_id, target_id, mode, year, familiarity)
+        return
+    table, store = registry.table, registry.store
+    assert table is not None and store is not None
+    target, source = units[target_id], units[source_id]
+    if target.species_id != source.species_id or target.cell != source.cell:
+        raise ValueError("only co-located units of one species can merge")
+    rewire_ties(units, source_id, target_id)
+    t, s = belief_slot(target), belief_slot(source)
+    population, columns = table.population, table.columns
+    n_t, n_s = int(population[t]), int(population[s])
+    reserve = columns["reserve_kcal_per_capita"]
+    total_reserve = float(reserve[t]) * n_t + float(reserve[s]) * n_s
+    for name in _WEIGHTED_MEAN:
+        column = columns[name]
+        column[t] = _weighted(float(column[t]), n_t, float(column[s]), n_s)
+    for name in _SUMMED:
+        column = columns[name]
+        column[t] = float(column[t]) + float(column[s])
+    hazards = columns["move_hazard"]
+    h_t, h_s = float(hazards[t]), float(hazards[s])
+    if math.isnan(h_t) or math.isnan(h_s):
+        known = [h for h in (h_t, h_s) if not math.isnan(h)]
+        hazards[t] = known[0] if known else math.nan
+    else:
+        hazards[t] = _weighted(h_t, n_t, h_s, n_s)
+    knowledge = table.knowledge
+    if knowledge.shape[1] and n_t + n_s > 0:
+        knowledge[t] = (knowledge[t] * n_t + knowledge[s] * n_s) / (n_t + n_s)
+    table.set_technologies(t, table.technologies[t] | table.technologies[s])
+    cultivated = columns["ever_cultivated"]
+    cultivated[t] = bool(cultivated[t]) or bool(cultivated[s])
+    if mode is MergeMode.AGGREGATION:
+        columns["groups"][t] += columns["groups"][s]
+    history = [
+        _weighted(a, n_t, b, n_s)
+        for a, b in zip(
+            reversed(target.harvest_history), reversed(source.harvest_history), strict=False
+        )
+    ]
+    target.harvest_history.clear()
+    target.harvest_history.extend(reversed(history))
+    n = int(table.n_ages[t])
+    table.set_cohorts(
+        t,
+        table.females[t, :n] + table.females[s, :n],
+        table.males[t, :n] + table.males[s, :n],
+    )
+    merged = int(population[t])
+    reserve[t] = total_reserve / merged if merged else 0.0
+    store.merge_row(s, t)
+    target.report_cells = np.union1d(target.report_cells, source.report_cells)
+    decay_year = year
+    for cell, seen in source.recent_residence.items():
+        target.recent_residence[cell] = max(seen, target.recent_residence.get(cell, seen))
+        decay_year = seen
+    # Frozen MVP 2 behaviour: in merge_state the residence loop variable shadows ``year``,
+    # so familiarity is decayed to the source's last-iterated residence year (the merge
+    # year only when it has none). Reproduced exactly; see objective/status.md (PH3b).
+    target.familiarity.merge(source.familiarity, n_t, n_s, decay_year, familiarity)
+    registry.discard(source_id)

@@ -15,8 +15,9 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import IntArray
-from madexplorer.population.composition import MergeMode, absorb, split_off
+from madexplorer.population.composition import MergeMode
 from madexplorer.population.familiarity import familiarity_rule
+from madexplorer.population.lifecycle import merge_units, remove_unit, split_unit
 from madexplorer.species.profile import SocialBehavior
 
 
@@ -124,8 +125,9 @@ class Fission:
         if moved == 0 or moved == source_population:
             return
         rule = familiarity_rule(ctx.species(parent.species_id), ctx.mechanisms)
-        daughter = split_off(parent, leave_f, leave_m, ctx.ids.next("u"), state.year, rule)
-        state.units[daughter.id] = daughter
+        daughter = split_unit(
+            state.units, parent.id, leave_f, leave_m, ctx.ids.next("u"), state.year, rule
+        )
         ctx.ledger.fissions += 1
         ctx.events.emit(
             state.year,
@@ -156,7 +158,7 @@ class Fusion:
         source, target = state.units[self.source_id], state.units[self.target_id]
         merged = source.population
         rule = familiarity_rule(ctx.species(target.species_id), ctx.mechanisms)
-        absorb(state.units, self.source_id, self.target_id, MergeMode.FUSION, state.year, rule)
+        merge_units(state.units, self.source_id, self.target_id, MergeMode.FUSION, state.year, rule)
         ctx.ledger.fusions += 1
         ctx.events.emit(
             state.year,
@@ -181,14 +183,16 @@ class Extinction:
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Delete the unit and record the event."""
         ctx.invalidate_spatial()
-        unit = state.units.pop(self.unit_id)
+        unit = state.units[self.unit_id]
+        cell, founded_year = unit.cell, unit.founded_year
+        remove_unit(state.units, self.unit_id)
         ctx.ledger.extinctions += 1
         ctx.events.emit(
             state.year,
             "unit_extinct",
-            unit_id=unit.id,
-            cell=list(state.world.coords(unit.cell)),
-            founded_year=unit.founded_year,
+            unit_id=self.unit_id,
+            cell=list(state.world.coords(cell)),
+            founded_year=founded_year,
         )
 
 

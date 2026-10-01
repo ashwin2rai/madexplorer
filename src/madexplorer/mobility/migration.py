@@ -29,7 +29,7 @@ from madexplorer.population.energetics import (
     capability_column,
 )
 from madexplorer.population.groups import sigmoid
-from madexplorer.population.unit import Observation, PopulationUnit
+from madexplorer.population.unit import Observation, PopulationUnit, belief_slot
 from madexplorer.species.profile import MigrationBehavior
 
 if TYPE_CHECKING:
@@ -395,14 +395,27 @@ class Relocation:
         """Relocate the unit: pay travel energy, carry what stores it can, abandon fields."""
         ctx.invalidate_spatial()
         unit = state.units[self.unit_id]
-        unit.cell = self.destination
-        unit.energy_debt_kcal += self.travel_kcal
-        abandoned = max(unit.stores_kcal - self.carry_kcal, 0.0)
-        unit.stores_kcal -= abandoned
+        table = state.table
+        if table is not None:  # the same arithmetic on the unit's row (no descriptors)
+            slot, columns = belief_slot(unit), table.columns
+            columns["cell"][slot] = self.destination
+            debt, stores = columns["energy_debt_kcal"], columns["stores_kcal"]
+            debt[slot] = float(debt[slot]) + self.travel_kcal
+            held = float(stores[slot])
+            abandoned = max(held - self.carry_kcal, 0.0)
+            stores[slot] = held - abandoned
+            columns["fields_ha"][slot] = 0.0
+            columns["residence_years"][slot] = 0
+            columns["move_hazard"][slot] = math.nan  # the hazard was for leaving the old cell
+        else:
+            unit.cell = self.destination
+            unit.energy_debt_kcal += self.travel_kcal
+            abandoned = max(unit.stores_kcal - self.carry_kcal, 0.0)
+            unit.stores_kcal -= abandoned
+            unit.fields_ha = 0.0
+            unit.residence_years = 0
+            unit.move_hazard = math.nan
         ctx.ledger.abandoned_stores_kcal += abandoned
-        unit.fields_ha = 0.0
-        unit.residence_years = 0
-        unit.move_hazard = math.nan  # the hazard was for leaving the old cell
         ctx.ledger.migrations += 1
         if ctx.scenario.config.output.log_migrations:
             ctx.events.emit(

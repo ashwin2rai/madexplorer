@@ -169,6 +169,20 @@ class DenseBeliefStore:
         self.population[target] = self.population[source]
         self.hops[target] = self.hops[source]
 
+    def merge_row(self, source: int, target: int) -> None:
+        """``target`` takes ``source``'s entry wherever it is better (``BeliefMap.merged_with``).
+
+        Better means strictly fresher, or equally fresh with fewer relays.
+        """
+        year, hops = self.year, self.hops
+        better = (year[source] > year[target]) | (
+            (year[source] == year[target]) & (hops[source] < hops[target])
+        )
+        if not better.any():
+            return
+        for array in (year, self.food_kcal, self.population, hops):
+            array[target, better] = array[source, better]
+
     def detached(self, slot: int) -> BeliefMap:
         """An independent :class:`BeliefMap` copy of ``slot``."""
         return BeliefRowView(self, slot).copy()

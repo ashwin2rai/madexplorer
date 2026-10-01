@@ -157,6 +157,17 @@ class UnitTable:
         self.technology_mask[slot] = 0
         self.species_code[slot] = 0
 
+    def copy_row(self, source: int, target: int) -> None:
+        """``target`` becomes a copy of ``source`` (every column; both slots addressable)."""
+        for array in self.columns.values():
+            array[target] = array[source]
+        for name in ("females", "males", "n_ages", "population", "knowledge"):
+            array = getattr(self, name)
+            array[target] = array[source]
+        self.technologies[target] = self.technologies[source]
+        self.technology_mask[target] = self.technology_mask[source]
+        self.species_code[target] = self.species_code[source]
+
     def load(self, slot: int, values: dict[str, Any], species_code: int) -> None:
         """Write a unit's table fields (from its detached attributes) into ``slot``."""
         females, males = values["females"], values["males"]

@@ -35,6 +35,7 @@ from madexplorer.core.simulation import Simulator
 from madexplorer.core.static import StaticContext
 from madexplorer.population.beliefs import BYTES_PER_CELL
 from madexplorer.population.initialization import found_unit
+from madexplorer.population.lifecycle import create_unit
 
 # Subsystems that build belief maps; the synthetic warm-up runs only these.
 WARMUP_SUBSYSTEMS = frozenset({"perception", "knowledge_sharing"})
@@ -98,7 +99,7 @@ def synthetic_simulator(
             placement,
             sim.knowledge,
         )
-        sim.state.units[unit.id] = unit
+        create_unit(sim.state.units, unit)
     return sim
 
 

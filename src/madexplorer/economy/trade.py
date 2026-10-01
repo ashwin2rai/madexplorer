@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.population.energetics import annual_need_columns
-from madexplorer.population.unit import PopulationUnit
+from madexplorer.population.unit import PopulationUnit, belief_slot
 
 
 @model_rule(
@@ -52,18 +52,33 @@ class TradeRound:
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Move food between groups and update ties."""
-        for unit in state.units.values():
-            unit.trade_ties = {
-                p: w * self.tie_persistence
-                for p, w in unit.trade_ties.items()
-                if p in state.units and w * self.tie_persistence > 1e-3
-            }
+        units, persistence = state.units, self.tie_persistence
+        for unit in units.values():
+            ties = unit.trade_ties
+            if ties:  # an empty map stays empty
+                unit.trade_ties = {
+                    p: w * persistence
+                    for p, w in ties.items()
+                    if p in units and w * persistence > 1e-3
+                }
+        table = state.table
+        harvest = table.columns["harvest_kcal"] if table is not None else None
+        stores = table.columns["stores_kcal"] if table is not None else None
         for t in self.transfers:
-            donor, recipient = state.units[t.donor_id], state.units[t.recipient_id]
-            from_harvest = min(t.sent_kcal, donor.harvest_kcal)
-            donor.harvest_kcal -= from_harvest
-            donor.stores_kcal = max(donor.stores_kcal - (t.sent_kcal - from_harvest), 0.0)
-            recipient.harvest_kcal += t.received_kcal
+            donor, recipient = units[t.donor_id], units[t.recipient_id]
+            if harvest is not None and stores is not None:
+                # The same Python-float arithmetic on the table rows (no descriptors).
+                d, r = belief_slot(donor), belief_slot(recipient)
+                held = float(harvest[d])
+                from_harvest = min(t.sent_kcal, held)
+                harvest[d] = held - from_harvest
+                stores[d] = max(float(stores[d]) - (t.sent_kcal - from_harvest), 0.0)
+                harvest[r] = float(harvest[r]) + t.received_kcal
+            else:
+                from_harvest = min(t.sent_kcal, donor.harvest_kcal)
+                donor.harvest_kcal -= from_harvest
+                donor.stores_kcal = max(donor.stores_kcal - (t.sent_kcal - from_harvest), 0.0)
+                recipient.harvest_kcal += t.received_kcal
             strength = t.received_kcal / t.recipient_need_kcal if t.recipient_need_kcal > 0 else 0.0
             donor.trade_ties[recipient.id] = donor.trade_ties.get(recipient.id, 0.0) + strength
             recipient.trade_ties[donor.id] = recipient.trade_ties.get(donor.id, 0.0) + strength

@@ -411,7 +411,10 @@ class _TableField:
         state = instance.__dict__
         table = state.get("_table")
         if table is None:
-            return state[self.name]
+            try:
+                return state[self.name]
+            except KeyError:
+                raise _removed(instance, self.name) from None
         return self.cast(table.columns[self.name][state["_slot"]])
 
     def __set__(self, instance: object, value: Any) -> None:
@@ -482,6 +485,39 @@ def _install_table_descriptors() -> None:
 
 
 _install_table_descriptors()
+
+
+# Fields that always live on the unit object (everything else is in the table or the belief
+# store while the unit is registered). Checked against the dataclass by the test suite.
+EXTERNAL_FIELDS: tuple[str, ...] = (
+    "id",
+    "species_id",
+    "parent_id",
+    "report_cells",
+    "recent_residence",
+    "familiarity",
+    "harvest_history",
+    "trade_ties",
+)
+
+
+def _removed(unit: object, name: str) -> AttributeError:
+    unit_id = unit.__dict__.get("id", "?")
+    return AttributeError(f"{name}: unit {unit_id} was removed and its row state discarded")
+
+
+def bound_unit(
+    slot: int, store: "DenseBeliefStore", table: "UnitTable", **external: Any
+) -> PopulationUnit:
+    """A unit object over rows already filled in ``slot`` (``population.lifecycle``).
+
+    ``external`` gives exactly the :data:`EXTERNAL_FIELDS`; no detached copy is built.
+    """
+    unit = PopulationUnit.__new__(PopulationUnit)
+    state = unit.__dict__
+    state.update(external)
+    state["_table"], state["_belief_store"], state["_slot"] = table, store, slot
+    return unit
 
 
 def belief_slot(unit: PopulationUnit) -> int:
