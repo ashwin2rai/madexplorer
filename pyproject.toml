@@ -8,6 +8,7 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "numba>=0.68.0",
     "numpy>=2.5.3",
     "pydantic>=2.13.5",
     "pyyaml>=6.0.3",
@@ -55,3 +56,7 @@ python_version = "3.13"
 strict = true
 plugins = ["pydantic.mypy"]
 files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["numba", "numba.*"]
+ignore_missing_imports = true

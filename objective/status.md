@@ -11,7 +11,7 @@ Use this file to answer: **What exists now? What is frozen? What is still limite
 
 ## 1. Current phase
 
-> **Resume point:** PH3b is complete (Section 9, "PH3b results"). Next: choose PH4 from the PH3b profile (numeric compilation, belief storage, or pair processing) — a decision, not yet made.
+> **Resume point:** PH4a (selective compilation) is complete (Section 9, "PH4a"). Next: PH4b, a sparse/hybrid belief backend (required before the MVP 3 scaling report); design inputs are in the PH4a belief occupancy/access profile. Awaiting the go-ahead.
 
 **MVP 1:** complete.  
 **MVP 2:** complete and scientifically frozen.  
@@ -657,6 +657,145 @@ then leads at 19%); **10k on 40×40: 65 / 10 / 19 / 6, with knowledge sharing 52
 diffusion 13% of the tick (pairwise contacts, 74 per unit)**.
 
 PH3b is complete. Stop before PH4: the PH4 choice is a decision (Section 9.2 rule).
+
+### PH4a: selective compilation of interpreter-bound numeric kernels — COMPLETE (2026-10-01)
+
+Numba (0.68, `numba>=0.68.0`; numpy unchanged at 2.5.3) behind one policy in `core/jit.py`
+(`kernel`): nopython, `fastmath=False`, `error_model="python"`, `cache=True`, no
+`parallel`/`prange`, no Numba RNG. `MADEXPLORER_JIT=0` runs the same kernel source as plain
+Python. All Level A: `make check` green (526 tests), oracle IDENTICAL, golden fixtures
+unchanged. B1 (Section 12.7) is untouched (merges are not compiled).
+
+Exactness facts established (and tested), needed by any future kernel:
+- Numba `math.exp`/`math.expm1` equal CPython's (both libm) on 500k inputs; no FMA
+  contraction with `fastmath=False`.
+- `ndarray.sum()` (float64) is numpy's pairwise sum *from zero*:
+  `jit.numpy_sum` (tested for lengths 0-300, 383, 1,000, 1,031, 4,097, 9,000, 100,003).
+- The builtin `sum()` of floats is compensated (Neumaier) since Python 3.12:
+  `jit.python_sum` (tested against the builtin with signed zeros and extremes). A
+  sequential `+=` is *not* equivalent — the first foraging transcription differed by 1 ulp
+  in a cell's target and was caught by the scalar differential test.
+- Python's `min`/`max` argument-order semantics (first extreme wins) are written out;
+  float `** int` is C `pow` (`math.pow`), not repeated multiplication.
+- numpy's `np.exp`/`np.log` equal libm on this AVX2 machine, but numpy dispatches its own
+  SIMD versions on AVX-512 hardware, so a kernel replacing numpy transcendental *array*
+  calls would be exact only per platform: not Level A. Kernels only transcribe scalar
+  `math` calls.
+- Numba's on-disk cache is unreliable for a self-recursive function linked into another
+  cached kernel: a warm cache segfaulted (single process and ensemble workers). The
+  pairwise sum uses an explicit stack instead.
+
+Compiled (one coarse call per subsystem per tick; Python references kept as
+`_evaluate_reference`, differential-tested):
+- **Foraging** (`economy/foraging_kernel.forage_groups`): every (cell, species) group's
+  shared-pool solve (single-group and multi-group paths, Newton then bisection, shared
+  per-cell depletion across species). Tests: scalar rules on random groups (zero stocks,
+  zero labor/efficiency, unmet/met/boundary targets, equal returns, groups > 128),
+  whole-evaluate equality with farming on/off, forced shared cells, and two species in one
+  cell. evaluate 8.3-13.4 → 2.2-2.4 ms at ~1k units; the remainder is the shared input
+  preparation (familiarity lookup, need, labor).
+- **Field planning** (`economy/agriculture_kernel.plan_fields`): per-unit decisions (both
+  `field_growth_to_target` and `adjusted_fields_ha`, both tenure rules) and per-cell arable
+  sharing. Tests: whole-evaluate equality over random hazards (NaN/0/1), residence, fields,
+  thresholds, crowded cells and all mechanism combinations; `math.pow` against `**`.
+  3.9-4.7 → 1.6-1.7 ms.
+
+Measured and not compiled:
+- **Migration**: no tight interpreter loop — cost is spread over numpy candidate work (need
+  9%, belief gather 9%, utilities ~10%, shrinkage/food utility ~8%; the per-unit hazard
+  loop ~7% of 6.4 ms). A fused kernel would replace numpy `exp`/`log`/`power` array calls
+  (platform-dependent exactness, above) for ~1-2%. Deferred.
+- **Demography**: binomial draws are ~40% (must stay on the named numpy streams); the rest
+  is matrix `exp`/logistic terms (same exactness caveat). Deferred.
+- **Trade**: the deficit/transfer loop runs on string-id ordering, offer dictionaries and
+  reachability dictionaries, not numeric inputs. Deferred (container work).
+- Knowledge sharing, diffusion, fission/fusion, innovation, ecology: not targeted (pair
+  processing, RNG-interleaved or container-bound; see PH3b hotspots).
+
+Benchmark harness: synthetic cases now compile/load kernels before timing
+(`benchmark.warm_kernels`: the compiled evaluates on a throwaway context, no draws, no state
+change; `jit_warm_seconds` in reports). Timed runs (`bench runs`) include the load.
+
+**PH4a results** (CPU; same 2-core machine; seeded output identical). Canonical figures are
+a same-session alternating A/B against PH3b (worktree at `abfa41a`), two runs each; the
+recorded PH3b report said 17.9 s, the same-session reruns 17.5 s.
+
+| Benchmark | PH0 | PH1 | PH2 | PH3a | PH3b | PH4a |
+|---|---:|---:|---:|---:|---:|---:|
+| Seed 0, 600 y: CPU s | 41.9 | 35.8 | 29.7 | 24.9 | 17.9 (17.5) | **15.4-15.5** |
+| Late window: ms/tick (wall) | 328 | 273 | 198 | 183 | 132 (121-122) | **104-107** |
+| 1k synthetic (40×40): CPU ms/tick | 264 | 210 | 157 | 130 | 102 | **90** |
+| ... calls/unit/tick | 509 | 435 | 300 | 296 | 167 | **126** |
+| 10k synthetic (40×40): CPU ms/tick | 5,092 | 3,589 | 2,327 | 2,022 | 1,545 | 1,609 (noise; pair-bound) |
+| ... calls/unit/tick | 1,064 | 799 | 232 | 231 | 114 | **105** |
+| Fixed density 500 / 1k / 2k / 4k: µs/unit/tick | 234 / 221 / 246 / 263 | 230 / 190 / 216 / 227 | 156 / 146 / 164 / 169 | 150 / 146 / 148 / 157 | 96 / 97 / 99 / 106 | **84 / 91 / 96 / 95** |
+| Varied density 250 / 1k / 4k: µs/unit/tick | 228 / 251 / 291 | 185 / 202 / 246 | 149 / 159 / 169 | 133 / 128 / 148 | 92 / 106 / 109 | **86 / 90 / 114** |
+| 1k on 100×100: CPU ms/tick (paired A/B) | 253 | 207 | 153 | 155 | 103 (105-110) | **91-95** |
+| 4k on 40×40, paired A/B: CPU ms/tick | | | | | 503-513 | 486-502 (−3%) |
+
+- PH0 → PH4a canonical: **41.9 → 15.5 s (2.7×)**; PH3b → PH4a −12% (same session).
+- Python calls 126/unit/tick at 1k; transient Python memory per tick unchanged (10.8 MB at
+  1k).
+- **Peak RSS: +~100 MB fixed per process** (Numba/LLVM): canonical 122 → 226 MB, 4k fixed
+  density 913 → 1,024 MB. Per-unit state unchanged.
+- **JIT cost**: cold cache (first ever run, or source changed) ~4.0 s of compilation in the
+  first tick; warm cache ~0.3 s load (+ Numba import ~0.1 s). Spawned ensemble workers
+  reuse the on-disk cache (`__pycache__`, gitignored).
+- **Experiment throughput** (4 canonical seeds × 600 y, `--jobs 2`, wall / total CPU incl.
+  workers): PH3b 38.1 s / 63.2 s; PH4a cold cache 38.4 s / 65.3 s (both workers compile);
+  **PH4a warm cache 34.1 s / 56.0 s (−10% wall)**. Short runs pay the fixed load; long and
+  repeated runs gain.
+
+Hotspots, canonical seed 0 over 600 years (py-spy native samples; columns: compiled /
+numpy kernel / numpy dispatch / interpreter / allocation):
+
+| Component | Share | Mix | Class |
+|---|---:|---|---|
+| Knowledge sharing (select + receive) | 21% | 0 / 60 / 11 / 20 / 9 | pair/contact |
+| Demography | 11% | 0 / 32 / 40 / 23 / 5 | NumPy numeric (+ RNG) |
+| Foraging evaluate | 10% | 38 / 5 / 4 / 43 / 10 | compiled numeric + container lookup (familiarity, inputs) |
+| Diffusion | 10% | 0 / 24 / 20 / 50 / 6 | pair/contact + container lookup (ties, adoption loop) |
+| Migration evaluate | 9% | 0 / 31 / 11 / 47 / 10 | NumPy numeric (candidate arrays) |
+| Fission/fusion apply | 6% | 0 / 13 / 30 / 45 / 11 | structural event |
+| Fission/fusion evaluate | 5% | 0 / 17 / 12 / 69 / 2 | Python interpreter (scalar hazards, interleaved draws) |
+| Innovation | 5% | 0 / 17 / 33 / 46 / 5 | container lookup |
+| Ecology/world subsystems | 4% | 0 / 21 / 26 / 48 / 5 | NumPy numeric |
+| Field planning | 3% | 2 / 29 / 26 / 26 / 16 | NumPy numeric (inputs) + compiled |
+| Trade | 3% | 0 / 11 / 6 / 76 / 7 | container lookup |
+
+Whole tick: compiled 4%, numpy kernels 30%, numpy dispatch 18%, interpreter 40%, allocation
+8%. The interpreter share is now spread over container state (familiarity, ties, ids,
+event-producing loops) and RNG-interleaved scalar rules; no remaining tight numeric loop
+dominates. Compiling further is low-value until the containers become arrays.
+
+**Belief occupancy and access** (PH4b design input; instrumentation only, canonical seed 0
+over 600 years and warmed synthetic states):
+
+| | canonical y100 | y300 | y600 | 1k on 40×40 | 1k on 100×100 | 4k on 113×113 |
+|---|---:|---:|---:|---:|---:|---:|
+| Units / cells | 10 / 1,600 | 96 / 1,600 | 1,212 / 1,600 | 1,077 / 1,600 | 1,106 / 10,000 | 4,433 / 12,769 |
+| Current (within memory) cells per unit, p10 / p50 / p90 / max | 34 / 42 / 52 / 55 | 34 / 46 / 54 / 61 | 38 / 53 / 66 / 105 | 29 / 48 / 63 / 102 | 23 / 36 / 46 / 62 | 29 / 45 / 56 / 86 |
+| ... as % of cells (mean) | 2.7% | 2.8% | 3.3% | 3.0% | 0.35% | 0.34% |
+| Ever-observed cells per unit, p50 / max | 71 / 90 | 114 / 196 | 171 / 390 | 49 / 102 | 36 / 62 | 45 / 89 |
+
+- Current knowledge is ~35-55 cells per unit and does **not** grow with the world; ever-observed
+  entries accumulate (11% of a 40×40 world by year 600) because expired entries are never
+  removed and fission copies them. A sparse store that prunes expired entries holds
+  ~50-70 entries per unit: ~25× less than dense on 40×40, ~200× on 113×113.
+- Access is point access only (no row scans in ordinary ticks), per unit per tick:
+  reads — report receipt ≤ 28-38 (own year and hops), report selection 11-32, migration
+  20-23 (year of every reachable cell) plus the gather of the known ones; writes —
+  perception + accepted reports 24-30. Row operations are rare (per 600 years: 3,970 row
+  copies at fission, 2,746 merges, 6,730 resets).
+- Migration asks about a reachable cell with no current belief 0.1% (canonical) to 3% (large
+  sparse worlds) of the time; almost all lookups hit known cells.
+- Implication: a hash/open-addressing or sorted-key per-unit sparse row with expiry
+  pruning must serve ~120-140 random point lookups/updates per unit per tick cheaply and
+  in batches; the batched gather/scatter interface already isolates every access site
+  (perception, report selection, report receipt, migration).
+
+PH4a is complete. Stop: the next step is a decision (PH4b sparse beliefs is the planned
+scaling task; pair processing only after re-assessing MVP 3 regimes).
 
 Differential tests (`tests/test_performance_layer.py`): the spatial index against
 `units_by_cell()`, invalidation, compiled data against the configuration, energy balance,

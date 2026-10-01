@@ -114,6 +114,24 @@ def warm_up_beliefs(sim: Simulator, years: int) -> None:
                 proposal.apply(sim.state, ctx)
 
 
+COMPILED_SUBSYSTEMS = ("foraging", "field_planning")  # evaluates that call JIT kernels
+
+
+def warm_kernels(sim: Simulator) -> float:
+    """Compile (or load from the cache) the JIT kernels before timing; returns seconds.
+
+    Runs the evaluates that call compiled kernels on a throwaway context and discards
+    their proposals: they draw no random numbers and change no state, so the simulation
+    is unaffected. Timed runs (``timed_case``) do not warm: their cost includes it.
+    """
+    started = time.perf_counter()
+    ctx = sim.context()
+    for subsystem in sim.pipeline:
+        if subsystem.name in COMPILED_SUBSYSTEMS:
+            subsystem.evaluate(sim.state, ctx)
+    return time.perf_counter() - started
+
+
 def _known_cells(sim: Simulator) -> float:
     units = list(sim.state.units.values())
     if not units:
@@ -218,6 +236,7 @@ def synthetic_case(
     warm_up_beliefs(sim, warmup_years)
     warmup_seconds = time.perf_counter() - started
     known_after_warmup = _known_cells(sim)
+    jit_seconds = warm_kernels(sim)
     sim.timings = {}
     unit_counts: list[int] = []
     tick_seconds: list[float] = []
@@ -243,6 +262,7 @@ def synthetic_case(
         "ticks": ticks,
         "warmup_years": warmup_years,
         "warmup_seconds": round(warmup_seconds, 3),
+        "jit_warm_seconds": round(jit_seconds, 3),
         "mean_units": round(mean_units, 1),
         "final_units": len(sim.state.units),
         "final_population": sim.state.total_population(),

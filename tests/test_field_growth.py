@@ -183,7 +183,9 @@ def test_field_planning_amortizes_over_tenure_expected_from_the_stored_hazard(
         unit = next(iter(sim.state.units.values()))
         unit.move_hazard, unit.residence_years = hazard, 7
         seen.clear()
-        FieldPlanningSubsystem().evaluate(sim.state, step_context(sim))
+        # The spy needs the Python rule path; the compiled evaluate is tested equal to it
+        # (tests/test_jit_kernels.py).
+        FieldPlanningSubsystem()._evaluate_reference(sim.state, step_context(sim))
         assert seen == [pytest.approx(expected)]
 
 

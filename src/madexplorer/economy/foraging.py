@@ -23,6 +23,7 @@ from madexplorer.world.grid import WorldGrid
 
 if TYPE_CHECKING:
     from madexplorer.core.columns import UnitColumns
+    from madexplorer.core.spatial import SpatialIndex
 
 
 @model_rule(
@@ -317,23 +318,36 @@ class CellHarvest:
             ctx.ledger.harvest_kcal += unit.harvest_kcal
 
 
+_AccessMatrices = tuple[FloatArray, FloatArray, FloatArray, FloatArray]
+
+
+@dataclass(frozen=True, eq=False)
+class _ForageInputs:
+    """Per-unit foraging inputs of one step, computed once in batched form."""
+
+    index: "SpatialIndex"
+    cols: "UnitColumns"
+    species: IntArray
+    labor: FloatArray
+    efficiency: FloatArray
+    target_share: FloatArray
+    rules: dict[str, FamiliarityRule]
+
+
 class ForagingSubsystem:
     """Every group forages in its current cell with the labor left after field work."""
 
     name = "foraging"
 
-    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[CellHarvests]:
-        """Compute harvests; groups of different species in one cell forage in id order.
+    def __init__(self) -> None:
+        self._access: tuple[object, _AccessMatrices] | None = None
 
-        Per-unit inputs (labor, efficiency, target share) are computed for all units in one
-        batched pass; each cell's shared pool is then solved as before, in the order of
-        the spatial index (cells in first-appearance order, units in unit order).
-        """
+    def _inputs(self, state: SimulationState, ctx: StepContext) -> _ForageInputs | None:
         index = ctx.spatial(state)
         cols = ctx.columns(state)
         units = cols.units
         if not units:
-            return []
+            return None
         compiled = ctx.compiled
         assert compiled is not None
         year = state.year
@@ -369,7 +383,127 @@ class ForagingSubsystem:
         need = annual_need_columns(cols, state, ctx)
         target_share = np.maximum(
             need * (1.0 + p("foraging.surplus_target")[species]) - farm_harvest, 0.0
-        ).tolist()
+        )
+        return _ForageInputs(index, cols, species, labor, efficiency, target_share, rules)
+
+    def _access_matrices(self, ctx: StepContext) -> "_AccessMatrices":
+        """``(plant_access, game_access, plant_return, game_return)`` as (species, cells)
+        matrices in compiled species order (static; cached per run)."""
+        cached = self._access
+        if cached is None or cached[0] is not ctx.static:
+            assert ctx.compiled is not None
+            tuples = [ctx.forage[sid].as_tuple() for sid in ctx.compiled.species_ids]
+            plant_access, game_access, plant_return, game_return = (
+                np.ascontiguousarray(np.stack([t[k] for t in tuples]), dtype=np.float64)
+                for k in range(4)
+            )
+            matrices = (plant_access, game_access, plant_return, game_return)
+            cached = (ctx.static, matrices)
+            self._access = cached
+        return cached[1]
+
+    def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[CellHarvests]:
+        """Compute harvests; groups of different species in one cell forage in id order.
+
+        Per-unit inputs are batched (:meth:`_inputs`); every (cell, species) group's pool is
+        then solved by one compiled call (:func:`~madexplorer.economy.foraging_kernel.
+        forage_groups`) in the order of the spatial index, bit-identical to
+        :meth:`_evaluate_reference`.
+        """
+        from madexplorer.economy.foraging_kernel import forage_groups
+
+        inputs = self._inputs(state, ctx)
+        if inputs is None:
+            return []
+        compiled = ctx.compiled
+        assert compiled is not None
+        index, cols = inputs.index, inputs.cols
+        order, starts = index.order, index.starts
+        if len(compiled.species_ids) == 1:
+            rows = order
+            bounds = starts
+            group_cell = index.cells
+            group_code = np.zeros(group_cell.size, dtype=np.int64)
+        else:  # within a cell, species groups by code, members in index order
+            cell_of = np.repeat(np.arange(index.cells.size), np.diff(starts))
+            codes = inputs.species[order]
+            perm = np.lexsort((np.arange(order.size), codes, cell_of))
+            rows, cell_of, codes = order[perm], cell_of[perm], codes[perm]
+            first = np.r_[True, (cell_of[1:] != cell_of[:-1]) | (codes[1:] != codes[:-1])]
+            heads = np.flatnonzero(first)
+            bounds = np.r_[heads, rows.size]
+            group_cell = index.cells[cell_of[heads]]
+            group_code = codes[heads]
+        rows = np.ascontiguousarray(rows, dtype=np.int64)
+        bounds = np.ascontiguousarray(bounds, dtype=np.int64)
+        group_cell = np.ascontiguousarray(group_cell, dtype=np.int64)
+        group_code = np.ascontiguousarray(group_code, dtype=np.int64)
+        n_groups = group_cell.size
+        plant_left = state.ecology.plant_stock_kcal.astype(np.float64, copy=True)
+        game_left = state.ecology.game_stock_kcal.astype(np.float64, copy=True)
+        harvests = np.empty(rows.size)
+        hours = np.empty(rows.size)
+        marginals = np.empty(rows.size)
+        plant_removed = np.empty(n_groups)
+        game_removed = np.empty(n_groups)
+        largest = int(np.diff(bounds).max()) if n_groups else 0
+        forage_groups(
+            rows,
+            bounds,
+            group_cell,
+            group_code,
+            np.ascontiguousarray(inputs.labor, dtype=np.float64),
+            np.ascontiguousarray(inputs.efficiency, dtype=np.float64),
+            np.ascontiguousarray(inputs.target_share, dtype=np.float64),
+            plant_left,
+            game_left,
+            *self._access_matrices(ctx),
+            harvests,
+            hours,
+            marginals,
+            plant_removed,
+            game_removed,
+            np.empty(largest),
+            np.empty(largest),
+        )
+        rates = [
+            ctx.species(sid).cognition.familiarity_learning_rate for sid in compiled.species_ids
+        ]
+        rules = [inputs.rules[sid] for sid in compiled.species_ids]
+        code_list = group_code.tolist()
+        return [
+            CellHarvests(
+                cols,
+                tuple(group_cell.tolist()),
+                tuple(bounds.tolist()),
+                rows,
+                harvests,
+                hours,
+                marginals,
+                tuple(plant_removed.tolist()),
+                tuple(game_removed.tolist()),
+                tuple(rates[c] for c in code_list),
+                tuple(rules[c] for c in code_list),
+            )
+        ]
+
+    def _evaluate_reference(
+        self, state: SimulationState, ctx: StepContext
+    ) -> Sequence[CellHarvests]:
+        """The PH3b Python path (reference for the compiled kernel; differential tests).
+
+        Per-unit inputs (labor, efficiency, target share) are computed for all units in one
+        batched pass; each cell's shared pool is then solved as before, in the order of
+        the spatial index (cells in first-appearance order, units in unit order).
+        """
+        inputs = self._inputs(state, ctx)
+        if inputs is None:
+            return []
+        compiled = ctx.compiled
+        assert compiled is not None
+        index, cols, species = inputs.index, inputs.cols, inputs.species
+        labor, efficiency, rules = inputs.labor, inputs.efficiency, inputs.rules
+        target_share = inputs.target_share.tolist()
         access = {sid: forage.as_tuple() for sid, forage in ctx.forage.items()}
         plant_left = state.ecology.plant_stock_kcal.copy()
         game_left = state.ecology.game_stock_kcal.copy()

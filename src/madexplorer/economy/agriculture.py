@@ -528,7 +528,86 @@ class FieldPlanningSubsystem:
     name = "field_planning"
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[FieldPlans]:
-        """Compare farming and foraging returns; share limited arable land within cells."""
+        """Compare farming and foraging returns; share limited arable land within cells.
+
+        The per-unit decisions and the per-cell arable sharing run in one compiled call
+        (:func:`~madexplorer.economy.agriculture_kernel.plan_fields`), bit-identical to
+        :meth:`_evaluate_reference`.
+        """
+        from madexplorer.economy.agriculture_kernel import plan_fields
+
+        config = ctx.scenario.config.agriculture
+        potential = ctx.crop_potential(state)
+        mechanisms = ctx.mechanisms
+        cols = ctx.columns(state)
+        n_units = len(cols)
+        if n_units == 0:
+            return []
+        compiled = ctx.compiled
+        assert compiled is not None
+        profiles = [ctx.species(sid) for sid in compiled.species_ids]
+
+        def per_species(values: list[float]) -> FloatArray:
+            return np.array(values, dtype=np.float64)
+
+        index = ctx.spatial(state)
+        f64, i64 = np.float64, np.int64
+        out = [np.empty(n_units) for _ in range(5)]
+        plan_rows = np.empty(n_units, dtype=i64)
+        largest = int(np.diff(index.starts).max()) if index.cells.size else 0
+        count = plan_fields(
+            np.ascontiguousarray(crop_yield_columns(cols, potential, ctx), dtype=f64),
+            np.ascontiguousarray(labor_hours_columns(cols, ctx), dtype=f64),
+            np.ascontiguousarray(annual_need_columns(cols, state, ctx), dtype=f64),
+            np.ascontiguousarray(cols.population(), dtype=i64),
+            np.ascontiguousarray(cols.get("fields_ha"), dtype=f64),
+            np.ascontiguousarray(cols.get("forage_marginal_kcal_per_hour"), dtype=f64),
+            np.ascontiguousarray(cols.get("residence_years"), dtype=i64),
+            np.ascontiguousarray(cols.get("move_hazard"), dtype=f64),
+            np.ascontiguousarray(cols.get("cell"), dtype=i64),
+            np.ascontiguousarray(cols.species(), dtype=i64),
+            np.ascontiguousarray(capability_column(cols, ctx, "clearing_efficiency"), dtype=f64),
+            np.ascontiguousarray(state.world.vegetation_density, dtype=f64),
+            np.ascontiguousarray(ctx.arable_ha, dtype=f64),
+            np.ascontiguousarray(index.order, dtype=i64),
+            np.ascontiguousarray(index.starts, dtype=i64),
+            np.ascontiguousarray(index.cells, dtype=i64),
+            np.array([p.cognition.planning_horizon_years for p in profiles], dtype=i64),
+            per_species([p.subsistence.max_farm_labor_share for p in profiles]),
+            per_species([p.foraging.surplus_target for p in profiles]),
+            per_species([p.subsistence.field_adjustment_rate for p in profiles]),
+            per_species([p.subsistence.return_comparison_margin for p in profiles]),
+            per_species([p.subsistence.initial_plot_ha for p in profiles]),
+            float(config.cultivation_hours_per_ha),
+            float(config.clearing_hours_per_ha),
+            float(config.clearing_vegetation_multiplier),
+            bool(mechanisms.expected_tenure),
+            bool(mechanisms.field_growth_to_target),
+            plan_rows,
+            out[0],
+            out[1],
+            out[2],
+            out[3],
+            out[4],
+            np.empty(n_units),
+            np.empty(n_units),
+            np.empty(n_units),
+            np.empty(largest),
+        )
+        return [
+            FieldPlans(
+                cols,
+                plan_rows[:count].copy(),
+                out[0][:count].copy(),
+                out[1][:count].copy(),
+                out[2][:count].copy(),
+                out[3][:count].copy(),
+                out[4][:count].copy(),
+            )
+        ]
+
+    def _evaluate_reference(self, state: SimulationState, ctx: StepContext) -> Sequence[FieldPlans]:
+        """The PH3b Python path (reference for the compiled kernel; differential tests)."""
         config = ctx.scenario.config.agriculture
         potential = ctx.crop_potential(state)
         arable = ctx.arable_ha
