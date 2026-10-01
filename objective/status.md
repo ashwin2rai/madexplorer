@@ -11,7 +11,7 @@ Use this file to answer: **What exists now? What is frozen? What is still limite
 
 ## 1. Current phase
 
-> **Resume point:** PH4b (sparse belief storage) is complete (Section 9, "PH4b"). Next: a realistic scaling campaign (1k-50k units at constant local density with `--beliefs sparse`) to find the next binding constraint. Awaiting the go-ahead.
+> **Resume point:** PH5 (scale and MVP 3 readiness) is complete (Section 9, "PH5"): recommendation "ready for semantic cleanup → MVP 3". Next, pending decision: make sparse the default belief backend, fix B1 under an explicit model-version change with a new reference, then MVP 3.
 
 **MVP 1:** complete.  
 **MVP 2:** complete and scientifically frozen.  
@@ -912,6 +912,162 @@ and decide on making sparse/auto the production default after the scaling campai
 
 PH4b is complete. Stop: next is the realistic scaling campaign (1k-50k units at constant
 local density, sparse beliefs), not a predetermined optimization.
+
+### PH5: scale and MVP 3 readiness — measurement campaign (2026-10-01)
+
+One committed implementation for every point (`f894f6a`, no engine changes during the
+campaign), `--beliefs sparse`, warm JIT cache (`jit-warmup` first; kernels loaded in
+0.3-0.5 s), synthetic valid states at constant local density (world side
+`40·sqrt(U/500)`; units drawn on land cells), 20 years of belief warm-up, then untimed and
+timed ticks. Scripts: `scripts/perf/ph5_scale.py` (one size per process: timing, contacts,
+occupancy, deep-size memory breakdown, ordinary-tick allocation, call counts) and
+`scripts/perf/ph5_steady.py` (equal-age timing); reports `benchmarks/perf/ph5_scale_*u.json`.
+
+**Scaling table** (CPU on one core of this 2-core machine; "short" = 2 untimed ticks,
+"equal age" = 10 untimed ticks, the fair comparison — see below):
+
+| Units (mean) | World | Units / land cell | Units per occupied cell (mean; p99, max) | CPU ms/tick short | µs/unit/tick short | µs/unit/tick equal age | Peak RSS | Accounted bytes/unit | Beliefs/unit (entries; bytes) | Sharing pairs / diffusion contacts per unit |
+|---|---|---:|---|---:|---:|---:|---:|---:|---|---|
+| 2,141 | 80×80 | 0.47 | 1.07 (2, 4) | 173 | 80.8 | 95.1 | 247 MB | 19.8 k | 45.9; 2.7 k | 3.9 / 6.3 |
+| 5,322 | 126×126 | 0.47 | 1.07 (2, 6) | 441 | 82.8 | 95.1 | 361 MB | 19.6 k | 46.5; 2.5 k | 3.9 / 6.0 |
+| 10,608 | 179×179 | 0.46 | 1.06 (2, 6) | 873 | 82.3 | 103.5 | 583 MB | 20.1 k | 45.0; 2.8 k | 3.7 / 5.7 |
+| 21,006 | 253×253 | 0.45 | 1.06 (2, 6) | 1,964 | 93.5 | 99.1-104.4 | 934 MB | 19.0 k | 44.0; 2.1 k | 3.7 / 5.4 |
+| 52,558 | 400×400 | 0.45 | 1.07 (2, 10) | 5,674 | 108.0 | 112.1 | 2,534 MB | 20.4 k | 45.8; 2.9 k | 3.8 / 5.6 |
+
+- **Fixed-density cost is nearly flat**: 95 → 112 µs/unit/tick from 2k to 50k units at equal
+  state age (+18% over 25×). T(U)/U has no super-linear term; contacts per unit are constant
+  (sharing 3.7-3.9 pairs, diffusion 5.4-6.3 contacts), and so is the cost per contact
+  (sharing 3.5-4.9 µs per candidate pair, diffusion 0.8-1.0 µs per contact): pair work grows
+  only because there are more (scientifically required) contacts, linearly.
+- The residual drift is (1) lazy reachability searches for newly visited origin cells (a
+  Python shortest-path search per origin, cached: 3% of the short-run tick at 2k, 13% at 10k,
+  19% at 50k, falling to ~6k new origins per 3 ticks at 50k once warmer; a one-time cost of a
+  few seconds per run in long simulations, but 1.8 kB of cache per origin) and (2) locality
+  on larger arrays. Nothing is quadratic.
+- The synthetic state is not stationary: groups grow and accumulate knowledge, trade ties
+  and familiarity (10 more ticks at 20k: units +13%, trade edges and familiarity entries
+  ×2). Costs per unit rise with state age, not with scale; compare equal ages.
+- Python calls per unit per tick: 131.5 (2k), 136.9 (10k).
+- Ordinary-tick transient allocation (tracemalloc peak, storage-growth ticks excluded):
+  22.6 MB (2k), 111 MB (10k), 560 MB (50k): a constant ~10.6 kB per unit per tick. By
+  subsystem at 5k (peak within the subsystem): demography 9.4 kB/unit (cohort-matrix
+  temporaries), migration 5.6, knowledge sharing 3.9, perception 2.3, others ≤ 1.6.
+
+**Runtime profile** (py-spy native; share of tick; columns compiled / numpy kernel / numpy
+dispatch / interpreter / allocation for the whole tick):
+- 2k: knowledge sharing 17%, demography 11%, migration 11%, fission/fusion 12%, innovation
+  (bursty in that window) 23%, diffusion 5%, trade 6%; whole tick 1 / 30 / 17 / 45 / 7.
+- 10k: knowledge sharing 22%, migration 21%, demography 11%, trade 10%, innovation 6%,
+  fission/fusion 10%, diffusion 5%, foraging 7%; whole tick 1 / 27 / 15 / 50 / 6.
+- 50k: migration 26% (75% interpreter; 19% of the tick is first-visit reachability search
+  and 15% reachability lookups), knowledge sharing 20%, demography 14%, trade 15% (96%
+  interpreter), diffusion 5%, fission/fusion 10%; whole tick 0 / 27 / 14 / 54 / 5.
+- Equal-age timers (10k, ms/tick): innovation 256 (21%), knowledge sharing 234 (19%),
+  migration 191 (16%), fission 111, demography 104, trade 82, fusion 77, perception 75,
+  diffusion 73, foraging 57, field planning 16.
+- Classification: pair/contact processing (sharing + diffusion) ~25%; Python/container
+  traversal ~45-55% spread over migration's per-unit reachability, trade's dictionaries,
+  innovation's per-candidate path and fission/fusion hazards; NumPy numeric (demography,
+  sharing arrays) ~30-40%; structural events ~10%; compiled numeric ~1% (foraging and
+  field planning are now cheap); recording negligible. No single component dominates.
+
+**Memory breakdown** (deep size of everything reachable from the simulator, 50k units;
+bytes per unit):
+
+| Component | MB | B/unit | Scales with |
+|---|---:|---:|---|
+| Static world structures (NeighborGraph lists, world arrays, life tables, forage) | 302 | 6,034 | cells |
+| Movement reachability caches (dict + arrays per visited origin) | 221 | 4,402 | visited cells |
+| Sparse beliefs | 149 | 2,979 | units |
+| Unit table (of which cohorts 94 MB, int64 [U, 2, 91] + 25% row slack) | 111 | 2,216 | units |
+| Unit objects (object + `__dict__`) | 79 | 1,569 | units |
+| Harvest history deques | 45 | 902 | units |
+| Perceived-cell cache | 32 | 645 | units' cells |
+| Familiarity maps | 31 | 614 | units |
+| Report cells | 24 | 479 | units |
+| Residence dicts | 14 | 288 | units |
+| Trade ties | 13 | 258 | units |
+| Neighborhood table, ecology, events, compiled, registry, rest | 35 | ~690 | |
+| **Accounted** | **1,058** | **20.4 k** | |
+
+- Python-side per-unit object state: **4.0 kB per unit** at every size (objects, dicts,
+  deques, ties, familiarity, report cells); numeric per-unit state 4.2-5.0 kB (beliefs +
+  unit table). The largest single memory items are Python containers keyed by *cells*:
+  `NeighborGraph` (lists of lists, ~650 B per cell, per movement model) and the
+  reachability caches.
+- RSS (2.3 GB now, 2.5 GB peak at 50k) = ~170 MB fixed (interpreter, numpy, Numba/LLVM) +
+  1.06 GB accounted state + allocator retention of the ~0.56 GB per-tick temporaries + ~0.5
+  GB unattributed (heap fragmentation, arena slack, objects outside the simulator graph).
+
+**Experiment projections** (measured equal-age CPU per tick, one core per run; real runs
+start small and grow, so these are upper bounds for runs that sustain the size):
+
+| Sustained units | 600 y | 1,000 y | 5,000 y | RSS per worker |
+|---|---:|---:|---:|---:|
+| 10k | 0.2 h | 0.3 h | 1.7 h | ~0.6 GB |
+| 20k | 0.4 h | 0.7 h | 3.3 h | ~0.9 GB |
+| 50k | 1.1 h | 1.8 h | 9.2 h | ~2.5 GB |
+
+- 4 seeds × 600 y at 50k: 2.2 h on this 2-core / 7 GB machine (2 workers, ~5 GB); 8 seeds
+  4.4 h. On a 16-core / 64 GB machine (16 workers fit in memory): 8 seeds in ~1.1 h, 16
+  seeds × 1,000 y in ~1.8 h. 10k-20k-unit ensembles of 1,000 years are routine.
+
+**MVP 3 memory projection** (planned architecture: group-shared state stays `[U]`; only
+distributional state is `[U, S]` and demography `[U, S, sex, age]`):
+- Shared, strata-independent: 18.4 kB/unit measured (beliefs 3.0 k, table scalars 0.3 k,
+  Python objects 4.0 k, static/world-attributed 11.5 k at this density).
+- Distributional `[U, S]`: ~12 float64 variables per stratum ≈ 0.12 kB × S per unit.
+- Demography `[U, S, 2, 91]`: 1.87 kB × S per unit with int64 cohorts (0.94 kB × S with
+  int32, ample for group-sized counts).
+
+| Units | S = 8: persistent (int64 / int32 cohorts) | S = 16 | Naive per-tick demography temporaries (S = 8 / 16) |
+|---|---|---|---|
+| 10k | 0.32 / 0.25 GB | 0.47 / 0.33 GB | 0.70 / 1.41 GB |
+| 20k | 0.65 / 0.51 GB | 0.94 / 0.67 GB | 1.41 / 2.81 GB |
+| 50k | 1.62 / 1.27 GB | 2.36 / 1.66 GB | 3.52 / 7.03 GB |
+
+Persistent state is fine even at 50k × 16 strata. The risk is transient: today's demography
+allocates ~9.4 kB of temporaries per unit per tick; multiplied by S as numpy temporaries it
+would reach 3.5-7 GB per tick at 50k. Stratified demography must be a fused kernel (or
+chunked) with pre-drawn RNG, not S× the current array pipeline.
+
+**MVP 3 CPU risk** (from the equal-age profile; current shares at 10k):
+- Would multiply with strata, O(U·S): demography (8-14% today, 40% of it binomial draws:
+  RNG volume grows with S and is inherent to stratified cohorts), energetics/nutrition (1%),
+  new health and wealth updates, fertility/mortality modifiers; fission/fusion splitting
+  distributional vectors (structural, ~10%, rare events: mild); selective migration only if
+  decided per stratum later. Naively, demography alone at S = 16 would cost more than the
+  whole present tick: it must be compiled and fused.
+- Should stay O(U): knowledge sharing, diffusion, innovation, perception, migration
+  candidate generation and reachability, trade between groups, beliefs, familiarity,
+  technologies, field location, foraging pools (labor may become a per-stratum sum, a
+  cheap reduction). These are ~75% of today's tick.
+
+**Python-object memory**: 4.0 kB per unit is held in Python containers (unit objects and
+their dicts, deques, familiarity maps, ties), about the same as the numeric unit state.
+At 50k it is ~200 MB: not the binding constraint, but lazy unit views and packed
+history/familiarity/ties are a clean future reduction. The cell-keyed Python containers
+(movement graph lists, reachability dicts, perceived-cell cache: ~550 MB at 400×400) are
+the larger and simpler target if worlds grow further.
+
+**Sparse default.** PH5 found no pathology at any size (bounded entries per unit, flat
+bytes per unit, no slowdown). Recommendation: make **`sparse` the default** (exact,
+never measurably slower, 13-380× smaller), keeping `dense` for the raw-byte oracle, the
+expiry-semantics tests and debugging; the backend is recorded in every manifest. Not
+changed during the campaign.
+
+**Recommendation: ready for semantic cleanup → MVP 3** (decision-tree case A). CPU per
+unit is flat within +18% from 2k to 50k units at fixed density, 50k units run at ~6.6 s per
+year in 2.5 GB, and 10k-20k-unit, 1,000-year ensembles are routine. No component
+dominates (pair processing ~25%, interpreter work spread across several subsystems), so
+another general optimization phase would have diminishing returns. Carry into MVP 3
+design, not as a separate phase: (1) stratified demography as a fused compiled kernel with
+pre-drawn draws and no S-fold temporaries; (2) int32 cohort counts; (3) optionally, a
+packed reachability store (arrays instead of per-origin dicts) and array-backed
+`NeighborGraph` if worlds grow beyond ~400×400 or memory per worker matters.
+
+PH5 complete. Next (pending decision): semantic cleanup (B1) with a new reference, then
+MVP 3.
 
 Differential tests (`tests/test_performance_layer.py`): the spatial index against
 `units_by_cell()`, invalidation, compiled data against the configuration, energy balance,

@@ -1,0 +1,115 @@
+{
+ "units_requested": 20000,
+ "width": 253,
+ "belief_backend": "sparse",
+ "rss_after_import_mb": 49.2,
+ "build_s": 3.6,
+ "belief_warmup_s": 8.8,
+ "jit_load_s": 0.082,
+ "jit_cache": "warm (madexplorer jit-warmup run before the campaign)",
+ "rss_before_timed_mb": 591.5,
+ "units": 21006.0,
+ "cells": 64009,
+ "land_cells": 48007,
+ "timed_ticks": 3,
+ "cpu_ms_per_tick": 1963.5,
+ "cpu_ms_per_tick_each": [
+  2032.9,
+  1884.0,
+  1973.7
+ ],
+ "wall_ms_per_tick": 2020.1,
+ "us_per_unit_tick_cpu": 93.5,
+ "subsystem_ms_per_tick": {
+  "migration": 446.85,
+  "knowledge_sharing": 392.58,
+  "demography": 277.23,
+  "trade": 270.34,
+  "perception": 121.6,
+  "fission": 109.41,
+  "foraging": 105.93,
+  "diffusion": 102.77,
+  "fusion": 81.24,
+  "field_planning": 31.28,
+  "energetics": 18.46,
+  "farming": 18.33,
+  "learning": 14.09,
+  "invariants": 12.55,
+  "innovation": 8.55,
+  "climate": 5.04,
+  "ecology": 3.61,
+  "extinction": 0.06
+ },
+ "units_per_land_cell": 0.452,
+ "units_per_occupied_cell": {
+  "mean": 1.06,
+  "p50_p90_p99_max": [
+   1,
+   1,
+   2,
+   6
+  ],
+  "unit_weighted_mean": 1.13
+ },
+ "contacts": {
+  "sharing_candidate_pairs": 80080,
+  "diffusion_contacts": 117918,
+  "trade_edges": 52112,
+  "per_unit_sharing": 3.69,
+  "per_unit_diffusion": 5.44,
+  "us_per_sharing_pair": 4.902,
+  "us_per_diffusion_contact": 0.872
+ },
+ "memory_mb": {
+  "beliefs (sparse store)": 44.28,
+  "unit table (scalars, cohorts, knowledge, technologies)": 36.4,
+  "unit table: of which cohorts": 30.79,
+  "unit objects (object + __dict__)": 31.45,
+  "unit field: familiarity": 12.25,
+  "unit field: recent_residence": 5.73,
+  "unit field: report_cells": 8.04,
+  "unit field: harvest_history": 18.06,
+  "unit field: trade_ties": 5.18,
+  "unit field: id": 0.43,
+  "unit field: parent_id": 0.01,
+  "unit field: species_id": 0.0,
+  "unit registry (dict, slot cache)": 0.92,
+  "static: neighborhood tables": 4.4,
+  "static: perceived-cell cache": 12.84,
+  "static: movement reachability caches": 83.05,
+  "static: world, life tables, forage, rest": 121.48,
+  "ecology + climate": 3.42,
+  "compiled scenario + capability cache": 0.01,
+  "event log": 3.19,
+  "rest of simulator": 2.04
+ },
+ "memory_accounted_mb": 393.2,
+ "rss_now_mb": 927.8,
+ "peak_rss_mb": 934.4,
+ "bytes_per_unit_accounted": 19010,
+ "python_side_bytes_per_unit": 3968,
+ "numeric_bytes_per_unit": 3901,
+ "beliefs": {
+  "stored_entries_per_unit": 44.0,
+  "pool_entries_per_unit": 124.0,
+  "bytes_per_unit": 2141
+ },
+ "familiarity_entries_per_unit": 2.1,
+ "transient_mb_per_tick": {
+  "ordinary_mean": 222.6,
+  "ticks": [
+   {
+    "mb": 283.6,
+    "storage_growth_tick": true
+   },
+   {
+    "mb": 221.2,
+    "storage_growth_tick": false
+   },
+   {
+    "mb": 224.1,
+    "storage_growth_tick": false
+   }
+  ]
+ }
+}
