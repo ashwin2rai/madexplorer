@@ -13,7 +13,7 @@ from hypothesis import strategies as st
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
 from madexplorer.experiments.benchmark import synthetic_simulator
-from madexplorer.population.unit import PopulationUnit
+from madexplorer.population.unit import PopulationUnit, belief_slot
 from tests.conftest import ROOT
 
 SCALARS = (
@@ -75,13 +75,44 @@ def unit_state(unit: PopulationUnit) -> dict[str, object]:
     return state
 
 
+def current_beliefs(sim: Simulator) -> dict[str, list[tuple[int, int, float, int, int]]]:
+    """Each unit's current entries ``(cell, year, food, population, hops)`` by cell: the
+    logical belief state (what any model path can observe), for any store backend."""
+    store, year = sim.state.belief_store, sim.state.year
+    logical = {}
+    for uid, unit in sim.state.units.items():
+        memory = sim.scenario.species[unit.species_id].cognition.memory_years
+        cells, years, food, population, hops = store.entries(belief_slot(unit))
+        current = years > year - memory
+        logical[uid] = list(
+            zip(
+                cells[current].tolist(),
+                years[current].tolist(),
+                food[current].tolist(),
+                population[current].tolist(),
+                hops[current].tolist(),
+                strict=True,
+            )
+        )
+    return logical
+
+
 def assert_same_simulation(a: Simulator, b: Simulator) -> None:
-    """Complete-state comparison of two simulators (order included)."""
+    """Complete-state comparison of two simulators (order included).
+
+    Beliefs are compared byte for byte on dense stores (expired entries included) and
+    logically (current entries) when a store may drop expired entries (sparse, PH4b).
+    """
     assert list(a.state.units) == list(b.state.units)  # identity and processing order
+    raw = a.state.belief_store.kind == b.state.belief_store.kind == "dense"
     for uid in a.state.units:
         sa, sb = unit_state(a.state.units[uid]), unit_state(b.state.units[uid])
         for key, value in sa.items():
+            if key == "beliefs" and not raw:
+                continue
             assert _same(value, sb[key]), (uid, key, value, sb[key])
+    if not raw:
+        assert current_beliefs(a) == current_beliefs(b)
     for name in ("plant_stock_kcal", "game_stock_kcal", "soil_nutrients"):
         assert np.array_equal(getattr(a.state.ecology, name), getattr(b.state.ecology, name))
     events_a = [(e.year, e.kind, e.data) for e in a.events]

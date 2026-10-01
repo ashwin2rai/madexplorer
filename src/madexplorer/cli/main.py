@@ -11,6 +11,7 @@ madexplorer rules
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from madexplorer.experiments.ensemble import (
     timed_ensemble,
 )
 from madexplorer.persistence.output import read_manifest, read_metrics
+from madexplorer.population.beliefs import BACKEND_ENV, BACKENDS
 from madexplorer.world.generation import generate_world
 
 logger = logging.getLogger("madexplorer")
@@ -104,6 +106,15 @@ def _parse_settings(items: list[str] | None) -> dict[str, object]:
     return settings
 
 
+def cmd_jit_warmup(args: argparse.Namespace) -> int:
+    """Compile or load every JIT kernel once (fills the cache before experiments)."""
+    from madexplorer.experiments.benchmark import prewarm_kernels
+
+    seconds = prewarm_kernels(Scenario.from_yaml(args.scenario))
+    print(f"JIT kernels ready in {seconds:.2f} s")
+    return 0
+
+
 def cmd_ensemble(args: argparse.Namespace) -> int:
     """Run many seeds in parallel and write per-run rows and distribution summaries."""
     base = Scenario.from_yaml(args.scenario)
@@ -135,6 +146,7 @@ def cmd_ensemble(args: argparse.Namespace) -> int:
         save_runs=args.save_runs,
         progress=None if args.quiet else progress,
         light=not args.full_recorder,
+        prewarm=not args.no_prewarm,
     )
     summary = aggregate(rows)
     for key in args.show:
@@ -253,7 +265,8 @@ def cmd_bench(args: argparse.Namespace) -> int:
                 f"ms/tick={case['ms_per_tick']:>8} cpu={case['cpu_ms_per_tick']:>8} "
                 f"ms/unit/tick={case['ms_per_unit_tick']:.4f} "
                 f"rss={case['peak_rss_mb']}MB calls/unit/tick="
-                f"{case['python_calls_per_unit_tick']} beliefs={case['storage']['belief_mb']}MB "
+                f"{case['python_calls_per_unit_tick']} beliefs={case['storage']['belief_backend']}:"
+                f"{case['storage']['belief_mb']}MB "
                 f"transient={case['transient_python_mb_per_tick']}MB "
                 f"contacts={case['storage']['social_contacts']}"
                 f" | {top}"
@@ -282,6 +295,16 @@ def cmd_bench(args: argparse.Namespace) -> int:
     return 0
 
 
+def _beliefs_option(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--beliefs",
+        choices=BACKENDS,
+        default=None,
+        help="belief storage backend (storage only; results are identical); "
+        "default $MADEXPLORER_BELIEFS or dense",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Argument parser for all subcommands."""
     parser = argparse.ArgumentParser(
@@ -294,6 +317,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_validate)
 
     p = sub.add_parser("run", help="run a scenario")
+    _beliefs_option(p)
     p.add_argument("scenario")
     p.add_argument("--seed", type=int, help="run seed (overrides the scenario)")
     p.add_argument("--seeds", help="several seeds: '1:10' (inclusive) or '1,4,7'")
@@ -306,6 +330,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("ensemble", help="run many seeds in parallel and summarize")
+    _beliefs_option(p)
     p.add_argument("scenario")
     p.add_argument("--seeds", required=True, help="'0:31' (inclusive) or '1,4,7'")
     p.add_argument("--jobs", type=int, default=1, help="worker processes")
@@ -332,7 +357,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="measures to print",
     )
     p.add_argument("--quiet", action="store_true", help="suppress progress logging")
+    p.add_argument(
+        "--no-prewarm",
+        action="store_true",
+        help="do not compile/load the JIT kernels once before starting workers",
+    )
     p.set_defaults(func=cmd_ensemble)
+
+    p = sub.add_parser(
+        "jit-warmup", help="compile (or load) the JIT kernels into the on-disk cache"
+    )
+    _beliefs_option(p)
+    p.add_argument("scenario")
+    p.set_defaults(func=cmd_jit_warmup)
 
     p = sub.add_parser("compare", help="paired comparison of two ensembles")
     p.add_argument("baseline")
@@ -345,6 +382,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_inspect)
 
     p = sub.add_parser("bench", help="performance benchmarks (synthetic units or timed runs)")
+    _beliefs_option(p)
     p.add_argument("mode", choices=["synthetic", "runs"])
     p.add_argument("scenario")
     p.add_argument("--units", default="100,500,1000,2000", help="synthetic unit counts")
@@ -367,6 +405,8 @@ def main(argv: list[str] | None = None) -> int:
     """CLI entry point."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     args = build_parser().parse_args(argv)
+    if getattr(args, "beliefs", None):  # spawned workers inherit the environment
+        os.environ[BACKEND_ENV] = args.beliefs
     code: int = args.func(args)
     return code
 

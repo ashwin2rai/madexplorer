@@ -20,7 +20,7 @@ from madexplorer.population.familiarity import FamiliarityMap
 
 if TYPE_CHECKING:
     from madexplorer.core.state import SimulationState, StepContext
-    from madexplorer.population.beliefs import DenseBeliefStore
+    from madexplorer.population.beliefs import BeliefStore
     from madexplorer.population.table import UnitTable
 
 HARVEST_MEMORY_YEARS = 10
@@ -78,8 +78,13 @@ class BeliefPatch:
     def apply(self, state: "SimulationState", ctx: "StepContext") -> None:
         """Write the observations into the unit's belief arrays (only these cells)."""
         unit = state.units[self.unit_id]
-        unit.beliefs = unit.beliefs.sized(state.world.n_cells)
-        unit.beliefs.write(self.cells, self.year, self.food_kcal, self.population, self.hops)
+        store = unit.__dict__.get("_belief_store")
+        if store is not None:  # registered: write through the store (any backend)
+            slots = np.full(self.cells.size, unit.__dict__["_slot"], dtype=np.int64)
+            store.scatter(slots, self.cells, self.year, self.food_kcal, self.population, self.hops)
+        else:
+            unit.beliefs = unit.beliefs.sized(state.world.n_cells)
+            unit.beliefs.write(self.cells, self.year, self.food_kcal, self.population, self.hops)
         if self.food_log_prior is not None:
             unit.food_log_prior = self.food_log_prior
         if self.food_log_signal_var is not None:
@@ -507,7 +512,7 @@ def _removed(unit: object, name: str) -> AttributeError:
 
 
 def bound_unit(
-    slot: int, store: "DenseBeliefStore", table: "UnitTable", **external: Any
+    slot: int, store: "BeliefStore", table: "UnitTable", **external: Any
 ) -> PopulationUnit:
     """A unit object over rows already filled in ``slot`` (``population.lifecycle``).
 
@@ -534,7 +539,7 @@ def is_registered(unit: PopulationUnit) -> bool:
 def attach_unit(
     unit: PopulationUnit,
     slot: int,
-    store: "DenseBeliefStore",
+    store: "BeliefStore",
     table: "UnitTable | None",
     species_code: int,
 ) -> None:
@@ -553,7 +558,7 @@ def attach_unit(
         for name in ("_females", "_males", "_population", "_weighted"):
             state.pop(name, None)
         state["_table"] = table
-    store.claim(slot)
+    store.claim(slot, species_code)
     store.assign(slot, state.pop("_beliefs", BeliefMap.empty(0)))
     state["_belief_store"], state["_slot"] = store, slot
 

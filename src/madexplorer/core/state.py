@@ -16,7 +16,7 @@ from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.ecology.resources import EcologyState
 from madexplorer.knowledge.system import Capability, KnowledgeModel, default_capabilities
 from madexplorer.mobility.movement import MovementModel
-from madexplorer.population.beliefs import DenseBeliefStore
+from madexplorer.population.beliefs import BeliefStore, make_belief_store
 from madexplorer.population.table import UnitTable
 from madexplorer.population.unit import PopulationUnit, attach_unit, belief_slot, detach_unit
 from madexplorer.species.life_history import LifeTables
@@ -46,7 +46,7 @@ class UnitRegistry(dict[str, PopulationUnit]):
 
     def __init__(
         self,
-        store: DenseBeliefStore | None = None,
+        store: BeliefStore | None = None,
         units: Mapping[str, PopulationUnit] | None = None,
         table: UnitTable | None = None,
         species_index: Mapping[str, int] | None = None,
@@ -83,14 +83,14 @@ class UnitRegistry(dict[str, PopulationUnit]):
         if slot >= 0:
             self._free.append(slot)
 
-    def claim_slot(self) -> int:
+    def claim_slot(self, species_code: int = 0) -> int:
         """A free slot with addressable table and belief rows, for a unit built in place
         (``population.lifecycle``); the unit is then inserted already bound to it."""
         assert self.store is not None
         slot = self._allocate()
         if self.table is not None:
             self.table.ensure(slot, 0, 0)
-        self.store.claim(slot)
+        self.store.claim(slot, species_code)
         return slot
 
     def discard(self, unit_id: str) -> PopulationUnit:
@@ -182,7 +182,8 @@ class SimulationState:
     climate: ClimateYear
     ecology: EcologyState
     units: dict[str, PopulationUnit]
-    beliefs: DenseBeliefStore | None = None
+    beliefs: BeliefStore | None = None
+    belief_backend: str = "dense"  # dense | sparse | auto (storage only; no semantics)
     # Production: hot unit state lives in a UnitTable. False keeps it on the unit objects
     # (the object-authoritative reference engine, used by differential tests).
     table_mode: bool = True
@@ -192,7 +193,7 @@ class SimulationState:
 
     def __post_init__(self) -> None:
         if self.beliefs is None:
-            self.beliefs = DenseBeliefStore.empty(self.world.n_cells)
+            self.beliefs = make_belief_store(self.belief_backend, self.world.n_cells)
         if self.table is None and self.table_mode:
             self.table = UnitTable(self.technology_table)
         self.units = self.units  # wrap in a registry bound to the stores
@@ -206,7 +207,7 @@ class SimulationState:
         object.__setattr__(self, name, value)
 
     @property
-    def belief_store(self) -> DenseBeliefStore:
+    def belief_store(self) -> BeliefStore:
         """The dense belief store (always present after construction)."""
         store = self.beliefs
         assert store is not None

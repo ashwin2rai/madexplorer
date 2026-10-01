@@ -33,9 +33,10 @@ from madexplorer.config.schema import InitialPopulation
 from madexplorer.core.provenance import numeric_platform, run_manifest
 from madexplorer.core.simulation import Simulator
 from madexplorer.core.static import StaticContext
-from madexplorer.population.beliefs import BYTES_PER_CELL
+from madexplorer.population.beliefs import BYTES_PER_CELL, SparseBeliefStore
 from madexplorer.population.initialization import found_unit
 from madexplorer.population.lifecycle import create_unit
+from madexplorer.population.unit import belief_slot
 
 # Subsystems that build belief maps; the synthetic warm-up runs only these.
 WARMUP_SUBSYSTEMS = frozenset({"perception", "knowledge_sharing"})
@@ -51,6 +52,7 @@ def synthetic_simulator(
     group_size: int = 30,
     farming: bool = False,
     unit_table: bool = True,
+    belief_backend: str | None = None,
 ) -> Simulator:
     """A simulator whose initial units are replaced by ``n_units`` groups on random land cells.
 
@@ -68,7 +70,7 @@ def synthetic_simulator(
             {**p.model_dump(), "cell": list(land_cell)} for p in scenario.config.initial_populations
         ]
         scenario = scenario.with_settings({"initial_populations": founders})
-    sim = Simulator(scenario, static=static, unit_table=unit_table)
+    sim = Simulator(scenario, static=static, unit_table=unit_table, belief_backend=belief_backend)
     sim.state.units.clear()
     placement = np.random.default_rng([scenario.config.simulation.seed, n_units])
     land = np.flatnonzero(~sim.world.is_water)
@@ -132,16 +134,44 @@ def warm_kernels(sim: Simulator) -> float:
     return time.perf_counter() - started
 
 
+def prewarm_kernels(scenario: Scenario) -> float:
+    """Compile (or load from the on-disk cache) every JIT kernel once; returns seconds.
+
+    Runs two years of a copy of ``scenario`` (the kernels then compile for exactly the
+    argument types production uses) and exercises the rare sparse-store row operations.
+    Called before ensemble workers start, so they load cached code instead of each
+    compiling the same kernels; results are unaffected (a separate simulator).
+    """
+    started = time.perf_counter()
+    sim = Simulator(scenario.with_overrides(n_years=2), record_events=False)
+    for _ in range(2):
+        sim.step()
+    store = sim.state.belief_store
+    if isinstance(store, SparseBeliefStore) and sim.state.units:
+        spare = store.capacity + 2  # unused slots: no simulation state is touched
+        store.claim(spare)
+        store.claim(spare + 1)
+        source = belief_slot(next(iter(sim.state.units.values())))
+        store.copy_row(source, spare)
+        store.merge_row(spare, spare + 1)
+        store.compact()
+    return time.perf_counter() - started
+
+
 def _known_cells(sim: Simulator) -> float:
     units = list(sim.state.units.values())
     if not units:
         return 0.0
     year = sim.state.year
     memory = {sid: p.cognition.memory_years for sid, p in sim.scenario.species.items()}
-    return float(np.mean([u.beliefs.known_cells(year, memory[u.species_id]) for u in units]))
+    store = sim.state.belief_store
+    known = [
+        int((store.entries(belief_slot(u))[1] > year - memory[u.species_id]).sum()) for u in units
+    ]
+    return float(np.mean(known))
 
 
-def state_storage(sim: Simulator) -> dict[str, float]:
+def state_storage(sim: Simulator) -> dict[str, Any]:
     """Sizes of the per-unit state that grows with units and cells (a memory report).
 
     Beliefs are dense per-unit arrays over all cells; familiarity, residence and trade ties
@@ -149,13 +179,30 @@ def state_storage(sim: Simulator) -> dict[str, float]:
     """
     units = list(sim.state.units.values())
     store = sim.state.belief_store
-    belief_bytes = store.active * store.n_cells * BYTES_PER_CELL  # rows in use
     n = max(len(units), 1)
+    current = _known_cells(sim) * len(units)  # current (within memory) entries in total
+    if isinstance(store, SparseBeliefStore):
+        belief_bytes = store.nbytes  # pools and slot index, allocated
+        sparse = {
+            "belief_pool_entries": store.pool_size,
+            "belief_pool_used": store.used,
+            "belief_pool_garbage": store.garbage,
+            "belief_compactions": store.compactions,
+            "belief_capacity_per_stored": round(store.pool_size / max(store.stored_entries, 1), 2),
+        }
+    else:
+        belief_bytes = store.active * store.n_cells * BYTES_PER_CELL  # rows in use
+        sparse = {}
     return {
         "units": len(units),
         "cells": sim.world.n_cells,
+        "belief_backend": store.kind,
         "belief_mb": round(belief_bytes / 2**20, 2),
         "belief_bytes_per_unit": round(belief_bytes / n, 1),
+        "belief_bytes_per_current_entry": round(belief_bytes / max(current, 1), 1),
+        "belief_current_entries_per_unit": round(current / n, 1),
+        "belief_stored_entries_per_unit": round(store.stored_entries / n, 1),
+        **sparse,
         "belief_store_mb": round(store.nbytes / 2**20, 2),
         "belief_store_rows": store.capacity,
         "belief_store_active_rows": store.active,

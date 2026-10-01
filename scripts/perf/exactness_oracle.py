@@ -8,6 +8,11 @@ state after 15 ticks. Hashes are numeric-platform specific, like the golden fixt
 Usage:
     uv run python scripts/perf/exactness_oracle.py benchmarks/perf/oracle_ph0.json
     uv run python scripts/perf/exactness_oracle.py --record <file>   # on a new platform
+
+``--logical`` hashes beliefs in their logical form (each unit's current entries only)
+instead of raw store rows, so a store that physically drops expired entries (sparse,
+PH4b) can be checked: ``MADEXPLORER_BELIEFS=sparse ... --logical
+benchmarks/perf/oracle_ph4b_logical.json`` (recorded with the dense store).
 """
 
 import hashlib
@@ -20,6 +25,21 @@ import numpy as np
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
 from madexplorer.experiments.benchmark import synthetic_simulator, warm_up_beliefs
+from madexplorer.population.unit import belief_slot
+
+LOGICAL = "--logical" in sys.argv
+if LOGICAL:
+    sys.argv.remove("--logical")
+
+
+def belief_arrays(sim, u):
+    """Raw rows (dense reference), or the logical current entries (``--logical``)."""
+    if not LOGICAL:
+        return [u.beliefs.year, u.beliefs.food_kcal, u.beliefs.population, u.beliefs.hops]
+    memory = sim.scenario.species[u.species_id].cognition.memory_years
+    cells, year, food, population, hops = sim.state.belief_store.entries(belief_slot(u))
+    keep = year > sim.state.year - memory
+    return [cells[keep].astype(np.int64), year[keep], food[keep], population[keep], hops[keep]]
 
 
 def digest(sim, metrics):
@@ -33,15 +53,7 @@ def digest(sim, metrics):
     for u in sim.state.units.values():
         h.update(u.id.encode())
         h.update(np.int64(u.cell).tobytes())
-        for a in (
-            u.females,
-            u.males,
-            u.knowledge,
-            u.beliefs.year,
-            u.beliefs.food_kcal,
-            u.beliefs.population,
-            u.beliefs.hops,
-        ):
+        for a in (u.females, u.males, u.knowledge, *belief_arrays(sim, u)):
             h.update(np.ascontiguousarray(a).tobytes())
         h.update(
             repr(

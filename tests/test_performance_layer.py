@@ -578,7 +578,7 @@ def test_structural_events_give_the_object_reference_beliefs() -> None:
 
     from madexplorer.population.composition import MergeMode, merge_state, split_off
     from madexplorer.population.familiarity import familiarity_rule
-    from madexplorer.population.unit import detach_beliefs
+    from madexplorer.population.unit import belief_slot, detach_beliefs
 
     sim = _warm_state(60, 5)
     state, ctx = sim.state, step_context(sim)
@@ -599,7 +599,8 @@ def test_structural_events_give_the_object_reference_beliefs() -> None:
     state.units[daughter.id] = daughter
     assert _beliefs_equal(daughter.beliefs, rd.beliefs)
     cell = int(np.flatnonzero(daughter.beliefs.year > 0)[0])
-    daughter.beliefs.write(np.array([cell]), 9999, np.array([1.0]), np.array([0]), 0)
+    slot = np.array([belief_slot(daughter)])  # writes go through the store (any backend)
+    state.belief_store.scatter(slot, np.array([cell]), 9999, np.array([1.0]), np.array([0]), 0)
     assert a.beliefs.year[cell] != 9999  # separate rows
 
 

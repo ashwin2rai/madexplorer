@@ -24,7 +24,6 @@ from madexplorer.population.lifecycle import create_unit, merge_units, remove_un
 from madexplorer.population.table import TABLE_FIELDS
 from madexplorer.population.unit import (
     EXTERNAL_FIELDS,
-    NEVER_OBSERVED,
     PopulationUnit,
     belief_slot,
 )
@@ -66,7 +65,7 @@ def _assert_rows_consistent(sim: Simulator) -> None:
         assert table.population[slot] == 0 and table.n_ages[slot] == 0
         assert not table.knowledge[slot].any()
         assert table.technologies[slot] == frozenset() and table.technology_mask[slot] == 0
-        assert (store.year[slot] == NEVER_OBSERVED).all() and not store.hops[slot].any()
+        assert store.entries(slot)[0].size == 0  # no belief survives into a reuse
 
 
 def _new_unit(

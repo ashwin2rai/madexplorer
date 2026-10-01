@@ -96,7 +96,7 @@ def split_unit(
     if (remain_f < 0).any() or (remain_m < 0).any():
         raise ValueError("departing cohorts exceed the parent's")
     share = moved / before
-    d = registry.claim_slot()  # may grow the table: take column references afterwards
+    d = registry.claim_slot(int(table.species_code[p]))  # may grow the table
     table.copy_row(p, d)
     store.copy_row(p, d)
     columns = table.columns

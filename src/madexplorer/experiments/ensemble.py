@@ -139,8 +139,12 @@ def run_ensemble(
     save_runs_dir: Path | None = None,
     progress: Callable[[Row], None] | None = None,
     light: bool = True,
+    prewarm: bool = True,
 ) -> list[Row]:
     """Run ``scenario`` once per seed (in ``jobs`` processes); rows are ordered by seed.
+
+    With several workers and ``prewarm`` (default), the JIT kernels are compiled or loaded
+    once in this process first, so workers load cached code instead of each compiling it.
 
     ``light`` (default) uses the light metrics recorder and no event log; saved runs always
     keep full outputs. Worker processes are started with ``spawn``, limited to one BLAS /
@@ -155,6 +159,10 @@ def run_ensemble(
             if progress:
                 progress(rows[-1])
     else:
+        if prewarm:  # compile once here; workers then load the cached kernels
+            from madexplorer.experiments.benchmark import prewarm_kernels
+
+            prewarm_kernels(scenario)
         with (
             _single_threaded_numerics(),
             ProcessPoolExecutor(max_workers=jobs, mp_context=get_context("spawn")) as pool,
@@ -267,12 +275,20 @@ def timed_ensemble(
     save_runs: bool = False,
     progress: Callable[[Row], None] | None = None,
     light: bool = True,
+    prewarm: bool = True,
 ) -> tuple[list[Row], Path]:
     """Apply ``settings``, run the ensemble, and write its outputs to ``out``."""
     variant = scenario.with_settings(settings) if settings else scenario
     started = time.perf_counter()
     rows = run_ensemble(
-        variant, seeds, jobs, n_years, out / "runs" if save_runs else None, progress, light
+        variant,
+        seeds,
+        jobs,
+        n_years,
+        out / "runs" if save_runs else None,
+        progress,
+        light,
+        prewarm,
     )
     wall = time.perf_counter() - started
     return rows, write_ensemble(out, variant, seeds, rows, settings, wall)

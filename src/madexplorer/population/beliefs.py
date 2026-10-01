@@ -17,6 +17,7 @@ The interface (``claim``/``release``/``gather``/``scatter``/``assign``/``view``)
 sparse backend must provide; see objective/status.md (PH3a).
 """
 
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -80,6 +81,7 @@ class DenseBeliefStore:
     active: int = 0  # rows claimed by registered units
     resizes: int = 0
     peak_resize_bytes: int = 0  # largest transient old + new footprint of a copying resize
+    kind = "dense"
 
     @classmethod
     def empty(cls, n_cells: int, capacity: int = MIN_CAPACITY) -> "DenseBeliefStore":
@@ -129,12 +131,34 @@ class DenseBeliefStore:
             getattr(self, name)[old:] = fill
         self.resizes += 1
 
-    def claim(self, slot: int) -> None:
+    def claim(self, slot: int, species_code: int = 0) -> None:
         """Take ``slot`` for a registered unit (growing as needed), reset to never observed."""
         while slot >= self.capacity:
             self._grow()
         self.reset(slot)
         self.active += 1
+
+    def configure_expiry(self, memory_by_code: IntArray) -> None:
+        """Memory horizon per species code (unused: dense rows keep expired entries)."""
+
+    def set_clock(self, year: int) -> None:
+        """The current simulation year (unused: dense expiry is lazy, readers filter)."""
+
+    def entries(self, slot: int) -> tuple[IntArray, YearArray, FoodArray, CountArray, HopsArray]:
+        """Every stored (ever observed) entry of ``slot``, by ascending cell."""
+        cells = np.flatnonzero(self.year[slot] != NEVER_OBSERVED)
+        return (
+            cells,
+            self.year[slot, cells],
+            self.food_kcal[slot, cells],
+            self.population[slot, cells],
+            self.hops[slot, cells],
+        )
+
+    @property
+    def stored_entries(self) -> int:
+        """Entries ever observed in active and free rows (dense: never physically removed)."""
+        return int((self.year != NEVER_OBSERVED).sum())
 
     def release(self, slot: int) -> None:
         """Give ``slot`` back (its row is cleared so nothing leaks into a later unit)."""
@@ -202,6 +226,15 @@ class DenseBeliefStore:
             self.hops[slots, cells],
         )
 
+    def years(self, slots: IntArray, cells: IntArray) -> YearArray:
+        """Observation years of ``(slots[i], cells[i])`` pairs (``NEVER_OBSERVED`` if none)."""
+        values: YearArray = self.year[slots, cells]
+        return values
+
+    def years_and_hops(self, slots: IntArray, cells: IntArray) -> tuple[YearArray, HopsArray]:
+        """Observation years and relay counts of ``(slots[i], cells[i])`` pairs."""
+        return self.year[slots, cells], self.hops[slots, cells]
+
     def scatter(
         self,
         slots: IntArray,
@@ -216,3 +249,442 @@ class DenseBeliefStore:
         self.food_kcal[slots, cells] = food_kcal
         self.population[slots, cells] = population
         self.hops[slots, cells] = hops
+
+
+SPARSE_ENTRY_BYTES = BYTES_PER_CELL + 4  # cell id (int32) + the four fields
+COMPACT_GARBAGE_FRACTION = 0.5  # compact when released capacity exceeds this share of the pool
+COMPACT_MIN_ENTRIES = 4096
+
+
+class SparseBeliefStore:
+    """Beliefs as sorted per-unit rows of observed cells in shared numeric pools (PH4b).
+
+    Same logical content and interface as :class:`DenseBeliefStore`: a cell missing from a
+    row reads exactly as a never-observed dense entry. Expired entries (``year <= clock -
+    memory_years`` of the unit's species) are semantically invisible
+    (``tests/test_belief_expiry.py``) and are physically dropped whenever a row is
+    rewritten anyway: a full row is pruned before it grows, copies and merges keep only
+    current entries, and the pool is compacted (without expired entries) when released
+    capacity exceeds half of it. Memory is therefore proportional to current beliefs,
+    not to world cells or to every cell ever seen; no annual scan is needed: each row is
+    pruned when it fills (amortized over the insertions that filled it) and compaction
+    is amortized over the releases that created the garbage.
+
+    Rows have no fixed maximum size: a full row doubles. All per-entry work is in
+    compiled kernels (:mod:`madexplorer.population.belief_kernels`). ``view`` returns a
+    read-only dense copy (compatibility and tests); writes go through ``scatter`` or
+    ``assign``.
+    """
+
+    kind = "sparse"
+
+    def __init__(self, n_cells: int, capacity: int = MIN_CAPACITY, pool: int = 0) -> None:
+        self.n_cells = n_cells
+        self.active = 0
+        self.resizes = 0
+        self.compactions = 0
+        self.peak_resize_bytes = 0
+        self.clock: int | None = None
+        self.memory_by_code: IntArray | None = None
+        self.row_start = np.zeros(capacity, dtype=np.int64)
+        self.row_length = np.zeros(capacity, dtype=np.int64)
+        self.row_capacity = np.zeros(capacity, dtype=np.int64)
+        self.row_code = np.zeros(capacity, dtype=np.int64)
+        self.claimed = np.zeros(capacity, dtype=bool)
+        size = max(pool, capacity * 64)
+        self.cell = np.zeros(size, dtype=np.int32)
+        self.year = np.full(size, NEVER_OBSERVED, dtype=YEAR_DTYPE)
+        self.food_kcal = np.zeros(size, dtype=FOOD_DTYPE)
+        self.population = np.zeros(size, dtype=POPULATION_DTYPE)
+        self.hops = np.zeros(size, dtype=HOPS_DTYPE)
+        self.used = 0
+        self.garbage = 0
+
+    @classmethod
+    def empty(cls, n_cells: int, capacity: int = MIN_CAPACITY) -> "SparseBeliefStore":
+        """An empty store with ``capacity`` slots."""
+        return cls(n_cells, capacity)
+
+    # ------------------------------------------------------------------ sizes
+    @property
+    def capacity(self) -> int:
+        """Addressable slots."""
+        return int(self.row_start.size)
+
+    @property
+    def pool_size(self) -> int:
+        """Allocated pool entries."""
+        return int(self.cell.size)
+
+    @property
+    def nbytes(self) -> int:
+        """Bytes of the pool arrays and the per-slot index."""
+        pool = self.cell.nbytes + self.year.nbytes + self.food_kcal.nbytes
+        pool += self.population.nbytes + self.hops.nbytes
+        index = self.row_start.nbytes + self.row_length.nbytes + self.row_capacity.nbytes
+        index += self.row_code.nbytes + self.claimed.nbytes
+        return int(pool + index)
+
+    @property
+    def stored_entries(self) -> int:
+        """Entries physically stored in claimed rows (current or not yet pruned)."""
+        return int(self.row_length[self.claimed].sum())
+
+    # ------------------------------------------------------------------ expiry
+    def configure_expiry(self, memory_by_code: IntArray) -> None:
+        """Memory horizon in years per species code (enables pruning)."""
+        self.memory_by_code = np.asarray(memory_by_code, dtype=np.int64)
+
+    def set_clock(self, year: int) -> None:
+        """The current simulation year; entries with ``year <= clock - memory`` are dead.
+
+        Only the simulation step advances the clock, so pruning can only lag behind the
+        semantic expiry, never run ahead of it.
+        """
+        self.clock = year
+
+    def _horizons(self, slots: IntArray) -> IntArray:
+        from madexplorer.population.belief_kernels import NO_HORIZON
+
+        if self.clock is None or self.memory_by_code is None:
+            return np.full(slots.size, NO_HORIZON, dtype=np.int64)
+        horizons: IntArray = self.clock - self.memory_by_code[self.row_code[slots]]
+        return horizons
+
+    def _horizon(self, slot: int) -> int:
+        return int(self._horizons(np.array([slot], dtype=np.int64))[0])
+
+    # ------------------------------------------------------------------ slots
+    def _grow_slots(self, needed: int) -> None:
+        new = max(needed, self.capacity + max(int(self.capacity * GROWTH_FRACTION), MIN_CAPACITY))
+        for name in ("row_start", "row_length", "row_capacity", "row_code", "claimed"):
+            old = getattr(self, name)
+            grown = np.zeros(new, dtype=old.dtype)
+            grown[: old.size] = old
+            setattr(self, name, grown)
+        self.resizes += 1
+
+    def _reserve(self, entries: int) -> None:
+        """Make room for ``entries`` more pool entries (compacting or growing)."""
+        if self.used + entries <= self.pool_size:
+            return
+        if self.garbage > COMPACT_GARBAGE_FRACTION * self.pool_size:
+            self.compact()
+            if self.used + entries <= self.pool_size:
+                return
+        new = max(self.used + entries, int(self.pool_size * 1.5) + 1024)
+        for name, fill in (
+            ("cell", 0),
+            ("year", NEVER_OBSERVED),
+            ("food_kcal", 0),
+            ("population", 0),
+            ("hops", 0),
+        ):
+            old = getattr(self, name)
+            grown = np.full(new, fill, dtype=old.dtype)
+            grown[: self.used] = old[: self.used]
+            setattr(self, name, grown)
+        self.resizes += 1
+
+    def claim(self, slot: int, species_code: int = 0) -> None:
+        """Take ``slot`` for a registered unit, with an empty row."""
+        if slot >= self.capacity:
+            self._grow_slots(slot + 1)
+        self.reset(slot)
+        self.row_code[slot] = species_code
+        self.claimed[slot] = True
+        self.active += 1
+
+    def release(self, slot: int) -> None:
+        """Give ``slot`` back (its row capacity becomes garbage)."""
+        self.reset(slot)
+        self.claimed[slot] = False
+        self.active -= 1
+
+    def reset(self, slot: int) -> None:
+        """Empty ``slot``'s row (never observed everywhere)."""
+        self.garbage += int(self.row_capacity[slot])
+        self.row_length[slot] = 0
+        self.row_capacity[slot] = 0
+        self.row_start[slot] = 0
+
+    # ------------------------------------------------------------------ point access
+    def gather(
+        self, slots: IntArray, cells: IntArray
+    ) -> tuple[YearArray, FoodArray, CountArray, HopsArray]:
+        """Beliefs of ``(slots[i], cells[i])`` pairs (never observed where absent)."""
+        n = int(np.size(slots))
+        year = np.empty(n, dtype=YEAR_DTYPE)
+        food = np.empty(n, dtype=FOOD_DTYPE)
+        population = np.empty(n, dtype=POPULATION_DTYPE)
+        hops = np.empty(n, dtype=HOPS_DTYPE)
+        self._lookup(slots, cells, year, food, population, hops, 4)
+        return year, food, population, hops
+
+    def years(self, slots: IntArray, cells: IntArray) -> YearArray:
+        """Observation years of ``(slots[i], cells[i])`` pairs."""
+        n = int(np.size(slots))
+        year = np.empty(n, dtype=YEAR_DTYPE)
+        empty_f, empty_i, empty_h = (
+            np.empty(0, dtype=FOOD_DTYPE),
+            np.empty(0, dtype=POPULATION_DTYPE),
+            np.empty(0, dtype=HOPS_DTYPE),
+        )
+        self._lookup(slots, cells, year, empty_f, empty_i, empty_h, 1)
+        return year
+
+    def years_and_hops(self, slots: IntArray, cells: IntArray) -> tuple[YearArray, HopsArray]:
+        """Observation years and relay counts of ``(slots[i], cells[i])`` pairs."""
+        n = int(np.size(slots))
+        year = np.empty(n, dtype=YEAR_DTYPE)
+        hops = np.empty(n, dtype=HOPS_DTYPE)
+        empty_f, empty_i = np.empty(0, dtype=FOOD_DTYPE), np.empty(0, dtype=POPULATION_DTYPE)
+        self._lookup(slots, cells, year, empty_f, empty_i, hops, 2)
+        return year, hops
+
+    def _lookup(
+        self,
+        slots: IntArray,
+        cells: IntArray,
+        year: np.ndarray,
+        food: np.ndarray,
+        population: np.ndarray,
+        hops: np.ndarray,
+        fields: int,
+    ) -> None:
+        from madexplorer.population.belief_kernels import lookup
+
+        lookup(
+            self.row_start,
+            self.row_length,
+            self.cell,
+            self.year,
+            self.food_kcal,
+            self.population,
+            self.hops,
+            np.ascontiguousarray(slots, dtype=np.int64),
+            np.ascontiguousarray(cells, dtype=np.int64),
+            year,
+            food,
+            population,
+            hops,
+            fields,
+        )
+
+    def scatter(
+        self,
+        slots: IntArray,
+        cells: IntArray,
+        year: YearArray | int,
+        food_kcal: FoodArray | np.ndarray,
+        population: CountArray | IntArray,
+        hops: HopsArray | int,
+    ) -> None:
+        """Write beliefs at ``(slots[i], cells[i])`` (pairs must be distinct)."""
+        from madexplorer.population.belief_kernels import scatter
+
+        slots = np.ascontiguousarray(slots, dtype=np.int64)
+        n = slots.size
+        if n == 0:
+            return
+
+        def column(values: object, dtype: type) -> np.ndarray:
+            array = np.asarray(values)
+            if array.ndim == 0:
+                return np.full(n, array, dtype=dtype)
+            return np.ascontiguousarray(array, dtype=dtype)
+
+        args = (
+            np.ascontiguousarray(cells, dtype=np.int64),
+            column(year, YEAR_DTYPE),
+            column(food_kcal, FOOD_DTYPE),
+            column(population, POPULATION_DTYPE),
+            column(hops, HOPS_DTYPE),
+        )
+        horizon = np.full(self.capacity, 0, dtype=np.int64)
+        unique = np.unique(slots)
+        horizon[unique] = self._horizons(unique)
+        first = 0
+        while True:
+            first, self.used, released = scatter(
+                self.row_start,
+                self.row_length,
+                self.row_capacity,
+                horizon,
+                self.cell,
+                self.year,
+                self.food_kcal,
+                self.population,
+                self.hops,
+                self.used,
+                slots,
+                *args,
+                first,
+            )
+            self.garbage += released
+            if first >= n:
+                return
+            # The pool is full: make room for this row doubling (and some), then resume.
+            need = 2 * int(self.row_length[slots[first]]) + 1024
+            self._reserve(need)
+
+    # ------------------------------------------------------------------ rows
+    def copy_row(self, source: int, target: int) -> None:
+        """``target`` becomes an independent copy of ``source``'s current entries."""
+        from madexplorer.population.belief_kernels import MIN_ROW_CAPACITY, copy_row
+
+        self.reset(target)
+        self._reserve(max(int(self.row_length[source]), MIN_ROW_CAPACITY))
+        self.used = copy_row(
+            source,
+            target,
+            self._horizon(source),
+            self.row_start,
+            self.row_length,
+            self.row_capacity,
+            self.cell,
+            self.year,
+            self.food_kcal,
+            self.population,
+            self.hops,
+            self.used,
+        )
+
+    def merge_row(self, source: int, target: int) -> None:
+        """``target`` takes ``source``'s entry wherever it is better (current entries)."""
+        from madexplorer.population.belief_kernels import MIN_ROW_CAPACITY, merge_rows
+
+        self._reserve(max(int(self.row_length[source] + self.row_length[target]), MIN_ROW_CAPACITY))
+        old_capacity = int(self.row_capacity[target])  # after a possible compaction
+        self.used = merge_rows(
+            source,
+            target,
+            self._horizon(target),
+            self.row_start,
+            self.row_length,
+            self.row_capacity,
+            self.cell,
+            self.year,
+            self.food_kcal,
+            self.population,
+            self.hops,
+            self.used,
+        )
+        self.garbage += old_capacity
+
+    def compact(self) -> None:
+        """Rewrite every claimed row contiguously without expired entries (amortized)."""
+        from madexplorer.population.belief_kernels import MIN_ROW_CAPACITY, compact
+
+        slots = np.flatnonzero(self.claimed).astype(np.int64)
+        lengths = self.row_length[slots]
+        size = int(np.maximum(lengths + lengths // 4, MIN_ROW_CAPACITY).sum())
+        size = max(size + size // 2, COMPACT_MIN_ENTRIES)
+        new: dict[str, np.ndarray] = {
+            "cell": np.zeros(size, dtype=np.int32),
+            "year": np.full(size, NEVER_OBSERVED, dtype=YEAR_DTYPE),
+            "food_kcal": np.zeros(size, dtype=FOOD_DTYPE),
+            "population": np.zeros(size, dtype=POPULATION_DTYPE),
+            "hops": np.zeros(size, dtype=HOPS_DTYPE),
+        }
+        horizon = np.zeros(self.capacity, dtype=np.int64)
+        horizon[slots] = self._horizons(slots)
+        self.used = compact(
+            slots,
+            horizon,
+            self.row_start,
+            self.row_length,
+            self.row_capacity,
+            self.cell,
+            self.year,
+            self.food_kcal,
+            self.population,
+            self.hops,
+            new["cell"],
+            new["year"],
+            new["food_kcal"],
+            new["population"],
+            new["hops"],
+        )
+        for name, array in new.items():
+            setattr(self, name, array)
+        self.garbage = 0
+        self.compactions += 1
+
+    # ------------------------------------------------------------------ maps
+    def entries(self, slot: int) -> tuple[IntArray, YearArray, FoodArray, CountArray, HopsArray]:
+        """Every stored entry of ``slot``, by ascending cell (copies)."""
+        start, length = int(self.row_start[slot]), int(self.row_length[slot])
+        rows = slice(start, start + length)
+        return (
+            self.cell[rows].astype(np.int64),
+            self.year[rows].copy(),
+            self.food_kcal[rows].copy(),
+            self.population[rows].copy(),
+            self.hops[rows].copy(),
+        )
+
+    def detached(self, slot: int) -> BeliefMap:
+        """A dense :class:`BeliefMap` copy of ``slot``."""
+        beliefs = BeliefMap.empty(self.n_cells)
+        cells, year, food, population, hops = self.entries(slot)
+        beliefs.write(cells, year, food, population, hops)
+        return beliefs
+
+    def view(self, slot: int) -> BeliefMap:
+        """A read-only dense copy of ``slot`` (writes must go through the store)."""
+        beliefs = self.detached(slot)
+        for array in (beliefs.year, beliefs.food_kcal, beliefs.population, beliefs.hops):
+            array.flags.writeable = False
+        return beliefs
+
+    def assign(self, slot: int, beliefs: BeliefMap) -> None:
+        """Overwrite ``slot`` with a map's observed entries."""
+        self.reset(slot)
+        if beliefs.n_cells == 0:
+            return
+        if beliefs.n_cells != self.n_cells:
+            raise ValueError(f"belief map covers {beliefs.n_cells} cells, expected {self.n_cells}")
+        cells = np.flatnonzero(beliefs.year != NEVER_OBSERVED)
+        self.scatter(
+            np.full(cells.size, slot, dtype=np.int64),
+            cells,
+            beliefs.year[cells],
+            beliefs.food_kcal[cells],
+            beliefs.population[cells],
+            beliefs.hops[cells],
+        )
+
+
+BeliefStore = DenseBeliefStore | SparseBeliefStore
+BACKENDS = ("dense", "sparse", "auto")
+BACKEND_ENV = "MADEXPLORER_BELIEFS"  # inherited by spawned ensemble and benchmark workers
+
+
+def requested_backend() -> str:
+    """The backend requested for new simulators: ``$MADEXPLORER_BELIEFS`` or ``dense``."""
+    return os.environ.get(BACKEND_ENV, "dense")
+
+
+# ``auto``: dense for canonical-size worlds (<= 50 x 50), sparse above. Measured in PH4b
+# (objective/status.md): sparse is within CPU noise of dense even on 40 x 40 and faster or
+# equal from 80 x 80 up, while dense belief memory grows with world cells; dense remains
+# the default and the frozen-validation reference until the backend choice is revisited.
+AUTO_SPARSE_MIN_CELLS = 2500
+
+
+def resolve_backend(name: str, n_cells: int) -> str:
+    """``dense`` or ``sparse`` for a requested backend; ``auto`` decides from the world size
+    only (static), never from simulation state."""
+    if name not in BACKENDS:
+        raise ValueError(f"unknown belief backend {name!r} (expected one of {BACKENDS})")
+    if name == "auto":
+        return "sparse" if n_cells >= AUTO_SPARSE_MIN_CELLS else "dense"
+    return name
+
+
+def make_belief_store(backend: str, n_cells: int) -> BeliefStore:
+    """An empty store of the resolved backend."""
+    if resolve_backend(backend, n_cells) == "sparse":
+        return SparseBeliefStore.empty(n_cells)
+    return DenseBeliefStore.empty(n_cells)

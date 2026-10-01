@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 from madexplorer.config.loader import Scenario
 from madexplorer.core.compiled import CompiledScenario
 from madexplorer.core.events import EventLog
@@ -34,6 +36,7 @@ from madexplorer.knowledge.system import KnowledgeModel
 from madexplorer.metrics.recorder import MetricsRecorder
 from madexplorer.mobility.exploration import KnowledgeSharingSubsystem, PerceptionSubsystem
 from madexplorer.mobility.migration import MigrationSubsystem
+from madexplorer.population.beliefs import requested_backend, resolve_backend
 from madexplorer.population.demography import DemographySubsystem
 from madexplorer.population.energetics import EnergeticsSubsystem
 from madexplorer.population.groups import ExtinctionSubsystem, FissionSubsystem, FusionSubsystem
@@ -116,6 +119,7 @@ class Simulator:
         static: StaticContext | None = None,
         record_events: bool = True,
         unit_table: bool = True,
+        belief_backend: str | None = None,
     ) -> None:
         self.scenario = scenario
         config = scenario.config
@@ -138,6 +142,9 @@ class Simulator:
         self.compiled = CompiledScenario.build(scenario, self.knowledge)
         self.pipeline = build_pipeline(scenario, self.knowledge)
         climate = ClimateYear.base(self.world)
+        # Belief storage backend (storage only: results are identical for every backend).
+        requested = belief_backend or requested_backend()
+        self.belief_backend = resolve_backend(requested, self.world.n_cells)
         self.state = SimulationState(
             year=config.simulation.start_year,
             world=self.world,
@@ -147,6 +154,14 @@ class Simulator:
             table_mode=unit_table,
             technology_table=self.compiled.technologies,
             species_index=self.compiled.species_index,
+            belief_backend=self.belief_backend,
+        )
+        # Expiry horizons per species code: lets a sparse store reclaim expired entries.
+        self.state.belief_store.configure_expiry(
+            np.array(
+                [scenario.species[sid].cognition.memory_years for sid in self.compiled.species_ids],
+                dtype=np.int64,
+            )
         )
         self._found_initial_units()
 
@@ -197,6 +212,7 @@ class Simulator:
         """Advance the simulation by one year."""
         state = self.state
         state.year += 1
+        state.belief_store.set_clock(state.year)
         ctx = self.context()
         before = state.total_population()
         timings = self.timings
@@ -245,7 +261,12 @@ class Simulator:
                 logger.info("year=%d all populations extinct; stopping early", self.state.year)
                 break
         elapsed = time.perf_counter() - started
-        manifest = run_manifest(self.scenario, runtime_seconds=elapsed, final_year=self.state.year)
+        manifest = run_manifest(
+            self.scenario,
+            runtime_seconds=elapsed,
+            final_year=self.state.year,
+            belief_backend=self.belief_backend,
+        )
         return SimulationResult(
             scenario=self.scenario,
             world=self.world,

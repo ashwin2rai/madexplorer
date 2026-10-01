@@ -769,7 +769,7 @@ class MigrationSubsystem:
         slots = everyone.slots[rows]
         horizon = year - np.array(memory, dtype=np.int64)[species_all[rows]]
         slot_rep = np.repeat(slots, sizes)
-        known = store.year[slot_rep, all_cells] > np.repeat(horizon, sizes)
+        known = store.years(slot_rep, all_cells) > np.repeat(horizon, sizes)
         cells = all_cells[known]
         owner = np.repeat(np.arange(len(rows)), sizes)[known]
         counts = np.bincount(owner, minlength=len(rows)).astype(np.int64)

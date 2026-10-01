@@ -23,7 +23,7 @@ from madexplorer.core.rng import Streams
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.economy.foraging import accessible_food_kcal
-from madexplorer.population.beliefs import DenseBeliefStore
+from madexplorer.population.beliefs import BeliefStore
 from madexplorer.population.unit import (
     HOPS_DTYPE,
     MAX_HOPS,
@@ -406,7 +406,7 @@ def select_reports_batch(senders: Sequence[SenderInputs], year: int, n_cells: in
 
 
 def select_reports_packed(
-    store: DenseBeliefStore,
+    store: BeliefStore,
     slots: IntArray,
     pools: Sequence[IntArray],
     current_cell: IntArray,
@@ -580,7 +580,7 @@ class ReceivedReports:
 def receive_reports_packed(
     receiver_ids: Sequence[str],
     receiver_slots: IntArray,
-    store: DenseBeliefStore,
+    store: BeliefStore,
     pair_receiver: IntArray,
     pair_sender: IntArray,
     table: ReportTable,
@@ -611,8 +611,7 @@ def receive_reports_packed(
     first = np.r_[True, (receiver[1:] != receiver[:-1]) | (cells[1:] != cells[:-1])]
     order, receiver, cells = order[first], receiver[first], cells[first]
     year, hops, rows = year[order], hops[order], rows[order]
-    own_year = store.year[receiver_slots[receiver], cells]
-    own_hops = store.hops[receiver_slots[receiver], cells]
+    own_year, own_hops = store.years_and_hops(receiver_slots[receiver], cells)
     better = (year > own_year) | ((year == own_year) & (hops < own_hops))
     if not better.any():
         return empty

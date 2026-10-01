@@ -11,7 +11,7 @@ Use this file to answer: **What exists now? What is frozen? What is still limite
 
 ## 1. Current phase
 
-> **Resume point:** PH4a (selective compilation) is complete (Section 9, "PH4a"). Next: PH4b, a sparse/hybrid belief backend (required before the MVP 3 scaling report); design inputs are in the PH4a belief occupancy/access profile. Awaiting the go-ahead.
+> **Resume point:** PH4b (sparse belief storage) is complete (Section 9, "PH4b"). Next: a realistic scaling campaign (1k-50k units at constant local density with `--beliefs sparse`) to find the next binding constraint. Awaiting the go-ahead.
 
 **MVP 1:** complete.  
 **MVP 2:** complete and scientifically frozen.  
@@ -796,6 +796,122 @@ over 600 years and warmed synthetic states):
 
 PH4a is complete. Stop: the next step is a decision (PH4b sparse beliefs is the planned
 scaling task; pair processing only after re-assessing MVP 3 regimes).
+
+### PH4b: scalable belief storage — COMPLETE (2026-10-01)
+
+**Semantic audit (gate).** No model path distinguishes an expired belief (``year <= t -
+memory_years``) from a never-observed cell:
+- migration (batched and reference) keeps only current cells before reading any value;
+- report selection filters on currency (and report age);
+- report receipt compares an incoming report with the receiver's own entry; encounters are
+  same-species (equal memory), and a report is current for the sender, so it is strictly
+  fresher than any expired own entry: accepted whether that entry is expired or absent;
+- fusion keeps the freshest entry per cell: a current entry always beats an expired one,
+  so the merged current entries do not depend on expired ones; fission copies;
+- perception only writes; food priors come from this year's observations;
+- remaining readers are diagnostics (traced-unit events read current candidates only;
+  benchmark counters);
+- expiry is monotone (an entry's year never changes; time only advances).
+Pinned by `tests/test_belief_expiry.py`: erasing every expired entry from the dense store
+before each tick leaves trajectories, ledgers, events, every RNG stream and all current
+beliefs identical (neolithic 260 y, pressure 200 y, MVP 1 150 y, 300 dense synthetic
+units over 40 y with migration). Physical deletion of expired entries is therefore Level A.
+
+**Representation choice (prototyped on recorded traces).** Every belief access is a
+batched point read or write at (slot, cell) pairs, ~120k per tick at 1k units (writes 29k,
+gathers 50k, year lookups 22k, year+hops 20k), ~480k at 4k; row operations are rare
+(hundreds per 10 ticks). Two numeric layouts were prototyped in Numba and replayed against
+the trace (both exact on current entries): A, sorted packed rows (binary search, shift on
+insert) and B, open-addressed per-row tables. Gather/scatter for 10 ticks: dense 31.5 /
+13.6 ms (1k, 40×40) and 310 / 94 ms (4k, 113×113); A 22.3 / 11.9 and 120 / 49; B 11.9 / 8.5
+and 84 / 40. **A was chosen**: within ~1 ms/tick of B at 1k, ~1.5× more compact, and its
+lifecycle (row copy, sorted merge, compaction, deterministic iteration) is simpler. No
+per-unit Python dictionaries, no row-size cap.
+
+**`SparseBeliefStore`** (`population/beliefs.py`, kernels in `population/belief_kernels.py`):
+each unit's row is its observed cells sorted by id in shared pools (`cell` int32, `year`
+int32, `food` float32, `population` int32, `hops` int8; 17 B per entry) with per-slot start,
+length and capacity. A missing cell reads exactly as a never-observed dense entry
+(`NEVER_OBSERVED`, 0, 0, 0). Rows double when full (no maximum). Expired entries are dropped
+wherever a row is rewritten anyway: a full row is pruned in place before it would grow;
+copies (fission) and merges (fusion) keep current entries only; the pool is compacted
+(rows rewritten contiguously without expired entries) when released capacity exceeds half
+of it. There is no annual traversal: pruning is amortized over the insertions that filled a
+row and compaction over the releases that created garbage. The store learns horizons from
+`configure_expiry(memory by species code)` and `set_clock(year)` (set by `Simulator.step`
+only, so pruning can lag but never precede semantic expiry). `view()` is a read-only dense
+copy; all writes go through `scatter`/`assign` (`BeliefPatch.apply` now writes through the
+store for registered units). `DenseBeliefStore` is unchanged and remains the reference.
+
+Interface changes (Level A on dense; oracle IDENTICAL): the two direct dense indexings
+(migration's years of reachable cells, report receipt's own year/hops) go through
+`store.years` / `store.years_and_hops`; stores take the species code at `claim`; both
+stores provide `entries(slot)` (logical comparisons) and `stored_entries`.
+
+**Backend selection:** `Simulator(belief_backend=...)`, `--beliefs dense|sparse|auto` on
+`run`, `ensemble` and `bench` (sets `MADEXPLORER_BELIEFS`, inherited by spawned workers),
+default **dense**. `auto` is static: sparse from 2,500 cells (above 50×50), dense below.
+The resolved backend is recorded in every run manifest (`belief_backend`) and benchmark
+storage report. Backends never switch during a run.
+
+**Exactness.** `make check` green (538 tests) on the dense default and with the whole suite
+forced onto sparse (`MADEXPLORER_BELIEFS=sparse`: 538 passed, golden fixtures included).
+Raw oracle (dense) IDENTICAL; new logical oracle (`exactness_oracle.py --logical`, current
+belief entries instead of raw rows; reference `benchmarks/perf/oracle_ph4b_logical.json`
+recorded with dense): sparse IDENTICAL. Tests (`tests/test_belief_backends.py`): whole
+engine dense vs sparse (neolithic 320 y, pressure 220 y, MVP 1 160 y; object-reference
+engine 150 y; dense synthetic states 30 y with and without farming) comparing everything
+plus current beliefs; randomized store sequences (claim, release, writes of fresh and stale
+observations, reads, copies, merges, assigns, advancing clock: observe → expire → delete →
+revisit) with a tiny pool forcing growth and compaction (60 examples in CI; 1,000 run once,
+1,064 compactions); read-only views; static backend resolution. Tests that inspect dense
+internals now say so (`belief_backend="dense"`) or compare logically; B1 is untouched.
+
+**Results** (CPU, same machine; synthetic cases one run each, ±5-10% noise):
+
+| Case | Dense: CPU ms/tick, RSS, belief MB | Sparse: CPU ms/tick, RSS, belief MB | Belief memory |
+|---|---|---|---:|
+| Canonical seed 0, 600 y (CPU s, alternating ×2) | 15.7-16.9 s, 224 MB | **15.1-15.6 s, 205 MB** | — |
+| 1k on 40×40 | 91, 211 MB, 21.6 | 95, 189 MB, 1.6 | 13× |
+| 1k on 100×100 | 103, 360 MB, 148 | 99, 210 MB, 2.6 | 58× |
+| 2k on 80×80 (fixed density) | 229, 409 MB, 172 | 200, 229 MB, 5.8 | 30× |
+| 4k on 113×113 (fixed density) | 403, 1,042 MB, 689 | 416, 294 MB, 8.7 | 79× |
+| 10k on 180×180 (fixed density) | (~4.2 GB of beliefs) | 1,073, 469 MB, 19.7 | ~210× |
+| 20k on 255×255 (fixed density) | (~17 GB of beliefs) | 2,221, 797 MB, 44.3 | ~380× |
+
+- Sparse CPU is within noise of dense at every size (−13% to +4%); the canonical run is
+  not slower. Fixed-density sparse cost: 97 / 100 / 106 / 109 µs/unit/tick at 2k / 4k / 10k
+  / 20k units (near-linear).
+- Sparse storage: 40-52 current entries per unit and as many stored (pruning keeps stored ≈
+  current); 17 B per entry, 30-65 B per current entry including pool headroom and the slot
+  index (pool / stored entries 1.7-3.8: row doubling, ×1.5 pool growth, garbage below the
+  compaction threshold); ~1.6-2.8 kB per unit at every world size, versus 13 B × cells
+  (21-845 kB) dense.
+- Per operation (trace replay, ns per element, dense / sparse): gather 23 / 18 (1k) and
+  62 / 24 (4k); year lookup 7 / 16 and 19 / 19; year+hops 11 / 21 and 29 / 27; scatter
+  40 / 57 and 66 / 68; row copy 14 / 13 µs, merge 132 / 32 µs, claim 73 / 2 µs at 4k;
+  compaction of the whole store 0.5 ms (1k) / 14 ms (4k). Logical mismatches after replay: 0.
+- RSS is now dominated by the unit table, unit objects and the fixed Numba/LLVM ~100 MB, not
+  beliefs (20k units: 797 MB total, 44 MB beliefs).
+
+**JIT prewarm for ensembles.** `prewarm_kernels(scenario)` runs two years of a copy of the
+scenario (kernels compile for production argument types) and exercises the sparse row
+operations on spare slots; `run_ensemble` calls it before starting workers (`--no-prewarm`
+to skip); `madexplorer jit-warmup <scenario> [--beliefs ...]` fills the cache explicitly.
+Compile costs: PH4a kernels ~3.9 s cold, sparse-store kernels ~2.3 s more, ~0.35 s to load
+when cached. Ensemble, 4 seeds × 600 y, 2 jobs (dense): cold without prewarm 39.6 s wall /
+66.2 s CPU; **cold with prewarm 37.6 s / 60.0 s**; warm cache 34.2 s / 57.1 s. Prewarming
+saves the duplicate compilation (−2 s wall, −6 s CPU here; more with more workers); only a
+warm cache removes the compile entirely (the cache persists across runs until the kernel
+sources change).
+
+**Backend policy recommendation:** sparse is exact, never materially slower and an order of
+magnitude or more smaller from 1k units on medium worlds; keep dense as default and
+validation reference for now (per plan), use `--beliefs sparse` (or `auto`) for scale work,
+and decide on making sparse/auto the production default after the scaling campaign.
+
+PH4b is complete. Stop: next is the realistic scaling campaign (1k-50k units at constant
+local density, sparse beliefs), not a predetermined optimization.
 
 Differential tests (`tests/test_performance_layer.py`): the spatial index against
 `units_by_cell()`, invalidation, compiled data against the configuration, energy balance,

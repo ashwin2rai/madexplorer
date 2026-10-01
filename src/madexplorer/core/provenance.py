@@ -68,8 +68,16 @@ def numeric_platform() -> str:
 
 
 def run_manifest(scenario: Scenario, **extra: Any) -> dict[str, Any]:
-    """Metadata sufficient to reproduce and audit a run."""
+    """Metadata sufficient to reproduce and audit a run.
+
+    ``belief_backend`` is the storage backend new simulators use (resolved for this
+    scenario's world size); it never changes results, but is recorded for audits.
+    """
+    from madexplorer.population.beliefs import requested_backend, resolve_backend
+
     status = _git("status", "--porcelain")
+    topology = scenario.config.world.topology
+    backend = resolve_backend(requested_backend(), topology.width * topology.height)
     return {
         "scenario_name": scenario.config.name,
         "seed": scenario.config.simulation.seed,
@@ -83,5 +91,6 @@ def run_manifest(scenario: Scenario, **extra: Any) -> dict[str, Any]:
         "python_version": platform.python_version(),
         "numpy_version": np.__version__,
         "timestamp_utc": datetime.now(UTC).isoformat(timespec="seconds"),
+        "belief_backend": backend,
         **extra,
     }
