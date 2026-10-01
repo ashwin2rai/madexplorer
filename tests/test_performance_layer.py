@@ -4,6 +4,8 @@ These structures change no equation; the tests check that they reproduce the dom
 representation exactly (order included), which exact seeded replay depends on.
 """
 
+from collections.abc import Mapping
+
 import numpy as np
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -12,7 +14,9 @@ from madexplorer.config.loader import Scenario
 from madexplorer.core.compiled import CompiledScenario
 from madexplorer.core.simulation import Simulator
 from madexplorer.core.spatial import SpatialIndex
+from madexplorer.core.types import FloatArray, IntArray
 from madexplorer.experiments.benchmark import synthetic_simulator
+from madexplorer.population.unit import PopulationUnit
 from tests.conftest import ROOT, mvp2_scenario_dict, step_context
 
 
@@ -597,3 +601,95 @@ def test_structural_events_give_the_object_reference_beliefs() -> None:
     cell = int(np.flatnonzero(daughter.beliefs.year > 0)[0])
     daughter.beliefs.write(np.array([cell]), 9999, np.array([1.0]), np.array([0]), 0)
     assert a.beliefs.year[cell] != 9999  # separate rows
+
+
+def _merge_trade_contacts_reference(
+    units: list[PopulationUnit],
+    row_of: Mapping[str, int],
+    receiver: IntArray,
+    partner: IntArray,
+    weight: FloatArray,
+    position: IntArray,
+    trade: float,
+) -> tuple[IntArray, IntArray, FloatArray, IntArray]:
+    """The PH2 per-receiver dictionary loop (kept here as the oracle)."""
+    n = len(units)
+    weight = weight.copy()
+    bounds = np.searchsorted(receiver, np.arange(n + 1)).tolist()
+    extra_r: list[int] = []
+    extra_s: list[int] = []
+    extra_w: list[float] = []
+    extra_p: list[int] = []
+    for i, unit in enumerate(units):
+        ties = unit.trade_ties
+        if not ties:
+            continue
+        lo, hi = bounds[i], bounds[i + 1]
+        local = {int(j): lo + k for k, j in enumerate(partner[lo:hi].tolist())}
+        appended: dict[int, int] = {}
+        for partner_id, tie in ties.items():
+            if partner_id not in row_of:
+                continue
+            j = row_of[partner_id]
+            edge = local.get(j)
+            if edge is not None:
+                weight[edge] = weight[edge] + trade * tie
+            else:
+                appended[j] = len(extra_w)
+                extra_r.append(i)
+                extra_s.append(j)
+                extra_w.append(0.0 + trade * tie)
+                extra_p.append(hi - lo + len(appended) - 1)
+    return (
+        np.concatenate([receiver, np.array(extra_r, dtype=np.int64)]),
+        np.concatenate([partner, np.array(extra_s, dtype=np.int64)]),
+        np.concatenate([weight, np.array(extra_w, dtype=np.float64)]),
+        np.concatenate([position, np.array(extra_p, dtype=np.int64)]),
+    )
+
+
+@settings(max_examples=8, deadline=None)
+@given(st.integers(0, 10_000))
+def test_trade_contact_merge_equals_the_dictionary_loop(seed: int) -> None:
+    from madexplorer.knowledge.diffusion import merge_trade_contacts
+
+    sim = _warm_state(60, seed, ticks=2)
+    rng = np.random.default_rng(seed)
+    units = list(sim.state.units.values())
+    ids = [u.id for u in units]
+    for unit in units:  # random ties: local and distant partners, and dead ids
+        unit.trade_ties = {}
+        for _ in range(int(rng.integers(0, 6))):
+            partner_id = "dead" if rng.random() < 0.15 else ids[int(rng.integers(len(ids)))]
+            if partner_id != unit.id:
+                unit.trade_ties[partner_id] = float(rng.uniform(0.001, 3.0))
+    index = SpatialIndex.build(tuple(units))
+    receiver, partner = index.local_pairs(sim.static.neighborhood_table(1))
+    weight = rng.uniform(0.1, 1.0, size=receiver.size)
+    position = np.arange(receiver.size) - np.searchsorted(receiver, receiver)
+    expected = _merge_trade_contacts_reference(
+        units, index.row_of, receiver, partner, weight, position, 0.7
+    )
+    got = merge_trade_contacts(units, index.row_of, receiver, partner, weight.copy(), position, 0.7)
+    for a, b in zip(got, expected, strict=True):
+        assert a.dtype == b.dtype and np.array_equal(a, b)
+    assert got[0].size > receiver.size  # distant ties were appended
+
+
+@settings(max_examples=6, deadline=None)
+@given(st.integers(0, 10_000))
+def test_capability_column_equals_per_unit_capabilities(seed: int) -> None:
+    from madexplorer.knowledge.system import CAPABILITIES
+    from madexplorer.population.energetics import capability_column
+
+    sim = _warm_state(80, seed, ticks=1)
+    rng = np.random.default_rng(seed)
+    assert sim.knowledge is not None
+    ids = [t.id for t in sim.knowledge.system.technologies]
+    for unit in sim.state.units.values():  # many distinct sets, some shared, some empty
+        unit.technologies = frozenset(t for t in ids if rng.random() < 0.3)
+    ctx = step_context(sim)
+    cols = ctx.columns(sim.state)
+    for name in CAPABILITIES:
+        expected = [ctx.capabilities(u)[name] for u in cols.units]
+        assert capability_column(cols, ctx, name).tolist() == expected

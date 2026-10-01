@@ -14,7 +14,7 @@ from madexplorer.population.composition import (
     merge_state,
     split_off,
 )
-from madexplorer.population.familiarity import FamiliarityRule
+from madexplorer.population.familiarity import FamiliarityMap, FamiliarityRule
 from madexplorer.population.unit import PopulationUnit
 
 RULE = FamiliarityRule(baseline=0.6, time_constant_years=20.0)
@@ -150,3 +150,26 @@ def test_absorb_preserves_total_tie_weight_except_the_internal_edge() -> None:
     absorb(units, "b", "a", MergeMode.FUSION, 5, RULE)
     after = sum(sum(u.trade_ties.values()) for u in units.values())
     assert after == pytest.approx(before - internal)
+
+
+def test_merge_familiarity_decay_year_frozen_mvp2_defect() -> None:
+    """KNOWN FROZEN MVP 2 DEFECT, preserved on purpose; this is not the intended behaviour.
+
+    Intended: on a merge both familiarity maps decay to the merge ``year``. Frozen: in
+    ``composition.merge_state`` the residence loop ``for cell, year in
+    source.recent_residence.items()`` shadows ``year``, so familiarity decays to the
+    source's last-iterated residence year. The assertion pins the frozen trajectory (and
+    ``lifecycle.merge_units`` reproduces it). Correcting it needs an explicit model-version
+    change and revalidation; see objective/status.md, "Known frozen semantic bugs".
+    """
+    rule = FamiliarityRule(baseline=0.6, time_constant_years=20.0)
+    a, b = _unit("a", 5), _unit("b", 5)
+    for unit in (a, b):
+        unit.familiarity = FamiliarityMap({4: 0.9}, {4: 0})
+    b.recent_residence = {7: 3}  # the source's only residence record: year 3
+    merge_year = 40
+    merge_state(a, b, MergeMode.FUSION, merge_year, rule)
+    frozen = FamiliarityMap({4: 0.9}, {4: 0}).effective(4, 3, rule)
+    intended = FamiliarityMap({4: 0.9}, {4: 0}).effective(4, merge_year, rule)
+    assert a.familiarity.stored(4) == (frozen, 2)  # exact: equal inputs average exactly
+    assert abs(frozen - intended) > 0.1  # the defect is material, not rounding

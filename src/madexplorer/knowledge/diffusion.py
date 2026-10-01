@@ -249,43 +249,10 @@ class DiffusionSubsystem:
         weight = np.where(same_cell, spec.same_cell_contact, spec.adjacent_contact)
         position = np.arange(receiver.size) - np.searchsorted(receiver, receiver)
         # Trade ties: add to an existing local contact, or append after the local ones.
-        bounds = np.searchsorted(receiver, np.arange(n + 1)).tolist()
-        extra_receiver: list[int] = []
-        extra_source: list[int] = []
-        extra_weight: list[float] = []
-        extra_position: list[int] = []
-        live = state.units
-        row_of = index.row_of
-        trade = spec.trade_contact
-        for i, unit in enumerate(units):
-            ties = unit.trade_ties
-            if not ties:
-                continue
-            lo, hi = bounds[i], bounds[i + 1]
-            local = {int(j): lo + k for k, j in enumerate(partner[lo:hi].tolist())}
-            appended: dict[int, int] = {}
-            for partner_id, tie in ties.items():
-                if partner_id not in live:
-                    continue
-                j = row_of[partner_id]
-                edge = local.get(j)
-                if edge is not None:
-                    weight[edge] = weight[edge] + trade * tie
-                elif j in appended:
-                    k = appended[j]
-                    extra_weight[k] = extra_weight[k] + trade * tie
-                else:
-                    appended[j] = len(extra_weight)
-                    extra_receiver.append(i)
-                    extra_source.append(j)
-                    extra_weight.append(0.0 + trade * tie)
-                    extra_position.append(hi - lo + len(appended) - 1)
-        receivers = np.concatenate([receiver, np.array(extra_receiver, dtype=np.int64)])
-        sources = np.concatenate([partner, np.array(extra_source, dtype=np.int64)])
-        weights = np.concatenate([weight, np.array(extra_weight, dtype=np.float64)])
-        order = np.lexsort(
-            (np.concatenate([position, np.array(extra_position, dtype=np.int64)]), receivers)
+        receivers, sources, weights, positions = merge_trade_contacts(
+            units, index.row_of, receiver, partner, weight, position, spec.trade_contact
         )
+        order = np.lexsort((positions, receivers))
         receivers, sources, weights = receivers[order], sources[order], weights[order]
         cols = ctx.columns(state)
         knowledge = cols.knowledge()
@@ -357,6 +324,68 @@ class DiffusionSubsystem:
                 tuple(lost_by.get(i, ()) for i in rows.tolist()),
             )
         ]
+
+
+def merge_trade_contacts(
+    units: Sequence[PopulationUnit],
+    row_of: Mapping[str, int],
+    receiver: IntArray,
+    partner: IntArray,
+    weight: FloatArray,
+    position: IntArray,
+    trade_contact: float,
+) -> tuple[IntArray, IntArray, FloatArray, IntArray]:
+    """Local contacts plus trade ties: ``(receivers, sources, weights, positions)``.
+
+    A tie to a local partner adds ``trade_contact * tie`` to that contact's weight; a tie
+    to another live unit becomes an extra contact after the receiver's local ones, in the
+    receiver's tie order. ``weight`` is updated in place. Partner ids are unique per
+    receiver, so each contact gets at most one addition and the elementwise array form is
+    exact (``_evaluate_reference`` is the per-receiver dictionary version). Ties to units
+    outside the index (dead) are ignored.
+    """
+    n = len(units)
+    tie_receiver: list[int] = []
+    tie_source: list[int] = []
+    tie_value: list[float] = []
+    for i, unit in enumerate(units):
+        ties = unit.trade_ties
+        if ties:
+            for partner_id, tie in ties.items():
+                j = row_of.get(partner_id)
+                if j is not None:
+                    tie_receiver.append(i)
+                    tie_source.append(j)
+                    tie_value.append(tie)
+    if not tie_receiver:
+        return receiver, partner, weight, position
+    t_recv = np.array(tie_receiver, dtype=np.int64)
+    t_src = np.array(tie_source, dtype=np.int64)
+    t_add = trade_contact * np.array(tie_value, dtype=np.float64)
+    # Match ties to local contacts by (receiver, partner) key.
+    local_key = receiver * n + partner
+    sort = np.argsort(local_key, kind="stable")
+    sorted_key = local_key[sort]
+    tie_key = t_recv * n + t_src
+    at = np.searchsorted(sorted_key, tie_key)
+    found = at < sorted_key.size
+    found[found] = sorted_key[at[found]] == tie_key[found]
+    edges = sort[at[found]]
+    weight[edges] = weight[edges] + t_add[found]
+    # Extra contacts: after the receiver's local contacts, in tie order.
+    extra = ~found
+    e_recv, e_src = t_recv[extra], t_src[extra]
+    e_weight = 0.0 + t_add[extra]
+    local_count = np.bincount(receiver, minlength=n)
+    first = np.r_[True, e_recv[1:] != e_recv[:-1]] if e_recv.size else np.zeros(0, dtype=bool)
+    group_start = np.maximum.accumulate(np.where(first, np.arange(e_recv.size), 0))
+    e_position = local_count[e_recv] + (np.arange(e_recv.size) - group_start)
+    return (
+        np.concatenate([receiver, e_recv]),
+        np.concatenate([partner, e_src]),
+        np.concatenate([weight, e_weight]),
+        np.concatenate([position, e_position]),
+    )
 
 
 @dataclass(frozen=True, eq=False)

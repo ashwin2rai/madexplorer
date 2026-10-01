@@ -322,7 +322,22 @@ class EnergeticsSubsystem:
 
 def capability_column(cols: "UnitColumns", ctx: StepContext, name: str) -> FloatArray:
     """One capability for every row, from each distinct technology set's cached capability
-    map (the values ``ctx.capabilities(unit)[name]`` returns)."""
+    map (the values ``ctx.capabilities(unit)[name]`` returns).
+
+    With compiled technologies the distinct sets are found from the table's bitmasks (a
+    bitmask identifies its set exactly: every technology has one bit), so only one
+    capability lookup per distinct set remains in Python.
+    """
+    if ctx.compiled is not None and ctx.compiled.technologies is not None:
+        masks = cols.technology_masks()
+        _, first, inverse = np.unique(masks, return_index=True, return_inverse=True)
+        sets = cols.technologies()
+        distinct_values = np.array(
+            [ctx.capabilities_of(sets[i])[name] for i in first.tolist()],  # type: ignore[index]
+            dtype=np.float64,
+        )
+        column: FloatArray = distinct_values[inverse]
+        return column
     sets = cols.technologies()
     distinct: dict[frozenset[str], float] = {}
     values = np.empty(len(sets))

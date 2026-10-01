@@ -11,7 +11,7 @@ Use this file to answer: **What exists now? What is frozen? What is still limite
 
 ## 1. Current phase
 
-> **Resume point:** PH3b is in progress; see Section 9, "PH3b: authoritative `UnitTable` — IN PROGRESS".
+> **Resume point:** PH3b is complete (Section 9, "PH3b results"). Next: choose PH4 from the PH3b profile (numeric compilation, belief storage, or pair processing) — a decision, not yet made.
 
 **MVP 1:** complete.  
 **MVP 2:** complete and scientifically frozen.  
@@ -497,7 +497,7 @@ the in-place +25% policy fixed it (918 MB, versus 788 MB in PH2).
 - Migration and sharing lost their per-unit belief loops. Calls per unit barely changed:
   those loops were numpy-heavy rather than call-heavy.
 
-### PH3b: authoritative `UnitTable` — IN PROGRESS (paused 2026-09-30; resume here)
+### PH3b: authoritative `UnitTable` — COMPLETE (2026-10-01); PH4 not yet chosen
 
 State at pause: `make check` green (208 tests), exactness oracle IDENTICAL, golden
 fixtures unchanged. Everything below is Level A. Nothing has been benchmarked beyond
@@ -535,23 +535,128 @@ Done:
 Quick benchmark (1k synthetic units, CPU): PH3a 130 ms/tick, 296 calls/unit/tick → now
 116 ms/tick, ~200-207 calls/unit/tick.
 
-Remaining PH3b work (in order):
-1. Centralized lifecycle API (`create_unit` / `remove_unit` / `split_unit` /
-   `merge_units`) operating on table rows. Fission and fusion applies still go through
-   `composition.split_off` / `merge_state` via descriptors (fission apply ~16 and fusion
-   apply ~11 calls/unit/tick at 1k). Relocation and trade transfers also write through
-   descriptors.
-2. Lifecycle stress tests (random create / split / move / merge / extinguish / slot
-   reuse against the object reference: no stale cohorts, technology bits, knowledge,
-   scalars or beliefs; order unchanged).
-3. Remaining per-unit costs: foraging familiarity (`effective` / `practice`), trade tie
-   decay (dictionary per unit), diffusion's trade merge loop, the innovation per-candidate
-   path (descriptor reads), fusion's `has_reproductive_pair`.
-4. Measure the object↔batch sync (the PH2 ~25 ms/tick) with
-   `scratchpad`-style access counting: expected near zero for normal ticks.
-5. Full PH3b benchmark (canonical 600 y, `bench-scale`, both families, 100×100),
-   bytes/unit excluding beliefs, UnitTable memory; report PH0 → PH3b; then stop before
-   Numba (PH4 decision from the new profile).
+Done 2026-10-01 (items 1-2; `make check` green, 211 tests; oracle IDENTICAL; golden
+fixtures unchanged):
+- `population/lifecycle.py`: `create_unit` / `remove_unit` / `split_unit` / `merge_units`.
+  With a table they apply the `composition` rules directly to table and belief-store rows
+  (`UnitTable.copy_row`, `DenseBeliefStore.copy_row` / `merge_row`); a daughter is built in
+  place over a claimed slot (`UnitRegistry.claim_slot`, `unit.bound_unit`) instead of
+  detached-then-loaded; absorbed and extinct units free their rows without copying state
+  back (`UnitRegistry.discard`; a removed object keeps only `EXTERNAL_FIELDS` and raises
+  `AttributeError` on table fields). Without a table every function delegates to
+  `composition` (reference engine). Fission, fusion, coarsening, extinction and founding use
+  it. Relocation and trade transfers write table rows directly (same Python-float
+  arithmetic); trade tie decay skips units without ties.
+- `tests/test_lifecycle.py`: random create / split / move / merge (both modes) / remove /
+  re-technology sequences against the object reference after every operation; freed rows
+  reset (scalars, cohorts, knowledge, technology names and bits, beliefs), slot reuse
+  exercised, then ordinary ticks stay identical. Mutation-checked (dropping the belief
+  merge, the share subtraction, the daughter's group reset or the row reset each fails).
+- Quick benchmark (1k synthetic, CPU): 111.5 → 101-103 ms/tick; 207 → 180.5
+  calls/unit/tick. Profiled fission apply −70%, fusion apply −45%.
+
+**Found in PH3b:** a frozen semantic bug in `merge_state` (familiarity decay year), reproduced
+exactly and deferred; see Section 12.7, B1.
+
+Item 3 (2026-10-01, time-boxed by measured value; every change Level A with a focused
+differential test, `make check` green at 214 tests, oracle IDENTICAL):
+- **Diffusion trade contacts — done.** `diffusion.merge_trade_contacts`: one flat pass over
+  the tie dictionaries into `(receiver, source, value)` arrays, then an exact vectorized match
+  against the local pair keys (partner ids are unique per receiver, so each contact gets at
+  most one addition) and vectorized positions for appended contacts. 4.25 → 1.88 ms per tick
+  at 1k (≈2.4% of a tick). Test: against the PH2 dictionary loop with random local, distant
+  and dead ties. The remaining flat pass needs a tie store (arrays instead of per-unit
+  dictionaries) — a social-network rewrite, deferred.
+- **Capability columns — done.** `energetics.capability_column` finds distinct technology
+  sets from the table's bitmasks (`np.unique`; a mask identifies its set exactly) and looks up
+  one capability map per distinct set: 0.155 → 0.042 ms per call, 5 calls per tick. Test:
+  every capability against `ctx.capabilities(unit)` on random sets.
+- **Trade donor search — tried, reverted.** A lazy (cost, id)-ordered scan over cached
+  equal-cost cell groups was exact but no faster (A/B 4.0-4.4 vs 4.4-4.7 ms): at 1k units a
+  recipient reaches only ~21 cells, offers rarely cover a deficit (no early exit), and the
+  existing search is already ~9k dictionary lookups per tick. Candidate discovery is cheap.
+- **Foraging familiarity — deferred.** One `effective` pass is 0.36 ms per tick at 1k
+  (≈1% for evaluate plus `practice`); reusing evaluate's value in apply would save ≈0.35%.
+  A packed sparse familiarity store is not justified by PH3b's profile; revisit for MVP 3
+  scale or a memory/data-layout phase.
+- **Not changed (measured small):** fusion's `has_reproductive_pair` (~110 calls per tick),
+  fission/fusion evaluate (~2 ms each including a spatial index build; the per-unit hazard
+  and its interleaved draws stay scalar), innovation (< 1%). Rare structural applies are
+  left scalar by design.
+- Quick benchmark: 180.5 → 166.6 calls/unit/tick (CPU ms/tick within machine noise,
+  ~103 ms).
+
+Item 4 — object↔table sync (cProfile access counting, 1k units, 4 ticks): descriptor and
+accessor calls are 0.54 per unit per tick (farming state 0.40), against ~239 reads and ~35
+writes per unit per tick in PH2: ≈0.2 ms per tick, versus ≈25 ms in PH2. The remainder is
+fusion's `has_reproductive_pair` cohort reads and the lifecycle applies. Normal ticks do
+not sync objects with the table.
+
+Item 5 — **PH3b results** (CPU; same 2-core machine; seeded output identical: seed 0 over 600
+years ends with 33,070 people and 1,212 units; reports `benchmarks/perf/ph3b_*.json`).
+
+| Benchmark | PH0 | PH1 | PH2 | PH3a | PH3b | PH0 → PH3b |
+|---|---:|---:|---:|---:|---:|---:|
+| Seed 0, 600 y: CPU s | 41.9 | 35.8 | 29.7 | 24.9 | **17.9** | −57% (2.34×) |
+| Late window (~1,086 units): ms/tick (wall) | 328 | 273 | 198 | 183 | **132** | −60% |
+| 1k synthetic (40×40): CPU ms/tick | 264 | 210 | 157 | 130 | **102** | −61% |
+| ... calls/unit/tick | 509 | 435 | 300 | 296 | **167** | −67% |
+| 10k synthetic (40×40): CPU ms/tick | 5,092 | 3,589 | 2,327 | 2,022 | **1,545** | −70% |
+| ... calls/unit/tick | 1,064 | 799 | 232 | 231 | **114** | −89% |
+| Fixed density 500 / 1k / 2k / 4k: µs/unit/tick | 234 / 221 / 246 / 263 | 230 / 190 / 216 / 227 | 156 / 146 / 164 / 169 | 150 / 146 / 148 / 157 | **96 / 97 / 99 / 106** | −55 to −60% |
+| Varied density on 40×40, 250 / 1k / 4k: µs/unit/tick | 228 / 251 / 291 | 185 / 202 / 246 | 149 / 159 / 169 | 133 / 128 / 148 | **92 / 106 / 109** | −58 to −63% |
+| 1k units on 100×100: CPU ms/tick | 253 | 207 | 153 | 155 | **103** | −59% |
+| Peak RSS: 4k fixed density / seed 0 600 y | 787 / — | 785 / — | 788 / — | 918 / 146 | 913 / 121 MB | |
+
+The 2× stretch target over the freeze is met on every benchmark. Fixed-density cost is flat
+within ±5% from 500 to 4k units (linear scaling at constant local density).
+
+Runtime structure:
+- Python calls per unit per tick: 167 (1k), 114 (10k), 163-168 (fixed density).
+- Object↔table sync: ≈0.5 accessor calls per unit per tick (item 4), effectively zero.
+- Transient Python memory per tick: 11 MB at 1k (~11 kB per unit), ~44 MB at 4k on 113×113
+  in ordinary ticks. The 4k fixed-density report's ~500 MB mean (also in PH3a) is one
+  belief-store growth tick (+25%, 955 MB traced as an allocation; resized in place, RSS
+  unaffected) averaged over the two traced ticks, not per-tick churn.
+
+Memory (warmed synthetic states):
+
+| | 1k on 40×40 | 1k on 100×100 | 4k on 113×113 |
+|---|---:|---:|---:|
+| UnitTable total (capacity rows) | 2.0 MB (1,220) | 2.0 MB (1,220) | 7.6 MB (4,651) |
+| ... per live unit: cohorts (91 ages × 2 × int64) / scalars / knowledge+tech | 1,472 / 193 / ~60 B per row | same | same |
+| External per-unit object state (familiarity, residence, reports, history, ties) | ~2.1 kB | ~2.0 kB | ~2.0 kB |
+| Dense belief store (13 B per unit per cell) | 24 MB | 151 MB | 736 MB |
+| Unused slot capacity (table and store) | 14% | 15% | 9% |
+
+Non-belief state is ≈4 kB per unit (half of it the int64 cohort matrices); beliefs are
+23-179 kB per unit and grow with world cells. **Dense beliefs are the memory ceiling**: 10k
+units on 113×113 would need ~1.7 GB of beliefs, 50k units ~8 GB (beyond this 7 GB machine).
+
+**Hotspots** (py-spy native sampling; share of tick and where the samples' leaves are:
+numpy inner loops / numpy call dispatch / interpreter (bytecode, dicts, attributes) /
+allocation). Canonical seed 0 over 600 years:
+
+| Component | Share | Kernel / dispatch / interp. / alloc | Class |
+|---|---:|---|---|
+| Knowledge sharing (select + receive reports) | 20% | 65 / 9 / 12 / 14 | pair/contact processing (numpy-bound) |
+| Demography | 11% | 41 / 40 / 12 / 7 | numeric kernel (many small numpy calls) |
+| Foraging evaluate (per-cell solver, single-group fast path) | 11% | 8 / 11 / 77 / 4 | numeric kernel in scalar Python |
+| Migration evaluate | 10% | 33 / 21 / 38 / 7 | numeric kernel + per-unit Python |
+| Diffusion evaluate | 9% | 28 / 19 / 45 / 8 | pair/contact processing + Python containers (ties, adoption loop) |
+| Fission/fusion apply | 7% | 8 / 25 / 59 / 8 | structural event |
+| Field planning (agriculture evaluate) | 6% | 17 / 12 / 54 / 17 | numeric kernel in scalar Python (exact investment rule) |
+| Fission/fusion evaluate | 5% | 7 / 20 / 71 / 3 | Python scalar hazards with interleaved draws |
+| Innovation | 5% | 15 / 28 / 50 / 7 | Python container/state lookup (per candidate) |
+| Ecology | 4% | 23 / 27 / 36 / 13 | numeric kernel |
+| Trade evaluate + apply | 3-8% | ~90% interpreter | Python container/state lookup (tie dictionaries) |
+
+Whole tick: numpy kernels 31%, numpy dispatch 18%, interpreter 41%, allocation 10%
+(canonical); 1k synthetic 34 / 17 / 41 / 8; 4k fixed density 34 / 16 / 42 / 8 (migration
+then leads at 19%); **10k on 40×40: 65 / 10 / 19 / 6, with knowledge sharing 52% and
+diffusion 13% of the tick (pairwise contacts, 74 per unit)**.
+
+PH3b is complete. Stop before PH4: the PH4 choice is a decision (Section 9.2 rule).
 
 Differential tests (`tests/test_performance_layer.py`): the spatial index against
 `units_by_cell()`, invalidation, compiled data against the configuration, energy balance,
@@ -706,6 +811,32 @@ Selective emigration of socioeconomic strata is deferred to MVP 3.
 
 Belief semantics are now bounded and plausible, but storage still scales with units × world cells.
 This is an engineering/scalability limitation, not a current behavioral defect.
+
+### 12.7 Known frozen semantic bugs (deferred model corrections)
+
+These are genuine defects that are part of the frozen MVP 2 reference trajectory. They are
+preserved exactly during Performance Hardening and must not be fixed in passing: correcting
+one is an explicit model-version change with golden re-recording and statistical
+revalidation, to be decided after Performance Hardening (before or during the next model
+version).
+
+**B1. Merge familiarity decays to the wrong year** (found in PH3b, 2026-10-01).
+- *Location:* `population/composition.py`, `merge_state`, the residence loop
+  `for cell, year in source.recent_residence.items()`, which shadows the `year` argument
+  used by the following `target.familiarity.merge(..., year, ...)`.
+  `population/lifecycle.py` `merge_units` reproduces it deliberately (`decay_year`).
+- *Intended:* on fusion and aggregation both familiarity maps are decayed to the merge year,
+  then population-weighted.
+- *Frozen:* they are decayed to the source's last-iterated residence year (dictionary order;
+  the merge year only if the source has no residence record), usually earlier than the merge
+  year, so merged familiarity is decayed too little and stamped with an early year.
+- *Effect:* familiarity after fusion and coarsening; through it, later foraging returns and
+  possibly agriculture and migration choices. Only with `mechanisms.familiarity_decay` on
+  (without decay a merge takes the per-cell maximum and ignores the year).
+- *Why preserved:* changing it changes golden fixtures and long stochastic trajectories of the
+  frozen canonical scenarios; Performance Hardening is Level A against that reference.
+- *Test:* `tests/test_composition.py::test_merge_familiarity_decay_year_frozen_mvp2_defect`
+  pins the frozen behaviour and states that it is a defect.
 
 ---
 

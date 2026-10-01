@@ -150,6 +150,9 @@ def merge_state(
     target.reserve_kcal_per_capita = total_reserve / n if n else 0.0
     target.beliefs = target.beliefs.merged_with(source.beliefs)
     target.report_cells = np.union1d(target.report_cells, source.report_cells)
+    # KNOWN FROZEN MVP 2 DEFECT (objective/status.md 12.7, B1): this loop variable shadows
+    # the merge `year`, so familiarity below decays to the source's last residence year.
+    # Preserved deliberately; correcting it is a model-version change.
     for cell, year in source.recent_residence.items():
         target.recent_residence[cell] = max(year, target.recent_residence.get(cell, year))
     target.familiarity.merge(source.familiarity, n_t, n_s, year, familiarity)
