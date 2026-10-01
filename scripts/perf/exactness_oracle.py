@@ -9,14 +9,15 @@ Usage:
     uv run python scripts/perf/exactness_oracle.py benchmarks/perf/oracle_ph0.json
     uv run python scripts/perf/exactness_oracle.py --record <file>   # on a new platform
 
-``--logical`` hashes beliefs in their logical form (each unit's current entries only)
-instead of raw store rows, so a store that physically drops expired entries (sparse,
-PH4b) can be checked: ``MADEXPLORER_BELIEFS=sparse ... --logical
-benchmarks/perf/oracle_ph4b_logical.json`` (recorded with the dense store).
+Raw mode hashes raw belief rows and therefore always runs on the dense reference store
+(the production default is sparse). ``--logical`` hashes beliefs in their logical form
+(each unit's current entries only) on the default backend (or ``$MADEXPLORER_BELIEFS``):
+``... --logical benchmarks/perf/oracle_ph4b_logical.json`` (recorded with the dense store).
 """
 
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -30,6 +31,8 @@ from madexplorer.population.unit import belief_slot
 LOGICAL = "--logical" in sys.argv
 if LOGICAL:
     sys.argv.remove("--logical")
+elif os.environ.setdefault("MADEXPLORER_BELIEFS", "dense") != "dense":
+    sys.exit("raw-byte hashes need the dense reference store (use --logical for sparse)")
 
 
 def belief_arrays(sim, u):

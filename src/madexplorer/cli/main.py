@@ -301,7 +301,7 @@ def _beliefs_option(p: argparse.ArgumentParser) -> None:
         choices=BACKENDS,
         default=None,
         help="belief storage backend (storage only; results are identical); "
-        "default $MADEXPLORER_BELIEFS or dense",
+        "default $MADEXPLORER_BELIEFS or sparse (dense is the reference backend)",
     )
 
 

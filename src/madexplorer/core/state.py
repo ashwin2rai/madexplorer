@@ -183,7 +183,7 @@ class SimulationState:
     ecology: EcologyState
     units: dict[str, PopulationUnit]
     beliefs: BeliefStore | None = None
-    belief_backend: str = "dense"  # dense | sparse | auto (storage only; no semantics)
+    belief_backend: str = "sparse"  # dense | sparse | auto (storage only; no semantics)
     # Production: hot unit state lives in a UnitTable. False keeps it on the unit objects
     # (the object-authoritative reference engine, used by differential tests).
     table_mode: bool = True

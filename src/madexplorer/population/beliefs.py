@@ -661,15 +661,18 @@ BACKENDS = ("dense", "sparse", "auto")
 BACKEND_ENV = "MADEXPLORER_BELIEFS"  # inherited by spawned ensemble and benchmark workers
 
 
+DEFAULT_BACKEND = "sparse"  # production default; dense stays the reference/debug backend
+
+
 def requested_backend() -> str:
-    """The backend requested for new simulators: ``$MADEXPLORER_BELIEFS`` or ``dense``."""
-    return os.environ.get(BACKEND_ENV, "dense")
+    """The backend requested for new simulators: ``$MADEXPLORER_BELIEFS`` or the default."""
+    return os.environ.get(BACKEND_ENV, DEFAULT_BACKEND)
 
 
-# ``auto``: dense for canonical-size worlds (<= 50 x 50), sparse above. Measured in PH4b
-# (objective/status.md): sparse is within CPU noise of dense even on 40 x 40 and faster or
-# equal from 80 x 80 up, while dense belief memory grows with world cells; dense remains
-# the default and the frozen-validation reference until the backend choice is revisited.
+# ``auto`` (kept, not the default): dense for worlds up to 50 x 50, sparse above. PH4b/PH5
+# measured sparse within CPU noise of dense even on 40 x 40 and 13-380x smaller, so sparse
+# is the production default; dense is the reference backend (raw-byte oracle, expiry and
+# backend differential tests, debugging).
 AUTO_SPARSE_MIN_CELLS = 2500
 
 
