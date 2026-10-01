@@ -194,12 +194,10 @@ def merge_units(
     reserve[t] = total_reserve / merged if merged else 0.0
     store.merge_row(s, t)
     target.report_cells = np.union1d(target.report_cells, source.report_cells)
-    decay_year = year
-    for cell, seen in source.recent_residence.items():
-        target.recent_residence[cell] = max(seen, target.recent_residence.get(cell, seen))
-        decay_year = seen
-    # Frozen MVP 2 behaviour: in merge_state the residence loop variable shadows ``year``,
-    # so familiarity is decayed to the source's last-iterated residence year (the merge
-    # year only when it has none). Reproduced exactly; see objective/status.md (PH3b).
-    target.familiarity.merge(source.familiarity, n_t, n_s, decay_year, familiarity)
+    for cell, residence_year in source.recent_residence.items():
+        target.recent_residence[cell] = max(
+            residence_year, target.recent_residence.get(cell, residence_year)
+        )
+    # Effective familiarity of both units at the merge year (MVP 2.1, B1 fixed).
+    target.familiarity.merge(source.familiarity, n_t, n_s, year, familiarity)
     registry.discard(source_id)

@@ -4,23 +4,35 @@ This file is the **forward-looking implementation status** for Mad Explorer afte
 It intentionally omits the experiment-by-experiment history that accumulated during MVP 2 stabilization.
 
 For scientific/model requirements, read `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md` (document version 2.0) first.
-For exact freeze provenance, read `baselines/mvp2/freeze_manifest.json`.
+For exact provenance, read `baselines/mvp2_1/freeze_manifest.json` (current scientific base) and
+`baselines/mvp2/freeze_manifest.json` (historical MVP 2 freeze).
 Use this file to answer: **What exists now? What is frozen? What is still limited? What should we do next?**
 
 ---
 
 ## 1. Current phase
 
-> **Resume point:** MVP 2.1 semantic cleanup (Section 10): fix B1 under an explicit
-> semantic version, establish the MVP 2.1 reference, then design MVP 3.
+> **Resume point:** MVP 2.1 scientific base established; Performance Hardening complete;
+> **MVP 3 ready to begin** with the design of the socioeconomic-strata model (Section 16),
+> before any MVP 3 mechanism is implemented.
 
 **MVP 1:** complete.  
 **MVP 2:** complete and scientifically frozen (historical reference, reproducible).  
-**MVP 2 Performance Hardening:** **complete** (Section 9).  
-**Current milestone:** **MVP 2.1 — semantic cleanup** (known category-A defects only).  
-**Next scientific milestone:** **MVP 3 — Distributional Society**.
+**MVP 2 Performance Hardening:** complete (Section 9).  
+**MVP 2.1 semantic cleanup:** complete — B1 corrected; the scientific base for MVP 3.  
+**Next scientific milestone:** **MVP 3 — Distributional Society** (design first).
 
-### Frozen MVP 2 identity
+### MVP 2.1 identity (current scientific base)
+
+- Manifest: `baselines/mvp2_1/freeze_manifest.json` (commit: the one adding the manifest)
+- Source-tree SHA-256: `55a9ea94b81cf786f3948f43d648696acad20504a540fe8494e09ca44192845c`
+- Only semantic difference from MVP 2: B1 (Section 12.7)
+- Golden fixtures: `tests/regression/golden/` (MVP 2 versions kept in `baselines/mvp2/golden/`)
+- Oracles: `benchmarks/perf/oracle_mvp2_1.json` (raw, dense) and
+  `benchmarks/perf/oracle_mvp2_1_logical.json` (logical, any backend); MVP 2 oracles kept
+- Reference runs: `baselines/mvp2_1/` (neolithic 4 × 600 y; pressure 4 × 400 y, both arms)
+
+### Frozen MVP 2 identity (historical)
 
 - Freeze commit: `f505fd118aa17bda3cc1cbb92afed13008bf102b`
 - Source-tree SHA-256: `7692ac03a2c75ad598e771098231b1f8bfb74bf918cd4b148227837b0be6bea5`
@@ -314,15 +326,19 @@ Engineering rules established during hardening (still binding):
 
 ---
 
-## 10. Current objective: MVP 2.1 semantic cleanup
+## 10. MVP 2.1 semantic cleanup — COMPLETE (2026-10-01)
 
-MVP 2.1 removes known frozen semantic defects (category A: correctness bugs that would
-contaminate MVP 3) before MVP 3 builds on them, under an explicit semantic version: golden
-fixtures and oracles are re-recorded intentionally, and the MVP 2 freeze artifacts stay
-intact as the historical reference. It is not a redesign: no unrelated equation changes,
-no tuning toward the MVP 2 trajectories.
-
-Scope: B1 (Section 12.7), plus any other category-A item found by the defect audit.
+MVP 2.1 removed the known category-A defect (B1) under an explicit semantic version. Golden
+fixtures and oracles were re-recorded intentionally; MVP 2 artifacts stay intact
+(`baselines/mvp2/`). Validation (details in `baselines/mvp2_1/freeze_manifest.json`):
+mechanism tests of the corrected rule; matched seeds (neolithic 4 × 600 y) diverge
+stochastically with unchanged means (final population 22,504 → 22,320, farm share 0.463 →
+0.456, sedentary share 0.820 → 0.800, fusions 1,622 → 1,598, no extinctions); pressure
+(6 matched seeds × 400 y) keeps cultivation's carrying-capacity effect (population 3.1-3.8×,
+density 2.3-2.5×, farm share 0.62-0.67). One statistical check changed: the pressure test's
+energy-deficit comparison is pooled over its matched seeds (per seed it flipped on 2 of 6
+seeds under MVP 2.1; 6-seed means 0.029 vs 0.038, farming lower); per-seed population,
+density and farm-share checks are unchanged.
 
 ---
 
@@ -383,31 +399,29 @@ Selective emigration of socioeconomic strata is deferred to MVP 3.
 Formerly dense per-unit maps scaling with units × world cells. The sparse store (default)
 holds only current beliefs (~40-50 entries per unit), independent of world size.
 
-### 12.7 Known frozen semantic bugs (deferred model corrections)
+### 12.7 Known semantic defects
 
-These are genuine defects that are part of the frozen MVP 2 reference trajectory. They are
-preserved exactly during Performance Hardening and must not be fixed in passing: correcting
-one is an explicit model-version change with golden re-recording and statistical
-revalidation, to be decided after Performance Hardening (before or during the next model
-version).
+**B1. Merge familiarity decayed to the wrong year — fixed in MVP 2.1.** In MVP 2,
+`composition.merge_state`'s residence loop (`for cell, year in
+source.recent_residence.items()`) shadowed the merge year, so merged familiarity was
+decayed to the source's last-iterated residence year (half of all merges in canonical runs,
+usually by 10+ years). MVP 2.1 combines both units' effective familiarity at the merge year
+(`merge_state`, `lifecycle.merge_units`; tests in `tests/test_composition.py`). Exponential
+decay composes and the population-weighted mean is linear in the excess over baseline, so
+the systematic effect is small; MVP 2 preserved the defect for freeze equivalence.
 
-**B1. Merge familiarity decays to the wrong year** (found in PH3b, 2026-10-01).
-- *Location:* `population/composition.py`, `merge_state`, the residence loop
-  `for cell, year in source.recent_residence.items()`, which shadows the `year` argument
-  used by the following `target.familiarity.merge(..., year, ...)`.
-  `population/lifecycle.py` `merge_units` reproduces it deliberately (`decay_year`).
-- *Intended:* on fusion and aggregation both familiarity maps are decayed to the merge year,
-  then population-weighted.
-- *Frozen:* they are decayed to the source's last-iterated residence year (dictionary order;
-  the merge year only if the source has no residence record), usually earlier than the merge
-  year, so merged familiarity is decayed too little and stamped with an early year.
-- *Effect:* familiarity after fusion and coarsening; through it, later foraging returns and
-  possibly agriculture and migration choices. Only with `mechanisms.familiarity_decay` on
-  (without decay a merge takes the per-cell maximum and ignores the year).
-- *Why preserved:* changing it changes golden fixtures and long stochastic trajectories of the
-  frozen canonical scenarios; Performance Hardening is Level A against that reference.
-- *Test:* `tests/test_composition.py::test_merge_familiarity_decay_year_frozen_mvp2_defect`
-  pins the frozen behaviour and states that it is a defect.
+Defect audit at MVP 2.1 (status.md, comments, xfails):
+
+| Item | Class |
+|---|---|
+| B1 merge familiarity decay year | A — correctness bug (fixed) |
+| Aggregation not scientifically neutral (12.1; strict xfail) | B — accepted limitation; MVP 3 statistical units |
+| Migration food utility mixes wild stock and crop flow (12.2) | B — accepted approximation, deferred |
+| Simple ecology (12.3) | C — deferred scientific feature |
+| Group-level social state, whole-group migration (12.4, 12.5) | C — MVP 3 |
+| Stale README/comments/docstrings, aggregation warning (Section 14) | D — documentation/tooling |
+
+No other category-A defect is known.
 
 ---
 
@@ -462,7 +476,8 @@ change, golden + oracle checks, before/after measurements) is archived in
 
 ## 16. Gate to MVP 3
 
-Begin substantive MVP 3 work once MVP 2.1 is recorded (Performance Hardening is complete).
+MVP 2.1 is recorded and Performance Hardening is complete: MVP 3 may begin, starting with a
+careful design of the socioeconomic-strata model before any mechanism is written.
 
 MVP 3 should introduce **joint weighted socioeconomic strata**, not unrelated marginal distributions.
 
@@ -566,7 +581,8 @@ species/         species profiles
 technologies/    technology definitions
 tests/           mechanism, regression, statistical tests
 benchmarks/perf/ committed performance baselines
-baselines/mvp2/  MVP 2 freeze manifest and compact reference runs
+baselines/mvp2/  MVP 2 freeze manifest, compact reference runs, MVP 2 golden fixtures
+baselines/mvp2_1/ MVP 2.1 manifest and reference runs (current scientific base)
 ```
 
 ---
@@ -587,5 +603,5 @@ baselines/mvp2/  MVP 2 freeze manifest and compact reference runs
 
 ## 20. Current one-line handoff
 
-> **Performance hardening is complete; the next phase is MVP 2.1 semantic cleanup (B1),
-> followed by MVP 3.**
+> **MVP 2.1 scientific base established (B1 fixed); Performance Hardening complete; MVP 3
+> ready to begin — design the socioeconomic-strata model before implementing it.**

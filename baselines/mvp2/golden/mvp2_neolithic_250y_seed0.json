@@ -1,0 +1,18 @@
+{
+  "platform": "numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3",
+  "final_year": 250,
+  "final_population": 1292,
+  "final_units": 54,
+  "final_occupied_cells": 53,
+  "totals": {
+    "births": 4464.0,
+    "deaths": 3232.0,
+    "migrations": 643.0,
+    "fissions": 94.0,
+    "fusions": 41.0,
+    "inventions": 17.0
+  },
+  "event_count": 217,
+  "metrics_sha256": "094425afff72fb3ae3e98c2b1c7b64d2d703417b9024f19a3ef703ce67ae43ad",
+  "events_sha256": "c393fe5a0c51d0ad02bc79ed0c6e82628ab0a6d3c34de5e86bffc3bb29d64857"
+}

@@ -113,10 +113,13 @@ def merge_state(
     target: PopulationUnit,
     source: PopulationUnit,
     mode: MergeMode,
-    year: int,
+    merge_year: int,
     familiarity: FamiliarityRule,
 ) -> None:
-    """Fold ``source``'s state into ``target`` (network rewiring is :func:`absorb`'s job)."""
+    """Fold ``source``'s state into ``target`` (network rewiring is :func:`absorb`'s job).
+
+    Familiarity is combined as both units' effective values at ``merge_year``.
+    """
     if target.species_id != source.species_id or target.cell != source.cell:
         raise ValueError("only co-located units of one species can merge")
     n_t, n_s = target.population, source.population
@@ -150,12 +153,14 @@ def merge_state(
     target.reserve_kcal_per_capita = total_reserve / n if n else 0.0
     target.beliefs = target.beliefs.merged_with(source.beliefs)
     target.report_cells = np.union1d(target.report_cells, source.report_cells)
-    # KNOWN FROZEN MVP 2 DEFECT (objective/status.md 12.7, B1): this loop variable shadows
-    # the merge `year`, so familiarity below decays to the source's last residence year.
-    # Preserved deliberately; correcting it is a model-version change.
-    for cell, year in source.recent_residence.items():
-        target.recent_residence[cell] = max(year, target.recent_residence.get(cell, year))
-    target.familiarity.merge(source.familiarity, n_t, n_s, year, familiarity)
+    # MVP 2.1 (B1): the residence loop once named its variable `year`, shadowing the merge
+    # year, so familiarity decayed to the source's last residence year (preserved in the
+    # frozen MVP 2 reference). Familiarity is now decayed to the merge year.
+    for cell, residence_year in source.recent_residence.items():
+        target.recent_residence[cell] = max(
+            residence_year, target.recent_residence.get(cell, residence_year)
+        )
+    target.familiarity.merge(source.familiarity, n_t, n_s, merge_year, familiarity)
 
 
 def rewire_ties(units: MutableMapping[str, PopulationUnit], source_id: str, target_id: str) -> None:

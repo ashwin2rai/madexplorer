@@ -152,24 +152,75 @@ def test_absorb_preserves_total_tie_weight_except_the_internal_edge() -> None:
     assert after == pytest.approx(before - internal)
 
 
-def test_merge_familiarity_decay_year_frozen_mvp2_defect() -> None:
-    """KNOWN FROZEN MVP 2 DEFECT, preserved on purpose; this is not the intended behaviour.
-
-    Intended: on a merge both familiarity maps decay to the merge ``year``. Frozen: in
-    ``composition.merge_state`` the residence loop ``for cell, year in
-    source.recent_residence.items()`` shadows ``year``, so familiarity decays to the
-    source's last-iterated residence year. The assertion pins the frozen trajectory (and
-    ``lifecycle.merge_units`` reproduces it). Correcting it needs an explicit model-version
-    change and revalidation; see objective/status.md, "Known frozen semantic bugs".
-    """
+def test_merge_decays_familiarity_to_the_merge_year() -> None:
+    """MVP 2.1 (B1). The frozen MVP 2 reference decayed merged familiarity to the source's
+    last residence year (a shadowed loop variable), preserved there for freeze
+    equivalence; familiarity is now combined as both units' effective values at the
+    merge year."""
     rule = FamiliarityRule(baseline=0.6, time_constant_years=20.0)
     a, b = _unit("a", 5), _unit("b", 5)
     for unit in (a, b):
         unit.familiarity = FamiliarityMap({4: 0.9}, {4: 0})
-    b.recent_residence = {7: 3}  # the source's only residence record: year 3
-    merge_year = 40
+    b.recent_residence = {7: 3}  # an old residence record must not set the decay year
+    merge_state(a, b, MergeMode.FUSION, 40, rule)
+    expected = FamiliarityMap({4: 0.9}, {4: 0}).effective(4, 40, rule)
+    assert a.familiarity.stored(4) == (expected, 39)  # value at 40; idle clock kept
+    assert a.familiarity.effective(4, 40, rule) == expected
+
+
+@pytest.mark.parametrize("residence", [{}, {7: 3}, {7: 3, 9: 31, 2: 12}, {9: 31, 7: 3}])
+def test_source_residence_cannot_change_merged_familiarity(residence: dict[int, int]) -> None:
+    rule = FamiliarityRule(baseline=0.6, time_constant_years=20.0)
+    a, b = _unit("a", 10), _unit("b", 30)
+    a.familiarity = FamiliarityMap({4: 0.95, 5: 0.7}, {4: 10, 5: 2})
+    b.familiarity = FamiliarityMap({4: 0.75, 6: 0.99}, {4: 30, 6: 34})
+    b.recent_residence = dict(residence)
+    merge_state(a, b, MergeMode.FUSION, 35, rule)
+    reference_a, reference_b = _unit("a", 10), _unit("b", 30)
+    reference_a.familiarity = FamiliarityMap({4: 0.95, 5: 0.7}, {4: 10, 5: 2})
+    reference_b.familiarity = FamiliarityMap({4: 0.75, 6: 0.99}, {4: 30, 6: 34})
+    merge_state(reference_a, reference_b, MergeMode.FUSION, 35, rule)
+    assert a.familiarity._value == reference_a.familiarity._value
+    assert a.familiarity._year == reference_a.familiarity._year
+
+
+def test_merged_familiarity_weights_effective_values_at_the_same_time() -> None:
+    """Very different last-practiced years: both values are decayed to the merge year,
+    then weighted by population."""
+    rule = FamiliarityRule(baseline=0.6, time_constant_years=20.0)
+    a, b = _unit("a", 10), _unit("b", 30)  # populations 10 and 30
+    a.familiarity = FamiliarityMap({4: 0.95}, {4: 1})  # practiced long ago
+    b.familiarity = FamiliarityMap({4: 0.75}, {4: 34})  # practiced last year
+    b.recent_residence = {4: 34, 8: 5}
+    merge_year = 35
+    eff_a = FamiliarityMap({4: 0.95}, {4: 1}).effective(4, merge_year, rule)
+    eff_b = FamiliarityMap({4: 0.75}, {4: 34}).effective(4, merge_year, rule)
+    assert eff_a < 0.95 and eff_b == 0.75  # a decayed, b practiced last year (not idle)
     merge_state(a, b, MergeMode.FUSION, merge_year, rule)
-    frozen = FamiliarityMap({4: 0.9}, {4: 0}).effective(4, 3, rule)
-    intended = FamiliarityMap({4: 0.9}, {4: 0}).effective(4, merge_year, rule)
-    assert a.familiarity.stored(4) == (frozen, 2)  # exact: equal inputs average exactly
-    assert abs(frozen - intended) > 0.1  # the defect is material, not rounding
+    value, stamp = a.familiarity.stored(4) or (None, None)
+    assert value == (eff_a * 10 + eff_b * 30) / 40
+    assert stamp == 34  # the later of the two materialized stamps
+
+
+def test_row_level_merge_uses_the_merge_year() -> None:
+    """The production (unit-table) merge agrees with the reference rule."""
+    from madexplorer.config.loader import Scenario
+    from madexplorer.experiments.benchmark import synthetic_simulator
+    from madexplorer.population.familiarity import familiarity_rule
+    from madexplorer.population.lifecycle import merge_units
+    from tests.conftest import ROOT
+
+    scenario = Scenario.from_yaml(ROOT / "scenarios" / "mvp2_neolithic.yaml")
+    sim = synthetic_simulator(scenario, 4)
+    target, source = list(sim.state.units.values())[:2]
+    source.cell = target.cell
+    target.familiarity = FamiliarityMap({4: 0.95}, {4: 1})
+    source.familiarity = FamiliarityMap({4: 0.75}, {4: 30})
+    source.recent_residence = {9: 2}
+    n_t, n_s, year = target.population, source.population, sim.state.year
+    rule = familiarity_rule(next(iter(scenario.species.values())), scenario.config.mechanisms)
+    expected = FamiliarityMap({4: 0.95}, {4: 1})
+    expected.merge(FamiliarityMap({4: 0.75}, {4: 30}), n_t, n_s, year, rule)
+    merge_units(sim.state.units, source.id, target.id, MergeMode.FUSION, year, rule)
+    assert target.familiarity._value == expected._value
+    assert target.familiarity._year == expected._year
