@@ -94,7 +94,9 @@ do not meet that test today (§B).
 There are no NaNs and no undefined social state. If the relevant unit-level physical stock
 is zero, there is nothing from which inherited claims can be determined, so the claim
 equals the neutral allocation (`claim_i = share_i`) unless a later explicit institution
-provides another rule. The representation never invents inequality.
+provides another rule. The representation never invents inequality. The engine applies this
+rule after every subsystem's apply (`PopulationStore.settle_empty_claims`), the granularity
+at which stocks change.
 
 ### Changing physical totals
 

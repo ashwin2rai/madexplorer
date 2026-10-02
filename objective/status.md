@@ -6,50 +6,79 @@
 
 ## MVP 3 stage handoff
 
-**Completed stage:** Stage 1 — neutral strata representation (Stage 0 design:
-`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`).
+**Completed stage:** Stage 2 — passive heterogeneous strata (design:
+`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`; Stage 1 neutral representation underneath).
 
 **What now exists**
-- `population/strata.py`: the stratum column schema (`StratumField`: `share`,
-  `field_claim`, `store_claim`, each a partition of unity); `StrataTable` (padded
-  `[rows, S_MAX = 8]` float64 columns + `int64` ids + `int8` count, row = unit slot);
-  `StrataBlock` (detached / object-engine form); `neutral_strata()` with the
-  `stratum_composition` model rule.
-- `PopulationStore.strata` (present exactly with the unit table) and a per-store stratum-id
-  counter (`new_stratum_ids`). Binding a unit gives its strata fresh ids; the unit
-  `IdAllocator` is untouched.
-- `fields.py` has one `strata` entry (`Storage.STRATA`); the stratum columns are not unit
-  fields.
-- Lifecycle:
-  - founding and creation give one neutral stratum;
-  - fission copies the parent's strata as new components (fresh ids);
-  - fusion keeps the target's single neutral stratum, and fusion of differentiated strata
-    raises `NotImplementedError` before any change;
-  - removal resets the row; slot reuse starts fresh; detach and rebind round-trip the
-    values; deepcopy is independent.
-- Per-step invariant check (`check_state_units`): every live unit has 1..S_MAX strata,
-  shares > 0, columns sum to 1 (≤ 1e-12), zero padding, assigned ids.
+- **Multiple components per unit** (1..`S_MAX = 8`) in `StrataTable` (257 B/row) and
+  `StrataBlock`. Composition math is defined once in `population/strata.py` and applied by
+  both engines (`lifecycle` for table rows, `composition` for objects):
+  - `fuse_strata` (rule `strata_fusion_inheritance`): concatenation; shares from
+    `share × N`; claims from `claim × predecessor stock` read before stocks combine,
+    renormalized; zero fused stock → shares; predecessors without people drop out;
+    predecessor ids persist.
+  - `coalesce_to_capacity` (rule `strata_capacity_coalescence`, numerical): above `S_MAX`,
+    the greedy cheapest pair by `s_i s_j/(s_i+s_j)·|p_i − p_j|²` in position space
+    `(field_claim, store_claim)/share` is summed into a fresh-id component. Pairs are
+    compared in canonical state order, never by id or slot.
+  - `claims_on_empty_stocks` (rule `claim_zero_stock`), applied by
+    `PopulationStore.settle_empty_claims()` after every subsystem: claim = share where
+    `fields_ha` / `stores_kcal` is 0; positive stocks carry fractions forward.
+- **Fission** copies the parent's strata as new components (fresh ids): the representative
+  assumption.
+- `PopulationStore.replace_strata(unit, block, coalesce=False)`: validated fixture API
+  (finite, shares > 0, claims ≥ 0, sums within 1e-12, count ≤ S_MAX unless coalescing);
+  fresh ids; nothing changes on rejection.
+- **Sidecar (opt-in, `Simulator(record_strata=True)`):**
+  - `SimulationResult.strata_rows` keyed `(year, unit_id, stratum_id)` with shares, claims
+    and relative positions;
+  - `strata_events`: `fusion_inheritance`, `capacity_coalescence` (with cost),
+    `fission_copy`;
+  - saved as `strata.csv` / `strata_events.jsonl`;
+  - removal events deferred.
+- Canonical runs now contain heterogeneous strata (neolithic seed 0, year 400: 152 of 246
+  units at 8 strata; 246 fusion inheritances, 884 coalescences; positions 0–12), all
+  passive.
 
-**Scientific behavior:** none. No mechanism reads strata; no RNG; no new metrics or events.
+**Scientific feedback:** none. No mechanism reads strata; no RNG; unit ids untouched; the
+frozen metrics and events are unchanged (checked with recording on and off).
 
-**Validation (Stage 1):** `make check` 567 passed; `make test-stat` 3/3 (strict xfail
-unchanged); raw and logical MVP 2.1 oracles IDENTICAL; golden fixtures unchanged;
-`git diff --check` clean. Tests: `tests/test_strata.py`, plus strata (values and ids) in the
-table-vs-object differential `unit_state`. Memory: 257 B per strata row (0.61 MB at 2,000
-units ≈ +15% of the unit table; ≈ 13 MB at 50k). `bench-quick` 95.9–104.9 ms/tick against
-a 98.1 baseline (noise).
+**Important assumptions:**
+- fission is socioeconomically representative;
+- whole-unit migration preserves composition;
+- positive-stock claim fractions persist passively;
+- zero stock resets claims to shares;
+- capacity coalescence is numerical, not sociological;
+- shared age–sex structure.
 
-**Next stage:** Stage 2 — socioeconomic quantities / controlled heterogeneous
-representation. Starts only on explicit approval:
-- fusion inheritance (concatenate strata, absolute positions renormalized; zero-stock
-  fallback);
-- deterministic capacity coalescence above `S_MAX` (ties by state, never id or position);
-- migration and zero-stock handling of claims;
-- the sidecar strata stream keyed by `(year, unit_id, stratum_id)`;
-- controlled heterogeneous fixtures;
-- provenance (`strata_fusion_inheritance`, `claim_zero_stock`,
-  `strata_capacity_coalescence`);
-- MVP 2.1 oracles still identical.
+**Validation (Stage 2):**
+- `make check` 602 passed; `make test-stat` 3/3 (strict xfail unchanged); `git diff --check`
+  clean.
+- Raw and logical MVP 2.1 oracles IDENTICAL; golden fixtures unchanged.
+- Tests (`tests/test_strata_composition.py` plus updated `tests/test_strata.py`):
+  - the inheritance formulas (equal/unequal populations, land, independent stores,
+    zero-stock cases, multi-strata, over capacity);
+  - capacity coalescence (exactly S_MAX, S_MAX + 1, conservation, closest pair, centroid,
+    cross-cutting positions, order/id independence);
+  - fixtures and their rejection;
+  - table vs object agreement (direct operations and 25 ordinary steps, events included);
+  - differentiated fission; zero stock; migration;
+  - mid-run id renumbering (bit-identical) and storage reordering (unit state
+    bit-identical, strata within 1e-12);
+  - sidecar opt-in neutrality.
+- Memory: unchanged from Stage 1 (257 B/row; ≈0.6 MB at 2k units, ≈13 MB at 50k).
+- Costs:
+  - zero-stock pass ≈ 13 µs per call at 2k single-stratum units (≈141 µs with 8 strata
+    each);
+  - fuse 8+8 and coalesce to 8 ≈ 0.6 ms (pure Python; rare);
+  - `bench-quick` 99–106 ms CPU/tick against 96–98 before (noise to a few %).
+
+**Next stage:** Stage 3 — first causal economic differentiation. Starts only on explicit
+approval. Stage 3 must decide:
+- the allocation/control of newly cleared land;
+- the allocation/control of newly stored surplus;
+- the exact meaning and sensitivity of `field_entitlement_weight` (neutral 0);
+- how food pooling becomes an explicit recorded transfer.
 
 **Scientific decisions locked in**
 - A stratum is a label-free mixture component: `share` (population weight), entitlement
@@ -88,16 +117,19 @@ representation. Starts only on explicit approval:
   (proposed: ∝ share plus the §F attribution).
 - Stage 4: the adaptive-merge criterion and tolerance in relative-position space.
 
-**Known limitations (Stage 1)**
-- Passive representation only; no heterogeneous socioeconomic state yet.
+**Known limitations**
+- Passive representation only: strata have no causal effect yet.
 - Stratum ids are per-store handles: a unit removed and re-inserted gets new ids.
+- Fission copies strata, so units often fill to `S_MAX`; components with identical
+  positions stay separate below `S_MAX` (adaptive merging is Stage 4).
+- Capacity coalescence is greedy and pure Python (O(n³) for one fusion; n ≤ 16).
 - The object (reference) engine keeps strata on unit objects; the table engine in
   `StrataTable`. Both allocate the same id sequence (checked by the differential tests).
 
 **Do not forget**
-- Stage 2 introduces representational heterogeneity, not hierarchy; there is still no
-  causal socioeconomic feedback.
-- Capacity coalescence belongs to Stage 2; adaptive merging to Stage 4.
+- No named classes; no arbitrary inequality targets.
+- `field_entitlement_weight` = 0 remains the legacy neutral limit.
+- Stage 4 adaptive merging has not been implemented; capacity coalescence is not it.
 - Never `[U,S,sex,age]` or `[U,S,S]` without a demonstrated need; no per-stratum Python
   objects in hot paths; do not flatten stratum columns into the unit-field ontology.
 - Do not use strata to brake population growth (§4 known demographic simplification).

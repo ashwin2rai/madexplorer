@@ -17,7 +17,7 @@ merging units disappears rather than becoming a self-edge.
 """
 
 import math
-from collections.abc import MutableMapping
+from collections.abc import Callable, MutableMapping
 from enum import Enum
 
 import numpy as np
@@ -25,6 +25,7 @@ import numpy as np
 from madexplorer.core.types import IntArray
 from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.fields import EXTENSIVE_FIELDS, INTENSIVE_FIELDS
+from madexplorer.population.strata import CLAIMS, Coalescence, coalesce_to_capacity, fuse_strata
 from madexplorer.population.unit import PopulationUnit
 
 
@@ -35,11 +36,8 @@ class MergeMode(Enum):
     AGGREGATION = "aggregation"  # computational coarsening; both groups persist inside the unit
 
 
-# Fusion keeps the target's strata, which is exact only while both units are undifferentiated.
-STRATA_FUSION_STAGE = (
-    "fusion of differentiated strata (fusion inheritance) arrives in MVP 3 Stage 2; "
-    "Stage 1 units hold one neutral stratum"
-)
+def _no_stratum_ids(n: int) -> IntArray:
+    raise ValueError("capacity coalescence needs a stratum-id allocator (new_stratum_ids)")
 
 
 def _weighted(a: float, n_a: int, b: float, n_b: int) -> float:
@@ -53,15 +51,26 @@ def merge_state(
     mode: MergeMode,
     merge_year: int,
     familiarity: FamiliarityRule,
-) -> None:
+    new_stratum_ids: Callable[[int], IntArray] | None = None,
+) -> list[Coalescence]:
     """Fold ``source``'s state into ``target`` (network rewiring is :func:`absorb`'s job).
 
-    Familiarity is combined as both units' effective values at ``merge_year``.
+    Familiarity is combined as both units' effective values at ``merge_year``. Strata are
+    inherited (:func:`~madexplorer.population.strata.fuse_strata`) from the predecessors'
+    populations and stocks before they combine; ``new_stratum_ids`` gives ids to components
+    created by capacity coalescence, whose records are returned.
     """
     if target.species_id != source.species_id or target.cell != source.cell:
         raise ValueError("only co-located units of one species can merge")
-    if not (target.strata.is_neutral() and source.strata.is_neutral()):
-        raise NotImplementedError(STRATA_FUSION_STAGE)
+    strata, records = coalesce_to_capacity(
+        fuse_strata(
+            [
+                (unit.strata, unit.population, [getattr(unit, stock) for stock in CLAIMS.values()])
+                for unit in (target, source)
+            ]
+        ),
+        new_stratum_ids or _no_stratum_ids,
+    )
     n_t, n_s = target.population, source.population
     total_reserve = target.total_reserve_kcal + source.total_reserve_kcal
     for name in INTENSIVE_FIELDS:
@@ -101,6 +110,8 @@ def merge_state(
             residence_year, target.recent_residence.get(cell, residence_year)
         )
     target.familiarity.merge(source.familiarity, n_t, n_s, merge_year, familiarity)
+    target.strata = strata
+    return records
 
 
 def rewire_ties(units: MutableMapping[str, PopulationUnit], source_id: str, target_id: str) -> None:
@@ -132,13 +143,15 @@ def absorb(
     mode: MergeMode,
     year: int,
     familiarity: FamiliarityRule,
-) -> None:
+    new_stratum_ids: Callable[[int], IntArray] | None = None,
+) -> list[Coalescence]:
     """Merge ``source_id`` into ``target_id``, rewire the network, and remove the source."""
-    if not (units[target_id].strata.is_neutral() and units[source_id].strata.is_neutral()):
-        raise NotImplementedError(STRATA_FUSION_STAGE)  # before anything changes
     rewire_ties(units, source_id, target_id)
-    merge_state(units[target_id], units[source_id], mode, year, familiarity)
+    records = merge_state(
+        units[target_id], units[source_id], mode, year, familiarity, new_stratum_ids
+    )
     del units[source_id]
+    return records
 
 
 def split_off(

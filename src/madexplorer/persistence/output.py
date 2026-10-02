@@ -7,6 +7,8 @@
     ``events.jsonl``       event log with provenance, one JSON object per line
     ``spatial.npz``        ``years`` and ``population`` (years x height x width)
     ``world.npz``          static world layers (height x width each)
+    ``strata.csv``         strata sidecar, one row per stratum per year (opt-in, MVP 3)
+    ``strata_events.jsonl`` strata structural events (opt-in, MVP 3)
 """
 
 import csv
@@ -59,6 +61,14 @@ def write_run(result: "SimulationResult", directory: Path) -> Path:
     with (directory / "events.jsonl").open("w") as handle:
         for event in result.events:
             handle.write(json.dumps(event.to_record(), default=_json_default) + "\n")
+    if result.strata_rows:
+        with (directory / "strata.csv").open("w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(result.strata_rows[0]))
+            writer.writeheader()
+            writer.writerows(result.strata_rows)
+        with (directory / "strata_events.jsonl").open("w") as handle:
+            for record in result.strata_events:
+                handle.write(json.dumps(record, default=_json_default) + "\n")
     world = result.world
     np.savez_compressed(
         directory / "spatial.npz",

@@ -34,6 +34,7 @@ from madexplorer.knowledge.innovation import InnovationSubsystem
 from madexplorer.knowledge.learning import LearningSubsystem
 from madexplorer.knowledge.system import KnowledgeModel
 from madexplorer.metrics.recorder import MetricsRecorder
+from madexplorer.metrics.strata import strata_rows as rows_of_strata
 from madexplorer.mobility.exploration import KnowledgeSharingSubsystem, PerceptionSubsystem
 from madexplorer.mobility.migration import MigrationSubsystem
 from madexplorer.population.beliefs import requested_backend, resolve_backend
@@ -102,6 +103,9 @@ class SimulationResult:
     snapshot_years: list[int]
     population_snapshots: list[IntArray]
     manifest: dict[str, Any] = field(default_factory=dict)
+    # Strata sidecar (MVP 3, opt-in; outside the frozen metrics/events streams).
+    strata_rows: list[dict[str, Any]] = field(default_factory=list)
+    strata_events: list[dict[str, Any]] = field(default_factory=list)
 
     def save(self, directory: str | Path) -> Path:
         """Write outputs to ``directory`` (see :mod:`madexplorer.persistence.output`)."""
@@ -119,6 +123,7 @@ class Simulator:
         trace_units: Sequence[str] = (),
         static: StaticContext | None = None,
         record_events: bool = True,
+        record_strata: bool = False,
         unit_table: bool = True,
         belief_backend: str | None = None,
     ) -> None:
@@ -127,6 +132,7 @@ class Simulator:
         self.rng = RngManager(config.simulation.seed)
         self.ids = IdAllocator()
         self.events = EventLog(enabled=record_events)
+        self.record_strata = record_strata
         self.trace_units = frozenset(config.output.trace_units) | frozenset(trace_units)
         # Cumulative seconds per subsystem (evaluate + apply) when set to a dict; benchmarks only.
         self.timings: dict[str, float] | None = None
@@ -166,6 +172,8 @@ class Simulator:
                 dtype=np.int64,
             )
         )
+        if record_strata:
+            self.state.population.strata_log = []
         self._found_initial_units()
 
     def _found_initial_units(self) -> None:
@@ -223,6 +231,7 @@ class Simulator:
             started = time.perf_counter() if timings is not None else 0.0
             for proposal in subsystem.evaluate(state, ctx):
                 proposal.apply(state, ctx)
+            state.population.settle_empty_claims()  # no claim survives on an empty stock
             if timings is not None:
                 elapsed = time.perf_counter() - started
                 timings[subsystem.name] = timings.get(subsystem.name, 0.0) + elapsed
@@ -254,10 +263,13 @@ class Simulator:
         )
         if not light:
             recorder.snapshot(self.state)
+        strata_rows: list[dict[str, Any]] = []
         started = time.perf_counter()
         for _ in range(config.simulation.n_years):
             ctx = self.step()
             row = recorder.record(self.state, ctx)
+            if self.record_strata:
+                strata_rows.extend(rows_of_strata(self.state))
             if progress is not None:
                 progress(row)
             if self.state.total_population() == 0:
@@ -278,4 +290,6 @@ class Simulator:
             snapshot_years=recorder.snapshot_years,
             population_snapshots=recorder.snapshots,
             manifest=manifest,
+            strata_rows=strata_rows,
+            strata_events=list(self.state.population.strata_log or []),
         )

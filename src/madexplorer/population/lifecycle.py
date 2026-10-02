@@ -24,7 +24,6 @@ import numpy as np
 
 from madexplorer.core.types import IntArray
 from madexplorer.population.composition import (
-    STRATA_FUSION_STAGE,
     MergeMode,
     _weighted,
     absorb,
@@ -34,6 +33,7 @@ from madexplorer.population.composition import (
 from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.fields import EXTENSIVE_FIELDS, INTENSIVE_FIELDS
 from madexplorer.population.store import PopulationStore
+from madexplorer.population.strata import CLAIMS, Coalescence, coalesce_to_capacity, fuse_strata
 from madexplorer.population.unit import (
     HARVEST_MEMORY_YEARS,
     PopulationUnit,
@@ -75,6 +75,7 @@ def split_unit(
     if table is None:
         daughter = split_off(parent, leave_f, leave_m, daughter_id, year, familiarity)
         units[daughter.id] = daughter
+        _log_fission(population, year, parent, daughter)
         return daughter
     p = belief_slot(parent)
     before = int(table.population[p])
@@ -122,7 +123,25 @@ def split_unit(
         trade_ties={},
     )
     units[daughter_id] = daughter
+    _log_fission(population, year, parent, daughter)
     return daughter
+
+
+def _log_fission(
+    population: PopulationStore, year: int, parent: PopulationUnit, daughter: PopulationUnit
+) -> None:
+    """Sidecar event: the daughter's strata are copies of the parent's as new components."""
+    if population.strata_log is not None:
+        population.strata_log.append(
+            {
+                "year": year,
+                "event": "fission_copy",
+                "unit_id": parent.id,
+                "daughter_id": daughter.id,
+                "parent_stratum_ids": parent.strata.stratum_id.tolist(),
+                "daughter_stratum_ids": daughter.strata.stratum_id.tolist(),
+            }
+        )
 
 
 def merge_units(
@@ -134,10 +153,15 @@ def merge_units(
     familiarity: FamiliarityRule,
 ) -> None:
     """Merge ``source_id`` into ``target_id``, rewire the trade network and remove the source
-    (:func:`~madexplorer.population.composition.absorb`)."""
+    (:func:`~madexplorer.population.composition.absorb`); strata are inherited
+    (:func:`~madexplorer.population.strata.fuse_strata`) and kept within capacity."""
     units, table, store = population.units, population.table, population.beliefs
+    inherited = [units[uid].strata.stratum_id.tolist() for uid in (target_id, source_id)]
     if table is None:
-        absorb(units, source_id, target_id, mode, year, familiarity)
+        records = absorb(
+            units, source_id, target_id, mode, year, familiarity, population.new_stratum_ids
+        )
+        _log_fusion(population, year, target_id, source_id, mode, inherited, records)
         return
     target, source = units[target_id], units[source_id]
     if target.species_id != source.species_id or target.cell != source.cell:
@@ -145,11 +169,18 @@ def merge_units(
     t, s = belief_slot(target), belief_slot(source)
     strata = population.strata
     assert strata is not None
-    if not (strata.is_neutral(t) and strata.is_neutral(s)):
-        raise NotImplementedError(STRATA_FUSION_STAGE)
-    rewire_ties(units, source_id, target_id)
     counts, columns = table.population, table.columns
     n_t, n_s = int(counts[t]), int(counts[s])
+    fused, records = coalesce_to_capacity(
+        fuse_strata(  # predecessor populations and stocks, before anything combines
+            [
+                (strata.unload(r), n, [float(columns[stock][r]) for stock in CLAIMS.values()])
+                for r, n in ((t, n_t), (s, n_s))
+            ]
+        ),
+        population.new_stratum_ids,
+    )
+    rewire_ties(units, source_id, target_id)
     reserve = columns["reserve_kcal_per_capita"]
     total_reserve = float(reserve[t]) * n_t + float(reserve[s]) * n_s
     for name in INTENSIVE_FIELDS:
@@ -197,4 +228,44 @@ def merge_units(
         )
     # Effective familiarity of both units at the merge year (MVP 2.1, B1 fixed).
     target.familiarity.merge(source.familiarity, n_t, n_s, year, familiarity)
+    strata.load(t, fused)
     units.discard(source_id)
+    _log_fusion(population, year, target_id, source_id, mode, inherited, records)
+
+
+def _log_fusion(
+    population: PopulationStore,
+    year: int,
+    target_id: str,
+    source_id: str,
+    mode: MergeMode,
+    inherited: list[list[int]],
+    records: list[Coalescence],
+) -> None:
+    """Sidecar strata events of a fusion (observation only; nothing reads them)."""
+    log = population.strata_log
+    if log is None:
+        return
+    log.append(
+        {
+            "year": year,
+            "event": "fusion_inheritance",
+            "unit_id": target_id,
+            "absorbed_unit_id": source_id,
+            "mode": mode.value,
+            "target_stratum_ids": inherited[0],
+            "absorbed_stratum_ids": inherited[1],
+            "result_stratum_ids": population.units[target_id].strata.stratum_id.tolist(),
+        }
+    )
+    for record in records:
+        log.append(
+            {
+                "year": year,
+                "event": "capacity_coalescence",
+                "unit_id": target_id,
+                "merged_stratum_ids": list(record.merged_ids),
+                "stratum_id": record.new_id,
+                "cost": record.cost,
+            }
+        )

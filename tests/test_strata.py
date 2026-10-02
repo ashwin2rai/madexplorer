@@ -1,8 +1,9 @@
-"""MVP 3 Stage 1: neutral strata representation (passive; MVP 2.1 behavior unchanged).
+"""MVP 3 strata representation (Stages 1-2; passive, MVP 2.1 behavior unchanged).
 
-The MVP 2.1 golden fixtures and exactness oracles are the one-stratum scientific-neutrality
-test; these tests cover the representation itself: initialization, conservation,
-ownership, fission, fusion, removal and slot reuse, copying and id neutrality.
+The MVP 2.1 golden fixtures and exactness oracles are the scientific-neutrality test; these
+tests cover the representation itself: initialization, conservation, ownership, fission,
+fusion, removal and slot reuse, copying and id neutrality. Composition rules (inheritance,
+capacity coalescence, zero stock) are in ``tests/test_strata_composition.py``.
 """
 
 import copy
@@ -40,7 +41,6 @@ def _live_strata(population: PopulationStore) -> list[int]:
     assert strata.check(slots).all()
     for unit, slot in zip(population.units.values(), slots.tolist(), strict=True):
         assert unit.__dict__["_strata"] is strata and belief_slot(unit) == slot
-        assert strata.is_neutral(slot)  # Stage 1: one neutral stratum per unit
     live = set(slots.tolist())
     for slot in range(strata.capacity):  # no active strata outside live unit rows
         if slot not in live:
@@ -48,7 +48,7 @@ def _live_strata(population: PopulationStore) -> list[int]:
             assert (strata.stratum_id[slot] == UNASSIGNED).all()
             assert all(not strata.columns[name][slot].any() for name in STRATUM_COLUMNS)
     ids: list[int] = strata.stratum_id[slots][strata.stratum_id[slots] != UNASSIGNED].tolist()
-    assert len(ids) == len(set(ids)) == len(slots)  # unique within the store
+    assert len(ids) == len(set(ids)) == int(strata.n_strata[slots].sum())  # unique in the store
     return ids
 
 
@@ -74,7 +74,7 @@ def test_every_new_unit_has_one_neutral_stratum_with_a_store_id() -> None:
 
 
 @pytest.mark.parametrize("unit_table", [True, False])
-def test_strata_stay_neutral_and_conserved_through_fission_and_fusion(
+def test_strata_stay_valid_and_conserved_through_fission_and_fusion(
     unit_table: bool,
 ) -> None:
     sim = _farming_sim(unit_table)
@@ -87,8 +87,7 @@ def test_strata_stay_neutral_and_conserved_through_fission_and_fusion(
             _live_strata(sim.state.population)
         else:
             for unit in sim.state.units.values():
-                assert unit.strata.is_valid() and unit.strata.is_neutral()
-                assert unit.strata.stratum_id[0] >= 0
+                assert unit.strata.is_valid() and (unit.strata.stratum_id >= 0).all()
     assert fissions > 0 and fusions > 0  # both lifecycle paths were exercised
 
 
@@ -116,42 +115,25 @@ def test_fission_copies_strata_as_new_components() -> None:
     _live_strata(population)
 
 
-def test_fusion_keeps_one_neutral_stratum_and_frees_the_source_row() -> None:
+def test_fusing_two_neutral_units_keeps_both_as_inherited_components() -> None:
     sim = synthetic_simulator(Scenario.from_yaml(SCENARIO), 4)
     population = sim.state.population
     target, source = list(sim.state.units.values())[:2]
     source.cell = target.cell
-    target_id = target.strata.stratum_id.tolist()
+    target.fields_ha, source.fields_ha = 6.0, 2.0
+    ids = target.strata.stratum_id.tolist() + source.strata.stratum_id.tolist()
+    n_t, n_s = target.population, source.population
     s = belief_slot(source)
     rule = familiarity_rule(
         next(iter(sim.scenario.species.values())), sim.scenario.config.mechanisms
     )
     merge_units(population, source.id, target.id, MergeMode.FUSION, sim.state.year, rule)
-    assert target.strata.is_neutral() and target.strata.stratum_id.tolist() == target_id
+    strata = target.strata
+    assert strata.stratum_id.tolist() == ids  # both predecessor components persist
+    assert strata.columns["share"].tolist() == [n_t / (n_t + n_s), n_s / (n_t + n_s)]
+    assert strata.columns["field_claim"].tolist() == [0.75, 0.25]
     assert population.strata is not None and population.strata.n_strata[s] == 0
     _live_strata(population)
-
-
-@pytest.mark.parametrize("unit_table", [True, False])
-def test_fusion_of_differentiated_strata_is_refused_before_anything_changes(
-    unit_table: bool,
-) -> None:
-    sim = synthetic_simulator(Scenario.from_yaml(SCENARIO), 4, unit_table=unit_table)
-    population = sim.state.population
-    target, source = list(sim.state.units.values())[:2]
-    source.cell = target.cell
-    two = StrataBlock(
-        {name: np.array([0.5, 0.5]) for name in STRATUM_COLUMNS},
-        np.array([100, 101], dtype=np.int64),
-    )
-    source.strata = two  # a narrow fixture: differentiated fusion is Stage 2
-    before = {uid: repr(unit_state(u)) for uid, u in sim.state.units.items()}
-    rule = familiarity_rule(
-        next(iter(sim.scenario.species.values())), sim.scenario.config.mechanisms
-    )
-    with pytest.raises(NotImplementedError, match="Stage 2"):
-        merge_units(population, source.id, target.id, MergeMode.FUSION, sim.state.year, rule)
-    assert before == {uid: repr(unit_state(u)) for uid, u in sim.state.units.items()}
 
 
 def test_removal_resets_strata_and_a_reused_slot_starts_fresh() -> None:
@@ -193,8 +175,9 @@ def test_deepcopied_strata_are_independent() -> None:
     assert copied is not None and original is not None and copied is not original
     unit = next(iter(state.units.values()))
     assert unit.__dict__["_strata"] is copied
+    before = repr(unit_state(sim.state.units[unit.id]))
     copied.columns["store_claim"][belief_slot(unit), 0] = 0.5
-    assert sim.state.units[unit.id].strata.is_neutral()
+    assert repr(unit_state(sim.state.units[unit.id])) == before
     state.population.new_stratum_ids(10)
     assert sim.state.population.new_stratum_ids(1)[0] < state.population.new_stratum_ids(1)[0]
 
@@ -217,10 +200,14 @@ def test_renumbering_stratum_ids_does_not_change_the_simulation() -> None:
     assert rows[0] == rows[1]
     a, b = (sim.state.units for sim in sims)
     assert list(a) == list(b)
+    differentiated = 0
     for uid in a:
         sa, sb = unit_state(a[uid]), unit_state(b[uid])
-        sa.pop("strata"), sb.pop("strata")
-        assert repr(sa) == repr(sb), uid
+        strata_a, strata_b = sa.pop("strata"), sb.pop("strata")
+        assert isinstance(strata_a, tuple) and isinstance(strata_b, tuple)
+        assert repr(sa) == repr(sb) and repr(strata_a[0]) == repr(strata_b[0]), uid
+        differentiated += len(a[uid].strata) > 1
+    assert differentiated > 0  # renumbering acted on heterogeneous strata
 
 
 def test_strata_table_round_trips_and_detects_broken_partitions() -> None:
