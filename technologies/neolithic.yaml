@@ -3,6 +3,14 @@
 # and the capability each technology changes. The engine knows only the
 # capabilities (crop_yield, storage_retention, clearing_efficiency,
 # soil_management) and the activities that count as practice.
+#
+# Boolean technologies are a coarse MVP 2 representation (objective §8.1). Entries
+# bundle concepts a later milestone may separate: plant_cultivation is the affordance
+# that makes crop capability non-zero (whether and how much to farm is the economic
+# field-planning decision); granaries combines a storage technique with storage
+# capacity that, in reality, would have to be built. Hard prerequisites here
+# (e.g. granaries -> plant_cultivation) are historical associations, not physical
+# necessities. There is deliberately no domestication stage.
 name: Neolithic transition v1
 
 domains:

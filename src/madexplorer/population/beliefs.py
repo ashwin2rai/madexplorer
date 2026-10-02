@@ -6,7 +6,7 @@ keeps the same fields, dtypes and sentinel as four global ``(capacity, cells)`` 
 one row per *storage slot*, so hot subsystems gather and scatter beliefs for all units in
 one indexing operation instead of visiting thousands of separate arrays.
 
-Slots are storage only and are allocated by the unit registry (shared with the unit
+Slots are storage only and are allocated by the population store (shared with the unit
 table). Processing order stays the registry's insertion order (``state.units``); a slot
 is claimed when a unit enters the registry and released when it leaves, and a claimed row
 is reset to "never observed" so no stale belief can leak into a later unit. Units outside

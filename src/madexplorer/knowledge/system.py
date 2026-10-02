@@ -7,6 +7,13 @@ practice builds knowledge. Everything else (which domains exist, which
 technologies exist, their prerequisites, the needs that direct their invention,
 and their effects) is scenario data, so a technology tree is a hypothesis that
 can be swapped or ablated without touching code.
+
+Representation (frozen MVP 2 abstraction, objective §2.7 and §8.1): a technology is held
+or not (Boolean), hard prerequisites gate invention, and holding it changes capabilities
+at once. This bundles kinds of state a later milestone may keep apart -- knowing a
+technique, practicing it, the infrastructure or stocks practice builds, and biological
+change such as domestication. It is not the project's theory of cultural evolution; do
+not add broad societal concepts or stage ladders as technologies.
 """
 
 from collections.abc import Mapping

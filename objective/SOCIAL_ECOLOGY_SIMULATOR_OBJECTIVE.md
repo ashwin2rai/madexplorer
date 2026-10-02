@@ -4,7 +4,7 @@
 
 **Project:** `madexplorer`  
 **Document version:** 3.0  
-**Canonicalized through:** MVP 2.1 freeze, 2026-10-01  
+**Canonicalized through:** MVP 2.1 freeze, 2026-10-01; pre-MVP 3 consolidation, 2026-10-02  
 **Current scientific milestone:** MVP 2.1 frozen; MVP 3 next  
 **Current implementation:** Python 3.13+  
 **Document role:** durable project objective, scientific principles, and architectural constraints
@@ -223,6 +223,11 @@ semantic defect. Exact identity, validation results, and frozen artifacts are re
 baselines/mvp2_1/freeze_manifest.json
 ```
 
+The manifest's source-tree hash identifies the *original* frozen MVP 2.1 implementation.
+Later semantics-preserving refactors change source files but not results; they are
+verified against the golden fixtures and the raw and logical exactness oracles, not against
+that hash.
+
 Performance Hardening is complete. Its chronology and measurements are historical evidence,
 not the current project objective.
 
@@ -278,6 +283,20 @@ columnar/structure-of-arrays representation indexed by stable population-unit ro
 
 `PopulationUnit` remains useful as a domain-facing object and compatibility view, but it
 should not become the primary substrate for large numerical computation again.
+
+`PopulationStore` is the single owner of the coupled population representations: the unit
+registry (identities in processing order), the `UnitTable`, the belief store, and the
+storage slots that tie them together. `SimulationState` exposes them only as read-only
+views. A future `StrataTable` for genuinely distributional state belongs to the same
+owner:
+
+```text
+PopulationStore
+    unit registry     # identities, processing order
+    UnitTable         # group-shared hot state      [U]
+    BeliefStore       # sparse spatial beliefs
+    [MVP 3] StrataTable   # distributional state only  [U, S]
+```
 
 This separation is fundamental:
 
@@ -352,11 +371,17 @@ Subsystem ordering can affect outcomes. It must not be changed as an incidental 
 Changes to ordering are scientific changes and require explicit justification and
 validation.
 
+Within a subsystem, `evaluate` observes the current state, consumes its named random
+streams and makes every stochastic decision, returning explicit proposals; `apply` commits
+them deterministically and draws no random numbers.
+
 ### 4.6 Composition semantics are first-class
 
 Fields that belong to a population unit must have explicit behavior under lifecycle events
-such as fission and fusion. The current field-composition rules are a valuable architectural
-pattern.
+such as fission and fusion. Every unit field is declared once (`population/fields.py`) with
+its storage and its merge/split rule; table columns, row views, the documented rules and
+the shared extensive/intensive compositions derive from that declaration, and a test fails
+if the dataclass and the declarations disagree.
 
 As MVP 3 introduces strata, every new state variable should make clear:
 

@@ -50,7 +50,7 @@ SCENARIO ?= scenarios/mvp1_sandbox.yaml
 sim: ## Run a scenario (SCENARIO=path, default MVP 1 sandbox)
 	uv run madexplorer run $(SCENARIO)
 
-# Benchmark tiers (status.md Section 0). Timings are machine-specific: compare with a
+# Benchmark tiers. Timings are machine-specific: compare with a
 # reference recorded on the same machine. BENCH_JOBS worker processes for ensembles.
 MVP2 ?= scenarios/mvp2_neolithic.yaml
 BENCH_JOBS ?= 2
@@ -61,7 +61,7 @@ bench-perf: ## Synthetic per-unit benchmark (100-2000 units, 30 ticks) -> benchm
 bench-quick: ## Engineering loop: 1,000 synthetic units, 10 ticks (~15 s; not saved)
 	uv run madexplorer bench synthetic $(MVP2) --units 1000 --ticks 10
 
-# Two scaling families (status.md 9.1): fixed local density (~0.4 units per land cell; units
+# Two scaling families: fixed local density (~0.4 units per land cell; units
 # grow with the world) versus fixed world (40x40; units per cell grow). Dense beliefs cap the
 # fixed-density family at ~4k units on this 7 GB machine.
 SCALE_TICKS ?= 5
@@ -91,7 +91,7 @@ bench-dev: ## Development ensemble: 8 seeds x 600 years (model changes)
 bench-rc: ## Release-candidate ensemble: 16 seeds x 1,000 years
 	uv run madexplorer ensemble $(MVP2) --seeds 0:15 --years 1000 --jobs $(BENCH_JOBS) --out ensembles/bench_rc
 
-baseline: ## Optional large ensemble: 32 seeds x 1,000 years (not the freeze reference; see status.md P7)
+baseline: ## Optional large ensemble: 32 seeds x 1,000 years (not the freeze reference)
 	uv run madexplorer ensemble $(MVP2) --seeds 0:31 --years 1000 --jobs $(BENCH_JOBS) --out ensembles/baseline_32x1000
 
 pre-commit: ## Run pre-commit hooks on all files
