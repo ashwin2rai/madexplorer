@@ -33,7 +33,13 @@ from madexplorer.population.composition import (
 from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.fields import EXTENSIVE_FIELDS, INTENSIVE_FIELDS
 from madexplorer.population.store import PopulationStore
-from madexplorer.population.strata import CLAIMS, Coalescence, coalesce_to_capacity, fuse_strata
+from madexplorer.population.strata import (
+    CLAIMS,
+    Coalescence,
+    Compaction,
+    fuse_strata,
+    normalize_strata,
+)
 from madexplorer.population.unit import (
     HARVEST_MEMORY_YEARS,
     PopulationUnit,
@@ -171,7 +177,7 @@ def merge_units(
     assert strata is not None
     counts, columns = table.population, table.columns
     n_t, n_s = int(counts[t]), int(counts[s])
-    fused, records = coalesce_to_capacity(
+    fused, records = normalize_strata(
         fuse_strata(  # predecessor populations and stocks, before anything combines
             [
                 (strata.unload(r), n, [float(columns[stock][r]) for stock in CLAIMS.values()])
@@ -240,7 +246,7 @@ def _log_fusion(
     source_id: str,
     mode: MergeMode,
     inherited: list[list[int]],
-    records: list[Coalescence],
+    records: list[Compaction | Coalescence],
 ) -> None:
     """Sidecar strata events of a fusion (observation only; nothing reads them)."""
     log = population.strata_log
@@ -258,14 +264,28 @@ def _log_fusion(
             "result_stratum_ids": population.units[target_id].strata.stratum_id.tolist(),
         }
     )
+    log_normalization(log, year, target_id, records)
+
+
+def log_normalization(
+    log: list[dict[str, object]],
+    year: int,
+    unit_id: str,
+    records: list[Compaction | Coalescence],
+) -> None:
+    """Sidecar events of :func:`~madexplorer.population.strata.normalize_strata`."""
     for record in records:
-        log.append(
-            {
-                "year": year,
-                "event": "capacity_coalescence",
-                "unit_id": target_id,
-                "merged_stratum_ids": list(record.merged_ids),
-                "stratum_id": record.new_id,
-                "cost": record.cost,
-            }
-        )
+        event: dict[str, object] = {
+            "year": year,
+            "event": "exact_compaction"
+            if isinstance(record, Compaction)
+            else "capacity_coalescence",
+            "unit_id": unit_id,
+            "merged_stratum_ids": list(record.merged_ids),
+            "stratum_id": record.new_id,
+        }
+        if isinstance(record, Compaction):
+            event["position"] = list(record.position)
+        else:
+            event["cost"] = record.cost
+        log.append(event)

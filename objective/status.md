@@ -6,8 +6,36 @@
 
 ## MVP 3 stage handoff
 
-**Completed stage:** Stage 2 — passive heterogeneous strata (design:
-`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`; Stage 1 neutral representation underneath).
+**Completed stage:** Stage 2.1 — exact strata compaction (on top of Stage 2, passive
+heterogeneous strata, and Stage 1, neutral representation; design:
+`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`).
+
+**Stage 2.1 in brief.** Within one unit, components at exactly the same position
+(`claim/share`, bit-identical) are one stratum: `compact_exact_strata` sums them (fresh id;
+rule `strata_exact_compaction`, a lossless representation identity). Passes repeat until no
+exact duplicate remains, because a merged position can shift by a last bit.
+`normalize_strata` = exact compaction → (only above `S_MAX`) one capacity coalescence →
+compaction again. It runs at fusion (both engines), `replace_strata`, and the zero-stock pass.
+The per-step invariant now also rejects exact duplicates. Three distinct concepts:
+
+| Concept | Stage | Nature |
+|---|---|---|
+| exact compaction | 2.1 | lossless |
+| capacity coalescence | 2 | numerical, only above `S_MAX` |
+| adaptive merge | 4 | not implemented |
+
+Saturation diagnostic (neolithic seed 0, 400 y):
+
+| | Before | After |
+|---|---|---|
+| Units at `S_MAX` | 152/246 | 8/246 |
+| Capacity coalescences | 884 (653 exact duplicates) | 36 |
+| Exact compactions | — | 213 |
+
+The remaining 28 of those 36 coalescences merge last-bit near-duplicates (positions
+mathematically equal, rounding history different), which stay separate below `S_MAX` by
+design; 8 are genuine approximations. At year 400, 173 near-duplicate pairs remain (Stage 4
+territory).
 
 **What now exists**
 - **Multiple components per unit** (1..`S_MAX = 8`) in `StrataTable` (257 B/row) and
@@ -40,7 +68,7 @@
   units at 8 strata; 246 fusion inheritances, 884 coalescences; positions 0–12), all
   passive.
 
-**Scientific feedback:** none. No mechanism reads strata; no RNG; unit ids untouched; the
+**Scientific feedback (Stages 1–2.1):** none. No mechanism reads strata; no RNG; unit ids untouched; the
 frozen metrics and events are unchanged (checked with recording on and off).
 
 **Important assumptions:**
@@ -50,6 +78,10 @@ frozen metrics and events are unchanged (checked with recording on and off).
 - zero stock resets claims to shares;
 - capacity coalescence is numerical, not sociological;
 - shared age–sex structure.
+
+**Validation (Stage 2.1):** `make check` 614 passed; `make test-stat` 3/3; raw and logical
+MVP 2.1 oracles IDENTICAL; golden fixtures unchanged; `git diff --check` clean. 400-y
+neolithic run 4.4–5.0 s (4.6 s before); `bench-quick` 97–107 ms CPU/tick (noise).
 
 **Validation (Stage 2):**
 - `make check` 602 passed; `make test-stat` 3/3 (strict xfail unchanged); `git diff --check`
@@ -120,8 +152,8 @@ approval. Stage 3 must decide:
 **Known limitations**
 - Passive representation only: strata have no causal effect yet.
 - Stratum ids are per-store handles: a unit removed and re-inserted gets new ids.
-- Fission copies strata, so units often fill to `S_MAX`; components with identical
-  positions stay separate below `S_MAX` (adaptive merging is Stage 4).
+- Positions equal only up to rounding (e.g. after fission's proportional stock split)
+  stay separate below `S_MAX`; merging them is Stage 4.
 - Capacity coalescence is greedy and pure Python (O(n³) for one fusion; n ≤ 16).
 - The object (reference) engine keeps strata on unit objects; the table engine in
   `StrataTable`. Both allocate the same id sequence (checked by the differential tests).
@@ -129,7 +161,8 @@ approval. Stage 3 must decide:
 **Do not forget**
 - No named classes; no arbitrary inequality targets.
 - `field_entitlement_weight` = 0 remains the legacy neutral limit.
-- Stage 4 adaptive merging has not been implemented; capacity coalescence is not it.
+- Stage 4 adaptive merging has not been implemented; neither exact compaction nor capacity
+  coalescence is it.
 - Never `[U,S,sex,age]` or `[U,S,S]` without a demonstrated need; no per-stratum Python
   objects in hot paths; do not flatten stratum columns into the unit-field ontology.
 - Do not use strata to brake population growth (§4 known demographic simplification).

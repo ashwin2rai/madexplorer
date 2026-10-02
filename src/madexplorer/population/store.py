@@ -35,10 +35,14 @@ from madexplorer.core.types import IntArray
 from madexplorer.population.beliefs import BeliefStore, make_belief_store
 from madexplorer.population.strata import (
     CLAIMS,
+    S_MAX,
+    UNASSIGNED,
+    Compaction,
     StrataBlock,
     StrataTable,
     claims_on_empty_stocks,
-    coalesce_to_capacity,
+    compact_exact_strata,
+    normalize_strata,
     validate_block,
 )
 from madexplorer.population.table import UnitTable
@@ -46,6 +50,11 @@ from madexplorer.population.unit import PopulationUnit, attach_unit, belief_slot
 
 if TYPE_CHECKING:
     from madexplorer.core.compiled import TechnologyTable
+
+
+def _unassigned_ids(n: int) -> IntArray:
+    """Placeholder ids for a dry run (nothing is installed with them)."""
+    return np.full(n, UNASSIGNED, dtype=np.int64)
 
 
 class PopulationStore:
@@ -88,29 +97,50 @@ class PopulationStore:
         self, unit: PopulationUnit, block: StrataBlock, *, coalesce: bool = False
     ) -> None:
         """Give a unit of this store new strata (fixtures, probes): validated before anything
-        changes, installed as new components with fresh ids. More than ``S_MAX`` strata are
-        refused unless ``coalesce`` asks for capacity coalescence."""
+        changes, installed as new components with fresh ids and normalized (exact duplicates
+        compacted). More than ``S_MAX`` distinct positions are refused unless ``coalesce``
+        asks for capacity coalescence."""
         if unit.__dict__.get("_belief_store") is not self.beliefs:
             raise ValueError(f"unit {unit.id} is not in this PopulationStore")
-        validate_block(block, allow_over_capacity=coalesce)
+        validate_block(block, allow_over_capacity=True)
+        distinct, _ = compact_exact_strata(block, _unassigned_ids)
+        if len(distinct) > S_MAX and not coalesce:
+            raise ValueError(f"{len(distinct)} distinct positions exceed S_MAX = {S_MAX}")
         fresh = block.with_ids(self.new_stratum_ids(len(block)))
-        unit.strata, _ = coalesce_to_capacity(fresh, self.new_stratum_ids)
+        unit.strata, _ = normalize_strata(fresh, self.new_stratum_ids)
 
-    def settle_empty_claims(self) -> None:
+    def settle_empty_claims(self, year: int) -> None:
         """Apply ``claim_zero_stock``: claims on a zero physical stock become the population
-        shares (run by the engine after each subsystem; representation only)."""
+        shares; strata made identical by that are compacted exactly (run by the engine after
+        each subsystem; representation only)."""
         if self.strata is not None:
             assert self.table is not None
             slots = self.units.slots()
             stocks = {name: self.table.columns[stock][slots] for name, stock in CLAIMS.items()}
-            self.strata.reset_empty_claims(slots, stocks)
+            for slot in self.strata.reset_empty_claims(slots, stocks).tolist():
+                self._compact_row(slot, year)
             return
         for unit in self.units.values():
             if len(unit.strata) > 1:
                 stocks_now = [getattr(unit, stock) for stock in CLAIMS.values()]
                 settled = claims_on_empty_stocks(unit.strata, stocks_now)
                 if settled is not unit.strata:
-                    unit.strata = settled
+                    unit.strata, records = compact_exact_strata(settled, self.new_stratum_ids)
+                    self._log(year, unit.id, records)
+
+    def _compact_row(self, slot: int, year: int) -> None:
+        assert self.strata is not None
+        compacted, records = compact_exact_strata(self.strata.unload(slot), self.new_stratum_ids)
+        if records:
+            self.strata.load(slot, compacted)
+            unit_id = next(u.id for u in self.units.values() if belief_slot(u) == slot)
+            self._log(year, unit_id, records)
+
+    def _log(self, year: int, unit_id: str, records: "list[Compaction]") -> None:
+        if self.strata_log is not None and records:
+            from madexplorer.population.lifecycle import log_normalization
+
+            log_normalization(self.strata_log, year, unit_id, list(records))
 
     def claim_slot(self, species_code: int = 0) -> int:
         """A free slot with addressable table and belief rows, for a unit built in place

@@ -8,8 +8,11 @@ is a partition of unity over the unit's strata; physical stocks stay unit-level.
 
 Strata are passive: no simulation mechanism reads them and they draw no random numbers. A
 founded unit has one neutral stratum; heterogeneity arises only by fusion inheritance
-(:func:`fuse_strata`), which keeps predecessor positions as distinct components, and is
-bounded by :func:`coalesce_to_capacity` (numerical resolution, not social dynamics). A claim
+(:func:`fuse_strata`), which keeps predecessor positions as distinct components. After a
+structural change, :func:`normalize_strata` makes the representation canonical: exact
+duplicate positions become one component (:func:`compact_exact_strata`, lossless), and only
+then, above ``S_MAX``, :func:`coalesce_to_capacity` approximates (numerical resolution, not
+social dynamics). Adaptive merging below ``S_MAX`` is MVP 3 Stage 4. A claim
 on an empty physical stock is the population share (:func:`claims_on_empty_stocks`). Stratum
 ids are observational handles allocated by the owning
 :class:`~madexplorer.population.store.PopulationStore`; they never enter equations, ordering
@@ -109,7 +112,7 @@ class StrataBlock:
         return all(
             (values >= 0).all() and abs(float(values.sum()) - 1.0) <= PARTITION_TOLERANCE
             for values in self.columns.values()
-        )
+        ) and not has_exact_duplicates(self)
 
 
 @model_rule(
@@ -241,13 +244,15 @@ class Coalescence:
     ),
 )
 def coalesce_to_capacity(
-    block: StrataBlock, new_ids: Callable[[int], IntArray]
+    block: StrataBlock, new_ids: Callable[[int], IntArray], capacity: int = S_MAX
 ) -> tuple[StrataBlock, list[Coalescence]]:
-    """Coalesce the cheapest pairs until at most ``S_MAX`` strata remain."""
+    """Coalesce the cheapest pairs until at most ``capacity`` (default ``S_MAX``) strata
+    remain. Lifecycle code calls :func:`normalize_strata`, which compacts exact duplicates
+    first."""
     columns = {name: list(values.tolist()) for name, values in block.columns.items()}
     ids = block.stratum_id.tolist()
     records: list[Coalescence] = []
-    while len(ids) > S_MAX:
+    while len(ids) > capacity:
         state = list(zip(*(columns[name] for name in STRATUM_COLUMNS), strict=True))
         order = sorted(range(len(ids)), key=lambda k: state[k])  # canonical: by state only
         best: tuple[float, int, int] | None = None
@@ -275,6 +280,116 @@ def coalesce_to_capacity(
         np.array(ids, dtype=np.int64),
     )
     return coalesced, records
+
+
+@dataclass(frozen=True)
+class Compaction:
+    """Exact duplicates replaced by one component (observation only)."""
+
+    merged_ids: tuple[int, ...]
+    new_id: int
+    position: tuple[float, ...]  # the shared (field, store) position
+
+
+@model_rule(
+    name="strata_exact_compaction",
+    version="1.0",
+    rationale=(
+        "Representation identity rule, not a social mechanism: strata encode socioeconomic "
+        "positions, not lineages, so components of one unit whose positions (claim / share "
+        "for every claim) are exactly equal in floating point carry no additional modeled "
+        "information. They are replaced by one component with summed share and claims "
+        "(same position, totals conserved) and a fresh id. Lossless; applied before capacity "
+        "coalescence so that no approximation is spent on redundant components. No "
+        "tolerance: nearly equal positions stay separate (adaptive merging is MVP 3 Stage 4)."
+    ),
+    source_type="theoretical",
+    parameters=(),
+    expected_domain="at most one component per exact position in a unit",
+    known_limitations=(
+        "Mathematically equal positions with different arithmetic histories can differ in the "
+        "last bits and are then not compacted; a merged component's recomputed position can "
+        "itself shift by a last bit (passes repeat until no exact duplicate remains)."
+    ),
+)
+def compact_exact_strata(
+    block: StrataBlock, new_ids: Callable[[int], IntArray]
+) -> tuple[StrataBlock, list[Compaction]]:
+    """Merge components with exactly equal positions until none remain (the same block if
+    there are none).
+
+    A merged component's position, recomputed from summed claims and shares, can differ from
+    its members' in the last bit and then coincide exactly with another component, so passes
+    repeat; each pass removes at least one component.
+    """
+    records: list[Compaction] = []
+    while True:
+        block, found = _compact_once(block, new_ids)
+        if not found:
+            return block, records
+        records += found
+
+
+def _compact_once(
+    block: StrataBlock, new_ids: Callable[[int], IntArray]
+) -> tuple[StrataBlock, list[Compaction]]:
+    """One pass: groups keep the storage order of their first member; each group is summed
+    in an order sorted by state values, so storage order and ids cannot change the result."""
+    if len(block) == 1:
+        return block, []
+    keys = [tuple(row) for row in positions(block).tolist()]
+    groups: dict[tuple[float, ...], list[int]] = {}
+    for k, key in enumerate(keys):
+        groups.setdefault(key, []).append(k)
+    if len(groups) == len(block):
+        return block, []
+    columns: dict[str, list[float]] = {name: [] for name in STRATUM_COLUMNS}
+    ids: list[int] = []
+    records: list[Compaction] = []
+    for key, members in groups.items():
+        if len(members) == 1:
+            (k,) = members
+            for name in STRATUM_COLUMNS:
+                columns[name].append(float(block.columns[name][k]))
+            ids.append(int(block.stratum_id[k]))
+            continue
+        members = sorted(
+            members, key=lambda k: tuple(float(block.columns[n][k]) for n in STRATUM_COLUMNS)
+        )
+        for name in STRATUM_COLUMNS:
+            total = 0.0
+            for k in members:
+                total += float(block.columns[name][k])
+            columns[name].append(total)
+        (new_id,) = new_ids(1).tolist()
+        ids.append(new_id)
+        records.append(Compaction(tuple(int(block.stratum_id[k]) for k in members), new_id, key))
+    compacted = StrataBlock(
+        {name: np.array(values) for name, values in columns.items()},
+        np.array(ids, dtype=np.int64),
+    )
+    return compacted, records
+
+
+def normalize_strata(
+    block: StrataBlock, new_ids: Callable[[int], IntArray]
+) -> tuple[StrataBlock, list[Compaction | Coalescence]]:
+    """The canonical strata of a unit after a structural change: exact compaction first
+    (lossless), then, only while more than ``S_MAX`` remain, one capacity coalescence at a
+    time, each followed by exact compaction (a merged position may equal another's)."""
+    block, compactions = compact_exact_strata(block, new_ids)
+    records: list[Compaction | Coalescence] = list(compactions)
+    while len(block) > S_MAX:
+        block, coalesced = coalesce_to_capacity(block, new_ids, capacity=len(block) - 1)
+        block, compactions = compact_exact_strata(block, new_ids)
+        records += [*coalesced, *compactions]
+    return block, records
+
+
+def has_exact_duplicates(block: StrataBlock) -> bool:
+    """Whether two components share an exactly equal position."""
+    keys = [tuple(row) for row in positions(block).tolist()]
+    return len(set(keys)) < len(keys)
 
 
 @model_rule(
@@ -383,16 +498,22 @@ class StrataTable:
         self.stratum_id[target, :n] = ids
         self.n_strata[target] = n
 
-    def reset_empty_claims(self, slots: IntArray, stocks: dict[str, FloatArray]) -> None:
+    def reset_empty_claims(self, slots: IntArray, stocks: dict[str, FloatArray]) -> IntArray:
         """:func:`claims_on_empty_stocks` for the rows ``slots``; ``stocks`` maps each claim
-        column to the rows' physical stock (single-stratum rows are always neutral)."""
+        column to the rows' physical stock (single-stratum rows are always neutral). Returns
+        the rows that changed, in the order of ``slots``."""
         differentiated = self.n_strata[slots] > 1
+        changed = np.zeros(slots.size, dtype=bool)
         if not differentiated.any():
-            return
+            return slots[changed]
         for name, stock in stocks.items():
-            rows = slots[differentiated & (stock == 0)]
+            reset = differentiated & (stock == 0)
+            reset &= (self.columns[name][slots] != self.columns["share"][slots]).any(axis=1)
+            rows = slots[reset]
             if rows.size:
                 self.columns[name][rows] = self.columns["share"][rows]
+                changed |= reset
+        return slots[changed]
 
     def is_neutral(self, slot: int) -> bool:
         """Exactly one stratum holding the neutral values."""
@@ -413,4 +534,10 @@ class StrataTable:
             rows = values[slots]
             ok &= np.where(active, rows >= 0, rows == 0).all(axis=1)
             ok &= np.abs(rows.sum(axis=1) - 1.0) <= PARTITION_TOLERANCE
+        share = np.where(active, self.columns["share"][slots], 1.0)
+        same = active[:, :, None] & active[:, None, :] & ~np.eye(S_MAX, dtype=bool)[None]
+        for name in CLAIMS:  # no two active components at exactly the same position
+            position = self.columns[name][slots] / share
+            same &= position[:, :, None] == position[:, None, :]
+        ok &= ~same.any(axis=(1, 2))
         return ok

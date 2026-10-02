@@ -231,7 +231,7 @@ class Simulator:
             started = time.perf_counter() if timings is not None else 0.0
             for proposal in subsystem.evaluate(state, ctx):
                 proposal.apply(state, ctx)
-            state.population.settle_empty_claims()  # no claim survives on an empty stock
+            state.population.settle_empty_claims(state.year)  # no claim on an empty stock
             if timings is not None:
                 elapsed = time.perf_counter() - started
                 timings[subsystem.name] = timings.get(subsystem.name, 0.0) + elapsed

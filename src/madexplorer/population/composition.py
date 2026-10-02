@@ -25,7 +25,14 @@ import numpy as np
 from madexplorer.core.types import IntArray
 from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.fields import EXTENSIVE_FIELDS, INTENSIVE_FIELDS
-from madexplorer.population.strata import CLAIMS, Coalescence, coalesce_to_capacity, fuse_strata
+from madexplorer.population.strata import (
+    CLAIMS,
+    UNASSIGNED,
+    Coalescence,
+    Compaction,
+    fuse_strata,
+    normalize_strata,
+)
 from madexplorer.population.unit import PopulationUnit
 
 
@@ -36,8 +43,9 @@ class MergeMode(Enum):
     AGGREGATION = "aggregation"  # computational coarsening; both groups persist inside the unit
 
 
-def _no_stratum_ids(n: int) -> IntArray:
-    raise ValueError("capacity coalescence needs a stratum-id allocator (new_stratum_ids)")
+def _unassigned_stratum_ids(n: int) -> IntArray:
+    """Ids for components created outside a store: assigned when the unit is bound."""
+    return np.full(n, UNASSIGNED, dtype=np.int64)
 
 
 def _weighted(a: float, n_a: int, b: float, n_b: int) -> float:
@@ -52,24 +60,26 @@ def merge_state(
     merge_year: int,
     familiarity: FamiliarityRule,
     new_stratum_ids: Callable[[int], IntArray] | None = None,
-) -> list[Coalescence]:
+) -> list[Compaction | Coalescence]:
     """Fold ``source``'s state into ``target`` (network rewiring is :func:`absorb`'s job).
 
     Familiarity is combined as both units' effective values at ``merge_year``. Strata are
     inherited (:func:`~madexplorer.population.strata.fuse_strata`) from the predecessors'
-    populations and stocks before they combine; ``new_stratum_ids`` gives ids to components
-    created by capacity coalescence, whose records are returned.
+    populations and stocks before they combine and normalized
+    (:func:`~madexplorer.population.strata.normalize_strata`); ``new_stratum_ids`` gives ids
+    to components created by normalization, whose records are returned (registered units
+    need the store's allocator; without one, new components are unassigned until binding).
     """
     if target.species_id != source.species_id or target.cell != source.cell:
         raise ValueError("only co-located units of one species can merge")
-    strata, records = coalesce_to_capacity(
+    strata, records = normalize_strata(
         fuse_strata(
             [
                 (unit.strata, unit.population, [getattr(unit, stock) for stock in CLAIMS.values()])
                 for unit in (target, source)
             ]
         ),
-        new_stratum_ids or _no_stratum_ids,
+        new_stratum_ids or _unassigned_stratum_ids,
     )
     n_t, n_s = target.population, source.population
     total_reserve = target.total_reserve_kcal + source.total_reserve_kcal
@@ -144,7 +154,7 @@ def absorb(
     year: int,
     familiarity: FamiliarityRule,
     new_stratum_ids: Callable[[int], IntArray] | None = None,
-) -> list[Coalescence]:
+) -> list[Compaction | Coalescence]:
     """Merge ``source_id`` into ``target_id``, rewire the network, and remove the source."""
     rewire_ties(units, source_id, target_id)
     records = merge_state(

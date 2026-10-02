@@ -24,9 +24,14 @@ from madexplorer.population.strata import (
     S_MAX,
     STRATUM_COLUMNS,
     UNASSIGNED,
+    Compaction,
     StrataBlock,
+    StrataTable,
     coalesce_to_capacity,
+    compact_exact_strata,
     fuse_strata,
+    has_exact_duplicates,
+    normalize_strata,
     positions,
 )
 from madexplorer.population.unit import PopulationUnit
@@ -370,13 +375,13 @@ def test_an_empty_stock_resets_its_claims_to_population_shares(stock: str) -> No
         unit = next(iter(sim.state.units.values()))
         setattr(unit, stock, 5.0)
         sim.state.population.replace_strata(unit, CROSS_CUTTING)
-        sim.state.population.settle_empty_claims()  # positive stock: claims persist
+        sim.state.population.settle_empty_claims(1)  # positive stock: claims persist
         assert unit.strata.columns[claim].tolist() == CROSS_CUTTING.columns[claim].tolist()
         setattr(unit, stock, 0.0)
-        sim.state.population.settle_empty_claims()
+        sim.state.population.settle_empty_claims(1)
         assert unit.strata.columns[claim].tolist() == unit.strata.columns["share"].tolist()
         setattr(unit, stock, 8.0)  # the stock reappears: it starts from the neutral split
-        sim.state.population.settle_empty_claims()
+        sim.state.population.settle_empty_claims(1)
         assert unit.strata.columns[claim].tolist() == unit.strata.columns["share"].tolist()
         assert np.isfinite(positions(unit.strata)).all()
 
@@ -388,7 +393,7 @@ def test_migration_carries_composition_and_empties_field_claims() -> None:
         sim.state.population.replace_strata(unit, CROSS_CUTTING)
         ctx = step_context(sim)
         Relocation(unit.id, unit.cell, unit.cell + 1, 10.0, 100.0, 0.5, 4e5).apply(sim.state, ctx)
-        sim.state.population.settle_empty_claims()
+        sim.state.population.settle_empty_claims(1)
         strata = unit.strata
         assert strata.columns["share"].tolist() == [0.5, 0.5]  # composition travels
         assert strata.columns["field_claim"].tolist() == [0.5, 0.5]  # fields abandoned
@@ -471,7 +476,12 @@ def test_sidecar_is_opt_in_and_does_not_change_the_simulation(tmp_path: Path) ->
     keys = [(r["year"], r["unit_id"], r["stratum_id"]) for r in recorded.strata_rows]
     assert len(keys) == len(set(keys))
     kinds = {e["event"] for e in recorded.strata_events}
-    assert kinds <= {"fusion_inheritance", "capacity_coalescence", "fission_copy"}
+    assert kinds <= {
+        "fusion_inheritance",
+        "exact_compaction",
+        "capacity_coalescence",
+        "fission_copy",
+    }
     plain.save(tmp_path / "plain")
     recorded.save(tmp_path / "recorded")
     assert not (tmp_path / "plain" / "strata.csv").exists()
@@ -503,3 +513,170 @@ def test_all_column_orders_of_a_fusion_give_the_same_state() -> None:
         permuted = StrataBlock({n: v[idx] for n, v in b.columns.items()}, b.stratum_id[idx])
         result = state_multiset(fuse_strata([(a, 90, [8.0, 50.0]), (permuted, 30, [2.0, 70.0])]))
         assert np.allclose(result, reference, rtol=1e-15, atol=0)
+
+
+# ---------------------------------------------------------------- exact compaction (Stage 2.1)
+
+
+def test_same_position_with_different_masses_compacts_to_one_component() -> None:
+    # A and B: field position 1.0, store position 0.5; C differs.
+    source = block([0.2, 0.4, 0.4], [0.2, 0.4, 0.4], [0.1, 0.2, 0.7], [1, 2, 3])
+    compacted, records = compact_exact_strata(source, counter())
+    assert len(compacted) == 2 and len(records) == 1
+    assert sorted(records[0].merged_ids) == [1, 2] and records[0].new_id == 1000
+    assert records[0].position == (1.0, 0.5)
+    merged = compacted.stratum_id.tolist().index(1000)
+    assert positions(compacted)[merged] == pytest.approx([1.0, 0.5], rel=1e-15)
+    for name in STRATUM_COLUMNS:
+        assert compacted.columns[name].sum() == pytest.approx(source.columns[name].sum(), abs=1e-15)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        block([0.25, 0.25, 0.5], [0.25, 0.25, 0.5], [0.125, 0.375, 0.5]),  # same field position
+        block([0.25, 0.25, 0.5], [0.125, 0.375, 0.5], [0.25, 0.25, 0.5]),  # same store position
+    ],
+)
+def test_sharing_one_coordinate_is_not_a_duplicate(source: StrataBlock) -> None:
+    compacted, records = compact_exact_strata(source, counter())
+    assert compacted is source and records == []
+
+
+def test_near_but_not_exact_positions_stay_separate() -> None:
+    # Stage 4 boundary: the second store position is one ulp above the first.
+    store_b = np.nextafter(0.25, 1.0)
+    source = StrataBlock(
+        {
+            "share": np.array([0.25, 0.25, 0.5]),
+            "field_claim": np.array([0.25, 0.25, 0.5]),
+            "store_claim": np.array([0.25, store_b, 1.0 - 0.25 - store_b]),
+        },
+        np.array([0, 1, 2], dtype=np.int64),
+    )
+    assert positions(source)[0, 1] != positions(source)[1, 1]
+    compacted, records = compact_exact_strata(source, counter())
+    assert records == [] and len(compacted) == 3
+
+
+def dyadic_duplicates() -> StrataBlock:
+    """Ten components with six distinct positions (exact binary fractions)."""
+    share = np.array([2, 1, 1, 2, 1, 1, 2, 2, 2, 2], dtype=float) / 16
+    field_position = np.array([1, 1, 2, 2, 0.5, 0.5, 0.5, 1.5, 1.25, 0.25])
+    store_position = np.array([1, 1, 0.5, 0.5, 2, 2, 2, 0.5, 1.5, 0.75])
+    field, store = share * field_position, share * store_position
+    return StrataBlock(
+        {"share": share, "field_claim": field / field.sum(), "store_claim": store / store.sum()},
+        np.arange(10, dtype=np.int64),
+    )
+
+
+def test_compaction_is_independent_of_storage_order_and_ids() -> None:
+    source = dyadic_duplicates()
+    reference, _ = compact_exact_strata(source, counter())
+    assert len(reference) == 6
+    rng = np.random.default_rng(1)
+    for _ in range(10):
+        order = rng.permutation(len(source))
+        shuffled = StrataBlock(
+            {n: v[order].copy() for n, v in source.columns.items()},
+            (77 + 3 * source.stratum_id[order]).astype(np.int64),
+        )
+        result, _ = compact_exact_strata(shuffled, counter())
+        assert state_multiset(result) == state_multiset(reference)  # exact
+
+
+def test_exact_compaction_avoids_unneeded_capacity_coalescence() -> None:
+    source = dyadic_duplicates()  # 10 components > S_MAX, but only 6 distinct positions
+    normalized, records = normalize_strata(source, counter())
+    assert len(normalized) == 6
+    assert records and all(isinstance(r, Compaction) for r in records)
+    assert not has_exact_duplicates(normalized)
+
+
+def test_capacity_coalescence_still_finishes_when_compaction_is_not_enough() -> None:
+    distinct = spread(S_MAX + 2)  # 10 distinct positions
+    doubled = StrataBlock(  # plus two exact duplicates of the first component: 12 in all
+        {
+            n: np.concatenate([v[:1] / 3, v[:1] / 3, v[:1] / 3, v[1:]])
+            for n, v in distinct.columns.items()
+        },
+        np.arange(12, dtype=np.int64),
+    )
+    normalized, records = normalize_strata(doubled, counter())
+    kinds = [type(r).__name__ for r in records]
+    assert kinds[0] == "Compaction" and kinds.count("Coalescence") == 2
+    assert len(normalized) == S_MAX and not has_exact_duplicates(normalized)
+    for name in STRATUM_COLUMNS:
+        assert abs(normalized.columns[name].sum() - 1.0) <= 1e-12
+
+
+def test_a_lineage_refusing_with_itself_compacts_instead_of_coalescing() -> None:
+    # A differentiated unit fused with a representative copy of itself (fission then
+    # fusion): with stocks per head equal on both sides (exact binary values), every
+    # position appears twice, and exact compaction restores the original components.
+    lineage = dyadic_duplicates()
+    lineage, _ = compact_exact_strata(lineage, counter())  # six distinct positions
+    copy_ids = StrataBlock(
+        {n: v.copy() for n, v in lineage.columns.items()}, lineage.stratum_id + 100
+    )
+    fused = fuse_strata([(lineage, 32, [8.0, 4.0]), (copy_ids, 32, [8.0, 4.0])])
+    assert len(fused) == 12 > S_MAX
+    normalized, records = normalize_strata(fused, counter())
+    assert all(isinstance(r, Compaction) for r in records) and len(records) == 6
+    # Fusion renormalizes claims by the fused totals, so values agree to the last bits.
+    assert np.allclose(state_multiset(normalized), state_multiset(lineage), rtol=1e-15, atol=0)
+
+
+def test_parent_and_daughter_fusion_is_normalized_on_both_engines() -> None:
+    sims = _sims(group_size=64)
+    for sim in sims:
+        sim.record_strata = True
+        sim.state.population.strata_log = []
+        parent = next(iter(sim.state.units.values()))
+        parent.fields_ha, parent.stores_kcal = 0.0, 0.0  # no stock: claims fall back to shares
+        sim.state.population.replace_strata(parent, spread(S_MAX // 2 + 1))
+        daughter = split_unit(
+            sim.state.population,
+            parent.id,
+            parent.females // 2,
+            parent.males // 2,
+            "d",
+            1,
+            _rule(sim),
+        )
+        merge_units(sim.state.population, daughter.id, parent.id, MergeMode.FUSION, 1, _rule(sim))
+        log = sim.state.population.strata_log
+        assert log is not None
+        kinds = [e["event"] for e in log if e["event"] != "fission_copy"]
+        assert "capacity_coalescence" not in kinds and "exact_compaction" in kinds
+        assert len(parent.strata) == 1 and parent.strata.is_valid()  # one position: (1, 1)
+    _same_engines(*sims)
+
+
+@pytest.mark.parametrize("stock", ["fields_ha", "stores_kcal"])
+def test_an_emptied_stock_can_make_components_identical_and_they_compact(stock: str) -> None:
+    # Two components differ only in the claim on `stock`; once it is empty, they coincide.
+    other = {"fields_ha": "store_claim", "stores_kcal": "field_claim"}[stock]
+    fixture = block([0.5, 0.5], [0.5, 0.5], [0.5, 0.5])
+    fixture.columns[{"fields_ha": "field_claim", "stores_kcal": "store_claim"}[stock]] = np.array(
+        [0.75, 0.25]
+    )
+    fixture.columns[other] = np.array([0.5, 0.5])
+    sims = _sims()
+    for sim in sims:
+        unit = next(iter(sim.state.units.values()))
+        unit.fields_ha, unit.stores_kcal = 3.0, 3.0
+        sim.state.population.replace_strata(unit, fixture)
+        assert len(unit.strata) == 2
+        setattr(unit, stock, 0.0)
+        sim.state.population.settle_empty_claims(1)
+        assert len(unit.strata) == 1 and unit.strata.is_valid()
+    _same_engines(*sims)
+
+
+def test_the_invariant_check_rejects_exact_duplicates() -> None:
+    table = StrataTable()
+    table.load(0, block([0.25, 0.75], [0.25, 0.75], [0.25, 0.75]))  # both at (1, 1)
+    assert not table.check(np.array([0])).any()
+    assert not block([0.25, 0.75], [0.25, 0.75], [0.25, 0.75]).is_valid()

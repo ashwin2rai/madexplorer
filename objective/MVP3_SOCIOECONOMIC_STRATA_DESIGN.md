@@ -299,6 +299,7 @@ not appear, diagnose the mechanism; do not add noise.
 |---|---|---|
 | Creation | Only when a causal mechanism treats part of a represented population differently enough that a distinct state must be represented (fusion inheritance; later explicit transfers such as an inheritance partition). No statistical split test: a stratum is a point and holds no internal distribution. Reconsider only if a future model stores within-stratum moments. | 2+ |
 | Divergence | Only through explicit flows (§F). | 3 |
+| **Exact compaction** | Components of one unit at exactly the same position (`claim/share` for every claim, bit-identical) are one represented stratum: summed share and claims, fresh id. Lossless representation identity, no tolerance; runs before capacity coalescence and repeats until no exact duplicate remains. Positions equal only up to rounding stay separate (Stage 4). | 2.1 |
 | **Capacity coalescence** | If `n_strata > S_max`, deterministically coalesce the closest pair in relative-position space (`field_claim/share`, `store_claim/share`) until representable. Shares and claims add, which is exactly conservative. Ties are broken by state values, never by ID or storage position. This is numerical resolution management, not a sociological event, and the approximation error is recorded in the sidecar. | 2 |
 | **Adaptive merge** | Merge behaviorally indistinguishable components even below `S_max` (criterion in relative-position space; identical-merge neutrality tests). | 4 |
 | Population transfer between strata | Only via a named mechanism that states which claims move with people. | 4 |
@@ -340,6 +341,7 @@ Labels such as "elite-like concentration" live only in analysis tooling.
 | `stratum_composition` | 1 | All strata share the unit's age–sex structure; shares are unchanged by births and deaths. |
 | `strata_fusion_inheritance` | 2 | Fused groups keep their prior absolute positions as distinct components. |
 | `claim_zero_stock` | 2 | Claims on an empty stock equal population shares. |
+| `strata_exact_compaction` | 2.1 | Strata encode positions, not lineages: exact duplicate positions are one component (lossless representation identity). |
 | `strata_capacity_coalescence` | 2 | Above `S_max`, the closest components are coalesced (numerical approximation, recorded error). |
 | `new_field_claims` | 3 | The stated allocation rule for newly cleared land (proposed: ∝ share). |
 | `field_entitlement` | 3 | A weight `w` of crop output accrues by field claim; neutral at 0; nonzero values are hypotheses. |
