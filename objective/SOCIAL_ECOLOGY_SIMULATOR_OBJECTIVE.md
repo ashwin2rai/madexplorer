@@ -1,2508 +1,927 @@
 # Social-Ecological Civilization Simulator
 
-## Canonical Objective, Model Specification, and Software Engineering Guidelines
+## Canonical Objective and Architectural Direction
 
-**Working title:** `madexplorer`  
-**Primary implementation language:** Python 3.12+  
-**Document version:** 2.0  
-**Canonicalized through:** MVP 2 model freeze, 2026-09-30  
-**Frozen MVP 2 commit:** `f505fd118aa17bda3cc1cbb92afed13008bf102b`  
-**Frozen source-tree SHA-256:** `7692ac03a2c75ad598e771098231b1f8bfb74bf918cd4b148227837b0be6bea5`  
-**Document status:** Canonical project objective and forward specification  
-**Primary goal:** Build a reproducible, extensible simulation engine in which populations, cultures, institutions, technologies, and political structures emerge from interactions among species biology, environment, resources, ecology, incentives, social behavior, and stochastic events.
+**Project:** `madexplorer`  
+**Document version:** 3.0  
+**Canonicalized through:** MVP 2.1 freeze, 2026-10-01  
+**Current scientific milestone:** MVP 2.1 frozen; MVP 3 next  
+**Current implementation:** Python 3.13+  
+**Document role:** durable project objective, scientific principles, and architectural constraints
 
-This version incorporates the settled design lessons and model decisions made through the MVP 2 freeze. It is intentionally **not** an experiment log. Historical probes, rejected alternatives, and implementation chronology belong in `objective/status.md`; exact frozen run fingerprints and baseline values belong in `baselines/mvp2/freeze_manifest.json`.
+This document defines what `madexplorer` is trying to become and the constraints that
+future work should preserve. It is intentionally not an implementation diary, benchmark
+log, or catalog of every model equation.
 
----
+Historical decisions and lessons belong in `objective/status.md`. Exact frozen results,
+checksums, scenarios, and validation records belong in the milestone manifests under
+`baselines/`. Detailed equations and executable behavior belong in code, tests, scenario
+configuration, and the model-rule registry.
 
-## 0. Canonical Project State and Authority
+### Document authority
 
-### 0.1 Current milestone
+When sources differ, interpret them by role rather than forcing one file to contain
+everything:
 
-MVP 1 and MVP 2 are complete. **MVP 2 model semantics are frozen.** The current development milestone is **MVP 2 Performance Hardening**: make the frozen model substantially faster without changing its scientific behavior, except for genuine correctness bugs.
+- this document governs durable scientific intent and architectural constraints;
+- milestone manifests and their frozen artifacts define the recorded scientific baseline;
+- scenarios, source, and tests define the executable implementation of that baseline;
+- `objective/status.md` records current lessons, caveats, and handoff state.
 
-MVP 3 begins only after performance hardening and introduces the first distributional social layer: wealth, health, occupations, within-unit heterogeneity, selective migration, biological welfare, and scientifically defensible adaptive population resolution.
-
-### 0.2 Source-of-truth hierarchy
-
-Use the following hierarchy when documents differ:
-
-1. **This document** defines the canonical scientific objective, architecture, frozen MVP 2 contract, and forward roadmap.
-2. **`baselines/mvp2/freeze_manifest.json`** defines exact MVP 2 freeze fingerprints, scenarios, seeds, reference outcomes, test status, and performance baselines.
-3. **Scenario files and source code** define the executable frozen model.
-4. **`objective/status.md`** is the historical engineering and experiment record. It may contain superseded plans and old open issues; it is not the primary specification.
-
-### 0.3 Frozen MVP 2 contract
-
-The canonical MVP 2 model uses:
-
-- annual discrete timesteps;
-- a spatial grid with topology, climate, hydrology, ecological food stocks, soil and arable land;
-- group-level `PopulationUnit` actors with exact age/sex demographic cohorts;
-- bounded local perception and bounded social geographic reports rather than map-wide information synchronization;
-- confidence-aware direct observations and confidence decay for relayed information;
-- practical ecological familiarity that decays toward a baseline when not practiced;
-- foraging, storage, trade, cultivation, field expansion, energetics, fertility, mortality and crowding;
-- domain knowledge, learning, diffusion, need-sensitive innovation, and technology capabilities;
-- fission, fusion and migration;
-- explicit field replacement cost when farmers leave productive cleared land;
-- `log1p` food utility in migration;
-- deterministic named RNG streams and versioned run provenance;
-- staged subsystem evaluation and application with conservation/invariant checks.
-
-The following mechanism defaults are part of the freeze:
-
-- `direct_observation_shrinkage = true`;
-- `familiarity_decay = true`;
-- `field_growth_to_target = true`;
-- `field_replacement_cost = true`;
-- `expected_tenure = false`;
-- **aggregation is disabled in canonical scientific scenarios**.
-
-### 0.4 Canonical validation scenarios
-
-Two scenarios define the MVP 2 scientific reference:
-
-- **`scenarios/mvp2_neolithic.yaml`**: open-ended migration, technology and agricultural transition in the main world. Four 600-year freeze seeds all undergo substantial cultivation, with final populations ranging from roughly 15.8k to 33.1k and final farm shares around 0.42-0.50.
-- **`scenarios/mvp2_pressure.yaml`**: a bounded intensification-pressure ablation. Across four matched 400-year freeze seeds, cultivation raises late population by roughly 2.7-3.7x relative to cultivation-disabled controls and roughly doubles density while reducing food stress.
-
-These are **mechanism validations**, not historical calibration targets. Future implementations must preserve the causal behavior, not force exact narrative similarity outside documented deterministic regression conditions.
-
-### 0.5 Pre-optimization performance baseline
-
-The frozen seed-0, 600-year benchmark records approximately:
-
-- 43.8 s wall time / 41.9 s CPU on the recorded 2-core x86_64 environment;
-- 1,212 final population units;
-- about 0.293 ms per unit-year;
-- about 328 ms/tick in years 571-600 at about 1,086 active units;
-- about 123 MB peak RSS.
-
-The dominant late-stage costs are belief sharing, migration, foraging, knowledge diffusion, demography, field planning, learning and perception. Scaling over the measured range is approximately linear in active population units; the immediate engineering problem is therefore Python per-unit overhead and state representation, not a single catastrophic asymptotic algorithm.
-
-### 0.6 Accepted MVP 2 limitations
-
-The following are deliberately **not** blockers for MVP 2 and should not be reopened during performance hardening unless they cause a correctness failure:
-
-1. Computational aggregation is not scientifically neutral and is disabled in canonical runs. Correct adaptive aggregation belongs to MVP 3.
-2. Migration still contains a stock-versus-yield simplification when comparing wild food and annual crop output.
-3. Field replacement uses home-cell clearing conditions; destination-specific reconstruction, rebuild downtime and soil capital are deferred.
-4. No forced population plateau exists. Food, competition, soil and crowding are the density feedbacks currently modeled.
-5. Noisy beliefs retain some winner's-curse bias despite shrinkage.
-6. The technology-frontier x practitioner-knowledge efficiency formulation remains the frozen MVP 2 rule.
-7. Hazard-based expected tenure was tested and rejected; clearing investment remains based on the frozen formulation.
-8. Migration decisions apply to whole population units; there are no wealth/health/occupation strata yet.
-9. Vegetation is static, the timestep is annual, trade is one-good, knowledge is group-level, perception uses simplified neighborhoods, and soil is one pool per cell.
-10. Exact seeded floating-point replay is platform-sensitive; golden fixtures are authoritative only on supported matching numeric platforms.
+A future scientific change should update the executable model and its baseline deliberately;
+if it changes a durable project principle or roadmap assumption, update this document too.
 
 ---
 
-## 1. Project Objective
+## 1. Objective
 
-The simulator should model intelligent populations placed into a spatially explicit world with topology, climate, natural resources, plant and animal ecologies, and initial population seeds. The simulation should advance through a user-specified time horizon and record how populations:
+Build a reproducible, extensible simulation engine in which intelligent populations live
+inside a spatially explicit ecology and develop social, economic, technological, and
+political organization through local interaction.
 
-- move through geography;
-- forage, hunt, farm, herd, trade, build, and extract resources;
-- grow or shrink demographically;
-- accumulate and transmit knowledge;
-- invent and diffuse technologies;
-- form families, factions, coalitions, hierarchies, institutions, settlements, and states;
-- split, merge, migrate, revolt, conquer, collapse, or decentralize;
-- generate and distribute wealth and surplus;
-- experience health, mortality, disease, nutrition, and biological development;
-- create cultural norms, status systems, and political preferences;
-- alter the ecosystems they inhabit;
-- respond to shocks such as droughts, epidemics, war, climate change, and resource depletion.
+The simulator should allow macro-scale patterns to emerge from mechanisms involving:
 
-The simulation is not intended to reproduce a predetermined historical sequence. It should encode local mechanisms and testable behavioral hypotheses while allowing macro-scale outcomes to emerge.
+- geography, climate, resources, and ecology;
+- demography and biological needs;
+- movement, exploration, migration, and settlement;
+- bounded perception, memory, and social information;
+- subsistence, production, storage, exchange, and specialization;
+- knowledge, learning, innovation, and technological diffusion;
+- wealth, health, occupation, status, and other within-population differences;
+- cooperation, competition, hierarchy, institutions, and political organization;
+- ecological modification, shocks, disease, conflict, and collapse where modeled.
 
-The core research question is:
+The simulator is **not** intended to replay a predetermined history. It should encode
+mechanisms and behavioral hypotheses, then expose the consequences of those assumptions
+across many stochastic runs.
 
-> Given a species, geography, ecology, initial population, and behavioral assumptions, what social, technological, demographic, political, and ecological patterns repeatedly emerge across stochastic simulation runs?
+The central research question is:
 
-A secondary objective is to make the species model configurable enough to simulate non-human and fantasy intelligent species such as elves, fairies, dwarves, giants, or entirely novel species without rewriting the social simulation engine.
+> Given a species, world, ecology, initial population, and explicit behavioral assumptions,
+> what demographic, social, economic, technological, political, and ecological patterns
+> repeatedly emerge, under what conditions, and through what causal pathways?
 
----
-
-## 2. Fundamental Design Philosophy
-
-### 2.1 Encode mechanisms, not historical outcomes
-
-The engine should not contain rules such as:
-
-- `population > 50_000 -> create state`;
-- `surplus > threshold -> create aristocracy`;
-- `rainforest -> low civilization`;
-- `collapse -> population becomes healthier`;
-- `elves -> forest civilization`.
-
-Instead, it should encode mechanisms such as:
-
-- food availability;
-- labor productivity;
-- resource appropriability;
-- mobility cost;
-- coordination cost;
-- status competition;
-- wealth accumulation;
-- inheritance;
-- coercive capacity;
-- autonomy preferences;
-- public-good production;
-- disease transmission;
-- childhood nutritional stress;
-- institutional legitimacy;
-- trade and knowledge diffusion.
-
-States, aristocracies, nomadic frontiers, empires, decentralized societies, collapses, and ecological niches should be emergent interpretations of these mechanisms.
-
-### 2.2 Separate assumptions from outcomes
-
-Every substantive assumption about intelligent behavior should be an explicit configurable parameter or model component. Where possible, assumptions should be grouped into interchangeable hypothesis modules so that a user can run counterfactual simulations with a mechanism enabled, disabled, or altered.
-
-Examples:
-
-- status-seeking enabled vs. disabled;
-- inheritable wealth enabled vs. disabled;
-- strong autonomy preference vs. weak autonomy preference;
-- high vs. low coalition-forming tendency;
-- state public-goods efficiency high vs. low;
-- strong vs. weak wealth-health relationship.
-
-### 2.3 Preserve heterogeneity
-
-The **long-term** representation must preserve distributions rather than collapse populations to average persons. MVP 2 currently preserves exact age/sex heterogeneity but treats most social/economic traits at group level. MVP 3 extends this principle to wealth, health, occupation, preferences and other correlated variables. Any aggregation introduced from MVP 3 onward must preserve the heterogeneity that materially changes behavior.
-
-### 2.4 Use adaptive resolution
-
-Adaptive resolution is a core architectural objective, but it is **not yet a validated MVP 2 capability**. The frozen MVP 2 reference uses unaggregated social units because naive coarsening changes outcomes. MVP 3 should introduce weighted statistical population units whose internal strata can respond selectively, while high-leverage actors or tails may remain at finer resolution.
-
-### 2.5 Treat "civilization" as multidimensional
-
-Do not use a single civilization score. Track at least:
-
-- total production;
-- per-capita consumption;
-- wealth distribution;
-- biological welfare;
-- state capacity;
-- elite capture;
-- political autonomy;
-- knowledge stock;
-- technological capabilities;
-- ecological sustainability;
-- trade connectivity;
-- social cohesion;
-- institutional legitimacy.
-
-A polity may be technologically sophisticated while biologically unhealthy, wealthy while unequal, centralized while weak, or decentralized while prosperous.
+A secondary objective is species generality. The core engine should eventually support
+humans, non-human intelligent species, fantasy species, and novel life histories without
+hard-coding human historical outcomes into the simulation architecture.
 
 ---
 
-## 3. Simulation Inputs
+## 2. Scientific Philosophy
 
-A simulation run should be fully defined by versioned input configuration and a random seed.
+### 2.1 Encode mechanisms, not outcomes
 
-### 3.1 Required inputs
+Do not encode rules whose purpose is to force a recognizable historical stage.
 
-1. **World topology**
-   - grid dimensions or mesh;
-   - cell coordinates;
-   - elevation;
-   - slope;
-   - water bodies;
-   - river graph;
-   - coastline;
-   - optional caves, islands, underground layers, or vertical habitats.
-
-2. **Climate/environment**
-   - temperature regime;
-   - precipitation;
-   - seasonality;
-   - wind;
-   - solar exposure;
-   - soil properties;
-   - vegetation density;
-   - biome attributes;
-   - stochastic climate variation.
-
-3. **Ecology**
-   - plant species;
-   - animal species;
-   - biomass;
-   - edible biomass;
-   - predation;
-   - reproduction;
-   - migration;
-   - disease reservoirs;
-   - domesticability traits.
-
-4. **Intelligent species definitions**
-   - human or fantasy species profiles;
-   - physiological distributions;
-   - life-history parameters;
-   - movement capabilities;
-   - cognition and learning parameters;
-   - social-psychology distributions.
-
-5. **Initial population seeds**
-   - position;
-   - population size;
-   - species;
-   - age/sex/reproduction structure if applicable;
-   - starting technologies;
-   - starting knowledge;
-   - cultural parameters;
-   - initial wealth/resources;
-   - optional starting institutions.
-
-6. **Time horizon**
-   - start time;
-   - end time or number of years;
-   - base timestep;
-   - seasonal resolution if needed.
-
-7. **Simulation seed**
-   - random seed;
-   - deterministic PRNG configuration.
-
-### 3.2 Optional inputs
-
-- exogenous disasters;
-- known climate series;
-- pre-existing roads or ruins;
-- external migration events;
-- pre-seeded languages;
-- religious or ideological traits;
-- scenario-specific technology constraints;
-- explicit magic systems for fantasy worlds;
-- multiple intelligent species occupying the same world.
-
----
-
-## 4. Spatial World Model
-
-### 4.1 Cell representation
-
-Each spatial cell `c` at time `t` should expose a state vector:
+Avoid rules such as:
 
 ```text
-CellState(c, t):
-    elevation
-    slope
-    temperature
-    rainfall
-    seasonality
-    wind
-    water_access
-    river_access
-    soil_nutrients
-    soil_depth
-    erosion_risk
-    vegetation_density
-    canopy_density
-    understory_density
-    biomass
-    edible_biomass
-    pathogen_pressure
-    carrying_resources
-    infrastructure
-    land_use
-    ecosystem_state
+large population -> state
+surplus -> aristocracy
+agriculture -> hierarchy
+collapse -> healthier population
+forest -> low development
 ```
 
-The world can begin as a regular square/hex grid for the MVP. The architecture should not assume that only grids are possible; later versions may use graph or irregular mesh representations.
-
-### 4.2 Environment is dynamic
-
-Cells should change through:
-
-- seasons;
-- climate trends;
-- storms;
-- drought;
-- floods;
-- fires;
-- soil degradation;
-- erosion;
-- succession;
-- human clearing;
-- irrigation;
-- construction;
-- domestication;
-- pollution;
-- overhunting.
-
-### 4.3 Accessibility, not biome labels
-
-Do not encode a generic jungle penalty. Dense forests should affect several separate mechanisms:
-
-- movement friction;
-- line-of-sight and information radius;
-- clearing labor;
-- road construction cost;
-- agricultural preparation;
-- military projection;
-- bulk transport;
-- hunting/search time;
-- state legibility.
-
-The impact should depend on species physiology and technology.
-
-A conceptual movement cost is:
+Prefer mechanisms such as:
 
 ```text
-movement_cost = distance
-              * terrain_friction
-              * vegetation_friction
-              * weather_friction
-              / mobility_technology
+food availability
+labor productivity
+resource appropriability
+mobility and transport cost
+storage and transferability
+inheritance
+status incentives
+coordination costs
+coercive capacity
+public-good provision
+autonomy preferences
+coalition formation
+disease exposure
+nutrition and biological development
 ```
 
-For a species capable of flight, some components may be greatly reduced while wind and energy costs become more important.
+States, elites, markets, settlements, frontiers, revolts, collapses, and other social forms
+should be interpretations of interacting mechanisms, not scripted milestones.
 
-### 4.4 Accessible food productivity
+### 2.2 Make assumptions explicit and falsifiable
 
-Distinguish ecological productivity from human-accessible food:
+Substantive assumptions about behavior should be visible in configuration, model rules, or
+well-defined mechanisms. Important hypotheses should be removable or replaceable so that
+their effects can be tested through ablation and counterfactual runs.
 
-```text
-accessible_calories = total_edible_calories
-                    * accessibility
-                    * harvest_efficiency
-                    * knowledge_efficiency
-```
+A mechanism has little explanatory value if the outcome it is meant to explain has simply
+been encoded into it.
 
-A highly productive ecosystem can still provide low food return per labor hour for a particular species or technological regime.
+### 2.3 Preserve causally important heterogeneity
 
-### 4.5 Agriculture
+Do not replace distributions with averages when the distribution affects behavior.
 
-Agricultural return should account for clearing, preparation, planting, maintenance, harvest, transport, storage, pests, and soil dynamics.
+Age and sex already matter demographically. Future social modeling must preserve joint
+structure in variables such as wealth, health, occupation, nutrition, preferences, status,
+and migration propensity when those correlations change outcomes.
 
-```text
-net_food_return = harvest_calories / total_labor_cost
-```
+The goal is not maximal microscopic detail. The goal is the **minimum representation that
+preserves the heterogeneity needed by the mechanism being modeled**.
 
-Forest agriculture may be viable through shifting cultivation, agroforestry, or specialized crops even where fixed-field cereal agriculture is difficult.
+### 2.4 Information is local and imperfect
 
-### 4.6 Landscape legibility
+Populations should act from information they could plausibly possess, not from global
+simulation state.
 
-Track a derived measure of how easily a political actor can observe, tax, patrol, and administer a landscape.
+Knowledge of the world should arise through perception, residence, memory, exploration,
+and social transmission. Information may be noisy, stale, incomplete, and confidence-
+weighted.
 
-Possible contributors:
+Perfect map knowledge, lossless map-wide synchronization, or hidden access to future state
+should not be introduced merely because it simplifies an algorithm.
 
-```text
-legibility = f(
-    visibility,
-    road_connectivity,
-    settlement_concentration,
-    crop_concentration,
-    harvest_seasonality,
-    storability,
-    mobility_barriers,
-    recordkeeping_technology
-)
-```
+### 2.5 Treat social organization as multidimensional
 
-Low-legibility environments should make centralized extraction more expensive, not make intelligent life impossible.
+Do not reduce "civilization" or "development" to a single score.
+
+The simulator should eventually be able to distinguish, among other things:
+
+- population and density;
+- production and consumption;
+- wealth and its distribution;
+- biological welfare and health;
+- knowledge and technological capability;
+- trade connectivity and specialization;
+- political autonomy and state capacity;
+- elite capture and coercive power;
+- social cohesion and legitimacy;
+- ecological impact and sustainability.
+
+A society may score very differently across these dimensions. That is a feature, not a
+problem to average away.
+
+### 2.6 Adaptive resolution is a scientific representation problem
+
+Population aggregation must not be treated as a free performance optimization.
+
+If two groups or strata would make meaningfully different decisions, merging them into one
+homogeneous actor changes the model. Adaptive resolution is valid only when the internal
+heterogeneity and selective responses required by the science are preserved.
+
+The current naive coarsening mechanism is therefore **not scientifically neutral** and is
+disabled in canonical scientific scenarios.
 
 ---
 
-## 5. Species Model
+## 3. Canonical Project State
 
-Humanity should be represented as one `SpeciesProfile`, not as hidden constants in the simulation.
+### 3.1 Current scientific base: MVP 2.1
 
-### 5.1 SpeciesProfile
+MVP 1 and MVP 2 are complete. MVP 2.1 is the current scientific base for future work.
+
+MVP 2.1 preserves the MVP 2 model while correcting the known B1 familiarity merge-year
+semantic defect. Exact identity, validation results, and frozen artifacts are recorded in:
 
 ```text
-SpeciesProfile
-    physiology
-    life_history
-    metabolism
-    movement
-    cognition
-    social_psychology
-    perception
-    manipulation
-    niche_construction
+baselines/mvp2_1/freeze_manifest.json
 ```
 
-### 5.2 Physiology
+Performance Hardening is complete. Its chronology and measurements are historical evidence,
+not the current project objective.
 
-Represent traits as distributions where appropriate:
+### 3.2 Capabilities present at the MVP 2.1 boundary
 
-- adult body mass;
-- height;
-- strength;
-- agility;
-- endurance;
-- heat tolerance;
-- cold tolerance;
-- disease resistance;
-- injury resistance;
-- healing rate;
-- sleep need;
-- sensory acuity.
+The frozen simulator already models:
 
-### 5.3 Life history
+- generated spatial worlds with land, water, climate, hydrology, vegetation, soil, and
+  ecological food stocks;
+- configurable species physiology, life history, movement, cognition, foraging, and social
+  information parameters;
+- exact age/sex demographic cohorts inside population units;
+- energetics, fertility, mortality, crowding, and extinction;
+- bounded perception and confidence-aware beliefs about places;
+- ecological familiarity that changes through use and time;
+- foraging, storage, trade, cultivation, field investment, and harvest;
+- domain knowledge, learning, diffusion, innovation, technologies, and capabilities;
+- fission, fusion, exploration, and migration;
+- deterministic named random streams, event provenance, metrics, and invariant checks.
 
-- expected lifespan;
-- mortality curve;
-- maturation age;
-- fertility schedule;
-- pregnancy/gestation duration;
-- pregnancy cost;
-- offspring per birth;
-- parental investment;
-- menopause or equivalent;
-- aging rate.
+The reference scenarios demonstrate that agriculture can emerge from the modeled incentives
+and that cultivation can materially increase carrying capacity under pressure. These are
+mechanism validations, not claims of historical calibration.
 
-Use survival distributions such as Gompertz, Weibull, or empirical tables rather than fixed death ages.
+### 3.3 Important accepted limitations
 
-### 5.4 Metabolism
+MVP 2.1 deliberately remains simple in several areas:
 
-- calorie requirements;
-- water requirements;
-- thermoregulation costs;
-- diet breadth;
-- digestion efficiencies;
-- starvation tolerance.
+- social and economic state is still mostly group-level;
+- migration decisions are still made by whole population units;
+- wealth inequality, occupations, within-group health distributions, elites, factions, and
+  political preferences are not yet represented;
+- ecology is intentionally simplified, including static vegetation structure, no seasonal
+  cycle, and a simple soil model;
+- trade remains simple;
+- migration utility retains a known wild-food-stock versus crop-flow simplification;
+- current coarsening changes social behavior and is not valid as a neutral approximation.
 
-### 5.5 Movement
-
-- walking speed;
-- running speed;
-- swimming;
-- climbing;
-- flight;
-- burrowing;
-- carrying capacity;
-- terrain-specific movement costs;
-- weather sensitivity.
-
-### 5.6 Cognition
-
-Avoid a single intelligence scalar. Prefer dimensions such as:
-
-- working memory;
-- long-term memory;
-- abstraction;
-- spatial reasoning;
-- social inference;
-- planning horizon;
-- learning speed;
-- imitation;
-- invention probability;
-- teaching efficiency;
-- knowledge retention.
-
-### 5.7 Social psychology
-
-Possible traits, ideally as population distributions:
-
-- sociability;
-- kin bias;
-- reciprocity;
-- conformity;
-- status-seeking;
-- dominance-seeking;
-- autonomy preference;
-- aggression;
-- risk tolerance;
-- coalition tendency;
-- punishment tendency;
-- out-group caution;
-- generosity;
-- trust propensity.
-
-These parameters should influence behavior but should not directly define institutions.
-
-### 5.8 Fantasy-species examples
-
-#### Long-lived elves
-
-Possible parameters:
-
-- very long lifespan;
-- late maturation;
-- low fertility;
-- high disease resistance;
-- high agility;
-- long planning horizon;
-- high long-term memory.
-
-Possible emergent consequences include long elite tenures, slow demographic recovery from war, long-lived personal grievances, lower need for archival institutions, or unusually persistent wealth accumulation. These are outcomes to observe, not pre-coded rules.
-
-#### Flying fairies
-
-Possible parameters:
-
-- very low body mass;
-- flight capability;
-- high movement energy cost;
-- low carrying capacity;
-- high weather sensitivity;
-- reduced river/cliff movement barriers.
-
-Possible emergent outcomes include high information connectivity and low bulk-transport capacity.
+These limitations define future work; they are not reasons to rewrite the frozen MVP 2.1
+model before MVP 3.
 
 ---
 
-## 6. Adaptive Population Representation
+## 4. Current Computational Architecture
 
-> **Canonical MVP 2 state:** adaptive population resolution is a design target, not yet a scientifically valid feature. MVP 2 represents social actors as group-level `PopulationUnit` objects with exact age/sex cohort arrays. The existing computational coarsening subsystem is empirically non-neutral and is disabled in canonical scenarios. MVP 3 must redesign aggregation so a large statistical unit can preserve heterogeneous subpopulations and selective behavior instead of becoming one homogeneous decision-maker.
+The architecture at the MVP 2.1 boundary is an important part of the project's accumulated
+learning. Future work should evolve it rather than returning to an object-per-agent design.
 
-### 6.1 PopulationUnit
+### 4.1 Authoritative numeric population state
 
-The core simulation actor is a `PopulationUnit`. It may represent one person or many people.
+`UnitTable` is the authoritative store for hot numeric population state. It uses a
+columnar/structure-of-arrays representation indexed by stable population-unit rows.
+
+`PopulationUnit` remains useful as a domain-facing object and compatibility view, but it
+should not become the primary substrate for large numerical computation again.
+
+This separation is fundamental:
 
 ```text
-PopulationUnit
-    id
-    species_id
-    population_weight
+human-readable/domain-facing model
+        !=
+hot computational representation
+```
+
+The two may expose the same scientific state without requiring the same storage model.
+
+### 4.2 Static, compiled, and dynamic state are distinct
+
+The current architecture separates:
+
+- **scenario configuration**: human-readable typed inputs;
+- **`StaticContext`**: expensive mostly immutable world/species structures that can be
+  shared across runs;
+- **`CompiledScenario`**: numeric/indexed views of configuration for hot kernels;
+- **`SimulationState` / `UnitTable`**: mutable state that evolves during a run;
+- **`StepContext`**: per-tick services, caches, provenance, and accounting.
+
+Preserve this distinction. It supports performance, reproducibility, ensemble execution,
+and future non-Python execution backends.
+
+### 4.3 Sparse state should stay sparse
+
+Beliefs are sparse in production and dense only as a reference/testing backend. This is a
+model for future design: do not materialize a dense tensor merely because its indices can
+be imagined mathematically.
+
+Use dense arrays where state is genuinely dense and regular. Use sparse or compressed
+structures where most possible relationships do not exist.
+
+### 4.4 Scientific semantics are not the same thing as an optimized kernel
+
+Several mechanisms have optimized numeric paths while retaining reference behavior for
+comparison. Preserve independent semantic oracles where they provide real protection
+against silent scientific drift.
+
+Do not remove useful reference implementations merely to satisfy a superficial DRY rule.
+Conversely, do not maintain duplicate implementations that provide no independent
+validation value.
+
+### 4.5 The simulation tick is ordered scientific semantics
+
+At the MVP 2.1 boundary, one annual step follows this conceptual order, with optional
+mechanisms omitted when disabled:
+
+```text
+Climate
+-> Ecology
+-> Perception
+-> Knowledge sharing
+-> Harvest
+-> Foraging
+-> Trade
+-> Energetics
+-> Demography
+-> Extinction
+-> Field planning
+-> Learning
+-> Knowledge diffusion
+-> Innovation
+-> Fission
+-> Fusion
+-> Migration
+-> Experimental coarsening
+```
+
+Subsystem ordering can affect outcomes. It must not be changed as an incidental refactor.
+Changes to ordering are scientific changes and require explicit justification and
+validation.
+
+### 4.6 Composition semantics are first-class
+
+Fields that belong to a population unit must have explicit behavior under lifecycle events
+such as fission and fusion. The current field-composition rules are a valuable architectural
+pattern.
+
+As MVP 3 introduces strata, every new state variable should make clear:
+
+- whether it is group-level or stratum-level;
+- how it is initialized;
+- how it splits;
+- how it merges;
+- how it migrates;
+- whether it is conserved, averaged, inherited, recomputed, or discarded.
+
+Hidden or ad hoc lifecycle semantics are not acceptable.
+
+---
+
+## 5. Representation of Populations
+
+### 5.1 Population units are statistical social actors
+
+A `PopulationUnit` is not intended to represent a single person. It represents a weighted
+population that can share location, information, culture, and other group-level state while
+retaining internal demographic or socioeconomic distributions.
+
+The representation should become richer only where that richness changes behavior.
+
+### 5.2 Shared state and distributional state must remain separate
+
+MVP 3 should preserve a clean distinction between group-shared state and state that varies
+within the group.
+
+Conceptually:
+
+```text
+Group-shared state [U]
     location
-    demographic_distribution
-    wealth_distribution
-    health_distribution
-    preference_distributions
-    occupation_distribution
-    skills_distribution
-    cultural_state
-    political_state
-    knowledge_state
-    resource_state
-    social_links
-```
-
-### 6.2 Adaptive resolution
-
-Resolution should depend on:
-
-```text
-resolution = f(
-    represented_population,
-    heterogeneity,
-    political_leverage,
-    event_intensity,
-    uncertainty,
-    computational_budget
-)
-```
-
-Examples:
-
-- a nomadic band of 30 may use 30 individual agents;
-- a stable farming population of 2 million may use hundreds of weighted population units;
-- a handful of rulers, generals, inventors, or major faction leaders may remain individual even when the general population is highly aggregated.
-
-### 6.3 Statistical super-agents
-
-If a unit represents `N` persons, unit-level outcomes should be computed by integrating or sampling over internal distributions rather than assuming identical behavior.
-
-For a behavioral variable `x`:
-
-```text
-N_action = N * integral(P(action | x) * p(x) dx)
-```
-
-Approximate using:
-
-- analytic moments where possible;
-- quadrature;
-- representative quantiles;
-- stratified Monte Carlo;
-- moment-matching approximations.
-
-### 6.4 Splitting
-
-Split a population unit when an event produces meaningful conditional divergence.
-
-Examples:
-
-- migration selects for high autonomy or risk tolerance;
-- famine disproportionately harms low-wealth households;
-- epidemic mortality varies by age or health;
-- conscription affects particular cohorts;
-- religious conversion divides cultural identity;
-- class formation separates the upper wealth tail;
-- rebellion sorts populations by political loyalty.
-
-Conceptually:
-
-```text
-if conditional_response_variance > split_threshold:
-    split_unit()
-```
-
-Daughter units must inherit conditional distributions, not copies of the original population distribution.
-
-### 6.5 Merging
-
-Merge units when they:
-
-- occupy the same spatial/political context;
-- have sufficiently similar state distributions;
-- have no important unique social links;
-- are below a political-importance threshold.
-
-Distribution similarity can use metrics such as:
-
-- KL divergence where appropriate;
-- Jensen-Shannon divergence;
-- Wasserstein distance;
-- moment-based heuristics.
-
-### 6.6 Sampling noise
-
-Small populations should experience stronger stochasticity. Large populations should become more statistically predictable.
-
-For sample means:
-
-```text
-standard_error ~= sigma / sqrt(N)
-```
-
-Do not remove rare high-leverage individual events simply because a population is large; retain high-resolution actors where their structural position justifies it.
-
----
-
-## 7. Distribution Model
-
-> **MVP 3 boundary:** the distributional model below is not yet implemented in the frozen MVP 2 scientific state. MVP 2 retains exact age/sex cohorts and group-level scalars. MVP 3 should preferentially use **joint weighted representative strata / quantile particles** rather than unrelated marginal distributions, so wealth, health, occupation, preferences and migration propensity can remain correlated. A practical target is `N[sex, age, stratum]` plus shared group-level cultural/geographic state.
-
-### 7.1 Use distributions appropriate to each variable
-
-Examples:
-
-| Variable | Candidate representation |
-|---|---|
-| height | Normal or empirical mixture |
-| body mass | Lognormal or empirical |
-| lifespan | Weibull/Gompertz/empirical survival |
-| fertility | Poisson/negative binomial/empirical age schedule |
-| wealth | Lognormal body + Pareto tail, or empirical quantiles |
-| land ownership | Heavy-tailed |
-| health propensity | Beta/logit-normal |
-| risk preference | Beta |
-| political loyalty | Categorical / Dirichlet |
-| occupation | Categorical distribution |
-| social-network degree | Heavy-tailed / empirical |
-| innovation waiting time | Exponential/Weibull/hazard model |
-
-### 7.2 Wealth distribution
-
-A useful starting model is a lognormal body with a Pareto upper tail:
-
-```text
-wealth ~ Lognormal(mu, sigma) below cutoff
-wealth ~ Pareto(alpha, cutoff) above cutoff
-```
-
-The exact form should be configurable.
-
-### 7.3 Preserve correlations
-
-Do not independently sample wealth, health, fertility, political influence, and other correlated variables.
-
-Use either:
-
-- conditional models;
-- copulas;
-- joint mixture models;
-- synthetic micro-samples retained within a population unit;
-- quantile bins with cross-variable covariance.
-
-Examples:
-
-```text
-P(health | wealth, age, disease, occupation)
-P(power | wealth, status, kinship, coercive_resources)
-P(migration | autonomy, wealth, risk_tolerance, mobility_cost)
-P(fertility | health, wealth, culture, age)
-```
-
-### 7.4 Parameter uncertainty
-
-Distinguish:
-
-- population heterogeneity;
-- model parameter uncertainty;
-- stochastic environmental variation.
-
-They should not be represented by the same random variable.
-
----
-
-## 8. Demography and Health
-
-> **Canonical MVP 2 state:** demography is already cohort-based and stochastic. Health is intentionally minimal: food/energy balance affects fertility and starvation risk, while settlement concentration adds crowding mortality. Wealth-dependent health, disease-specific epidemiology, childhood developmental stress and adult stature are deferred to MVP 3+. The frozen model does not contain or require an imposed carrying-capacity ceiling.
-
-### 8.1 Population dynamics
-
-At minimum track:
-
-- births;
-- deaths;
-- migration;
-- age structure;
-- sex/reproductive structure where relevant;
-- household or kin structure at appropriate resolution.
-
-Simple logistic growth may be useful as a diagnostic but should not be the primary demographic engine once resource and health systems are active.
-
-### 8.2 Resource-mediated fertility and mortality
-
-Fertility and mortality should respond to:
-
-- nutritional state;
-- disease;
-- physical workload;
-- wealth;
-- cultural norms;
-- reproductive technology;
-- war;
-- maternal health;
-- environmental conditions.
-
-### 8.3 Wealth and health
-
-Do not directly implement:
-
-```text
-health = k * wealth
-```
-
-Instead:
-
-```text
-wealth_distribution
-    -> access to food
-    -> housing
-    -> sanitation
-    -> rest/workload
-    -> medical access
-    -> exposure risk
-    -> health outcomes
-```
-
-Use diminishing returns for many material health benefits.
-
-### 8.4 Biological standard of living
-
-Track biological welfare independently from aggregate wealth.
-
-Potential metrics:
-
-- adult height distribution;
-- childhood growth stress;
-- mortality by age;
-- disease burden;
-- disability;
-- life expectancy;
-- nutritional adequacy;
-- workload.
-
-### 8.5 Height and development
-
-Adult height should reflect developmental history, not current adult wealth.
-
-Conceptual model:
-
-```text
-growth_penalty = sum_over_childhood(
-    malnutrition
-    + infection
-    + physical_stress
-)
-
-adult_height = genetic_potential - growth_penalty + noise
-```
-
-This allows political-economic changes to affect biological outcomes with generational delay.
-
----
-
-## 9. Subsistence and Economy
-
-### 9.1 Production
-
-Production depends on:
-
-- environmental resources;
-- labor;
-- tools;
-- technology;
-- skills;
-- organization;
-- infrastructure;
-- ecological sustainability.
-
-### 9.2 Surplus
-
-Define surplus as resources remaining after subsistence and required maintenance:
-
-```text
-surplus = production
-        - subsistence_consumption
-        - maintenance
-        - replacement_costs
-```
-
-Surplus can be stored, invested, redistributed, consumed, appropriated, traded, or wasted.
-
-### 9.3 Specialization
-
-Higher reliable surplus can support occupational specialization:
-
-- crafts;
-- administration;
-- warfare;
-- engineering;
-- scholarship;
-- religion;
-- trade.
-
-Specialization should improve some forms of productivity and innovation while creating dependence on trade and coordination.
-
-### 9.4 Storage and lootability
-
-Resources should have attributes including:
-
-- storability;
-- concentration;
-- transportability;
-- visibility;
-- divisibility;
-- spoilage;
-- harvest seasonality.
-
-These affect the ease with which surplus can be accumulated or appropriated.
-
----
-
-## 10. Migration, Exploration, and Settlement
-
-> **Canonical MVP 2 state:** migration uses perceived rather than omniscient information. Direct observations are uncertainty-shrunk toward a prior; social information is transmitted as a bounded set of reports with degrading confidence; geographic beliefs and practiced ecological familiarity are separate concepts. Familiarity decays toward the species baseline when a cell is not practiced. Physical reachability bounds current human destination choice; an optional utility-blind attention cap exists for future species with much larger reachable sets. Food utility uses `log1p`, and migration makes one stochastic move/stay draw after evaluating the best perceived reachable alternative.
-
-### 10.1 Local knowledge
-
-Agents should not know the entire map.
-
-Each unit maintains a belief/knowledge model of:
-
-- current cell;
-- neighboring cells;
-- previously visited cells;
-- information received through social networks or trade.
-
-### 10.2 Perceived utility
-
-Migration decisions should use perceived, not omniscient, utility:
-
-```text
-perceived_utility(cell) =
-    food_expectation
-    + water_access
-    + trade_opportunity
-    + security
-    + autonomy
-    - movement_cost
-    - disease_risk
-    - conflict_risk
-    - extraction_burden
-    + perception_noise
-```
-
-### 10.3 Exploration
-
-Exploration radius and quality depend on:
-
-- terrain visibility;
-- vegetation;
-- navigation skills;
-- species perception;
-- mobility technology;
-- existing trails or roads;
-- social information.
-
-### 10.4 Forests and difficult terrain
-
-Dense forests should emerge as difficult or favorable depending on:
-
-- species mobility;
-- knowledge;
-- technologies;
-- available food species;
-- soil;
-- disease;
-- climate;
-- rivers;
-- population density.
-
-This enables open Near-Eastern-like agricultural cores to emerge under some configurations without hard-coding them as privileged regions.
-
----
-
-## 11. Knowledge, Technology, and Innovation
-
-> **Canonical MVP 2 state:** knowledge is group-level and domain-specific. Frozen domains include ecology, agriculture, storage and construction. Knowledge changes through activity, learning and diffusion. Technologies have prerequisites and capability effects; invention uses need/capacity-sensitive competing hazards rather than configuration-order priority. This is sufficient for MVP 2; archives, specialist-specific knowledge, writing and distributional education belong to later milestones.
-
-### 11.1 Knowledge stock
-
-Track knowledge by domain rather than a single number:
-
-```text
-knowledge:
-    ecology
-    agriculture
-    medicine
-    metallurgy
-    construction
-    navigation
-    warfare
-    administration
-    mathematics
-    writing
-    energy
-    transport
-    information
-```
-
-### 11.2 Technology capability vector
-
-Possible dimensions:
-
-```text
-technology:
-    food
-    transport
-    energy
-    materials
-    military
-    medicine
-    information
-    administration
-    construction
-    sanitation
-```
-
-### 11.3 Innovation probability
-
-Innovation should require both pressure and capacity.
-
-Conceptually:
-
-```text
-innovation_hazard = sigmoid(
-    need
-    + knowledge_stock
-    + specialist_population
-    + connectivity
-    + surplus
-    - instability
-    - knowledge_loss
-)
-```
-
-Extreme need without capacity should often cause failure rather than innovation.
-
-### 11.4 Directed innovation
-
-Problem context should influence innovation domain:
-
-- food stress -> agriculture/storage/irrigation;
-- long-distance trade -> navigation/transport;
-- warfare -> weapons/logistics/fortification;
-- administrative complexity -> writing/accounting;
-- disease -> sanitation/medicine;
-- communication limits -> information technologies.
-
-### 11.5 Knowledge diffusion
-
-Knowledge flows through social links:
-
-```text
-knowledge_gain_i += sum_j(
-    contact_strength_ij
-    * transmissibility
-    * max(knowledge_j - knowledge_i, 0)
-)
-```
-
-Isolation should reduce diffusion but may preserve local specialization.
-
-### 11.6 Knowledge loss
-
-Knowledge may be lost due to:
-
-- population decline;
-- death of specialists;
-- institutional collapse;
-- loss of written archives;
-- isolation;
-- lack of continued practice.
-
-Long-lived species may store more knowledge in living individuals while becoming differently vulnerable to catastrophic mortality.
-
----
-
-## 12. Social Behavior and Cultural Systems
-
-### 12.1 Human behavioral assumptions
-
-The default human profile may include distributions for:
-
-- food/security motivation;
-- kin preference;
-- reciprocity;
-- cooperation;
-- status-seeking;
-- dominance-seeking;
-- autonomy preference;
-- conformity;
-- punishment;
-- coalition formation;
-- risk tolerance;
-- out-group caution.
-
-These are hypotheses and should be configurable.
-
-### 12.2 Culture
-
-Culture should define learned norms and reward structures, including:
-
-- what generates prestige;
-- property norms;
-- inheritance rules;
-- marriage norms;
-- redistribution expectations;
-- authority legitimacy;
-- warfare norms;
-- punishment norms;
-- religious beliefs;
-- openness to outsiders;
-- educational practices.
-
-### 12.3 Status reward vector
-
-A culture may assign status weights to:
-
-```text
-status_weights:
+    species
+    beliefs and environmental information
+    familiarity / residence context
+    much of culture and knowledge
+    technologies
+    social-network relationships
+    group-level candidate generation
+
+Distributional state [U, S]
     wealth
-    warfare
-    generosity
-    knowledge
-    religious_authority
-    monuments
-    office
-    lineage
-    craftsmanship
+    health
+    nutrition
+    occupation
+    status / leverage
+    relevant preferences
+    migration propensity
+
+Demographic distribution [U, S, sex, age]
+    cohort counts
 ```
 
-The underlying desire for status can be biologically/socially distributed, while the route to gaining status is culturally learned.
+Only mechanisms that are meaningfully distribution-sensitive should pay the cost of the
+stratum dimension.
 
-### 12.4 Cultural evolution
+### 5.3 Preserve joint distributions where correlations matter
 
-Cultural parameters can change through:
+MVP 3 strata should be **joint weighted socioeconomic strata**, not independent marginal
+histograms for wealth, health, occupation, and preference.
 
-- imitation;
-- prestige-biased transmission;
-- success-biased transmission;
-- intermarriage;
-- conquest;
-- migration;
-- institutional enforcement;
-- random drift.
+For example, if wealth affects nutrition, occupation affects exposure, and both affect
+migration, those attributes need enough joint structure for the mechanism to see their
+correlation.
+
+The number of strata should be driven by scientific need and resolution policy, not by an
+attempt to enumerate every possible person type.
+
+### 5.4 Selective behavior is the reason strata exist
+
+Strata are useful because different fractions of the same population may:
+
+- experience different mortality and fertility;
+- consume differently;
+- specialize in different work;
+- accumulate or lose wealth differently;
+- adopt technologies at different rates;
+- prefer exit, migration, rebellion, or cooperation differently;
+- receive different benefits or burdens from institutions.
+
+If a mechanism cannot produce a different response by stratum, it should normally stay at
+the group level.
 
 ---
 
-## 13. Hierarchy, Wealth Concentration, and Elite Formation
+## 6. World, Ecology, and Species
 
-### 13.1 Do not equate surplus with hierarchy
+### 6.1 World representation
 
-Surplus creates an opportunity for appropriation. Durable hierarchy should depend on mechanisms such as:
+The world should remain spatially explicit and computationally regular where practical.
+Cells or equivalent spatial elements may contain:
 
-- resource storability;
-- resource concentration;
-- coercive capacity;
-- inheritance;
-- restricted exit;
-- control over infrastructure;
-- legitimacy;
-- coalition dynamics;
-- counter-dominance capacity.
+- elevation and terrain;
+- water and hydrology;
+- temperature and precipitation;
+- vegetation and habitat attributes;
+- soil and arable potential;
+- renewable and exhaustible resources;
+- settlement, infrastructure, or human-modified state as later milestones require.
 
-### 13.2 Appropriability
+Behavior should depend on relevant physical properties and accessibility rather than on
+hard-coded biome narratives.
 
-A conceptual measure:
+### 6.2 Ecology should become dynamic only as required by questions being asked
+
+The ecological model should grow by adding mechanisms with explanatory value: seasonality,
+succession, depletion, disease reservoirs, domestication, niche construction, or climate
+variation where justified.
+
+Do not add ecological detail merely for realism if it does not affect the social mechanisms
+under study.
+
+### 6.3 Species are configuration, not branches in the social engine
+
+Species definitions should eventually cover enough physiology and life history to alter:
+
+- energy requirements;
+- fertility and mortality schedules;
+- maturation and longevity;
+- mobility and carrying capacity;
+- environmental tolerances;
+- perception, memory, and learning;
+- social tendencies where explicitly modeled.
+
+The social engine should not contain special-case branches such as `if species == "elf"`.
+Species differences should enter through data and general mechanisms.
+
+---
+
+## 7. Economy and Material Life
+
+The economic model should explain how populations acquire, transform, store, exchange, and
+control resources.
+
+Over successive milestones it should support mechanisms including:
+
+- foraging, hunting, cultivation, herding, extraction, and craft production;
+- labor allocation and opportunity cost;
+- storage, spoilage, portability, and transferability;
+- specialization and occupation;
+- exchange and trade networks;
+- capital or productive investment where useful;
+- ownership, wealth accumulation, inheritance, debt, or redistribution where justified;
+- differential access to resources and the biological consequences of that distribution.
+
+Surplus alone must not imply hierarchy. Hierarchy requires mechanisms that make surplus
+appropriable, controllable, defendable, inheritable, or politically useful.
+
+---
+
+## 8. Knowledge, Culture, and Technology
+
+Knowledge and technology should remain distinct concepts.
+
+- **Knowledge** represents learned competence or understanding in domains.
+- **Technologies** represent discrete techniques, practices, or artifacts with prerequisites
+  and capability effects.
+- **Culture** should represent socially transmitted norms, preferences, identities, and
+  practices when those become behaviorally relevant.
+
+Innovation should depend on modeled opportunity, need, knowledge, capability, and chance;
+it should not be an automatic clock toward a predetermined tech tree.
+
+Diffusion should depend on contact and social structure. Knowledge may be lost where
+practice, teachers, population, or institutional support disappear.
+
+---
+
+## 9. Social and Political Development
+
+Political organization is a future scientific layer, not a label applied to population
+size.
+
+The simulator should eventually be able to represent mechanisms such as:
+
+- wealth concentration and inheritance;
+- status competition and prestige;
+- coalitions, factions, patronage, and collective action;
+- coercive capacity and organized violence;
+- taxation, tribute, redistribution, and public goods;
+- legitimacy, compliance, autonomy, and resistance;
+- administrative reach and communication cost;
+- elite capture versus broad state capacity;
+- federation, secession, rebellion, conquest, and institutional collapse.
+
+A state should emerge when organizations acquire durable capacities and relationships that
+justify calling them a state. It should not be created by crossing a scalar threshold.
+
+Collapse likewise should be the observed consequence of declining capacities,
+fragmentation, demographic/ecological stress, conflict, or institutional failure—not a
+single scripted state transition named `collapse`.
+
+---
+
+## 10. Randomness, Reproducibility, and Provenance
+
+Stochasticity is part of the model and must be governable.
+
+### 10.1 Named random streams
+
+Random draws should come through deterministic named streams rather than global RNG state.
+Independent mechanisms should not become coupled merely because an unrelated code path
+consumes an extra random number.
+
+### 10.2 Reproducibility has levels
+
+Distinguish deliberately between:
+
+1. **exact replay** — identical seeded output on the supported numerical platform;
+2. **numerical equivalence** — results differ only within an approved numerical tolerance;
+3. **stochastic equivalence** — implementations sample the same intended probability law
+   but do not preserve exact draw order.
+
+A change must not silently move from one category to another.
+
+### 10.3 Runs must be attributable
+
+A scientifically meaningful run should record enough provenance to identify:
+
+- scenario/configuration;
+- model/software version;
+- seed and RNG contract;
+- relevant backend;
+- mechanism switches;
+- important numerical/platform information when required by the reproducibility level.
+
+---
+
+## 11. Validation and Model Governance
+
+The simulator is useful only if mechanisms can be challenged independently of attractive
+emergent stories.
+
+### 11.1 Test the mechanism at several levels
+
+Use complementary validation layers:
+
+- unit tests for equations and local invariants;
+- lifecycle and conservation tests;
+- exact golden regressions where exact replay is meaningful;
+- reference-versus-optimized differential tests;
+- statistical tests for stochastic mechanism properties;
+- matched-seed ablations for causal comparisons;
+- ensembles and parameter sweeps for outcome distributions;
+- stylized-fact or historical comparison only where the comparison is scientifically
+  defensible.
+
+A single interesting seed is evidence that something can happen, not that the mechanism is
+credible or typical.
+
+### 11.2 Preserve causal tests, not historical coincidence
+
+Canonical scenarios should test whether mechanisms produce expected causal responses under
+controlled conditions. They should not be tuned to mimic a single historical civilization
+or exact population curve unless historical calibration is explicitly the experiment.
+
+### 11.3 Model rules require metadata
+
+Substantive scientific rules should remain registered/documented with, where applicable:
+
+- rationale;
+- source or evidence type;
+- parameters;
+- domain of validity;
+- limitations;
+- version introduced or changed.
+
+Heuristic assumptions are acceptable when clearly identified as heuristics. Hidden
+heuristics are not.
+
+### 11.4 Scientific changes require explicit versioning
+
+A correction to scientific semantics is not an ordinary refactor. Record it as a model
+change, explain the reason, update tests and baselines intentionally, and preserve prior
+milestone artifacts when they remain useful for comparison.
+
+---
+
+## 12. Engineering Principles
+
+### 12.1 Less is more
+
+Prefer the smallest design that makes scientific semantics explicit and testable.
+
+Do not introduce abstraction merely because a future feature might need it. Do not preserve
+an abstraction whose only purpose was an implementation phase that has ended.
+
+Favor:
+
+- explicit state over magical state;
+- narrow interfaces over framework-like indirection;
+- composition over deep inheritance;
+- typed data over loosely structured dictionaries in scientific cores;
+- pure or side-effect-bounded kernels where practical;
+- clear ownership of mutation;
+- one authoritative representation of hot state;
+- comments that explain scientific intent, not syntax.
+
+### 12.2 Separate scientific semantics from execution strategy
+
+A scientific mechanism should not be defined by whether it currently runs in Python,
+NumPy, Numba, WebAssembly, WebGPU, or another backend.
+
+Where practical, organize computation as:
 
 ```text
-appropriability = surplus
-                * lootability
-                * coercion_monopolizability
-                * exit_difficulty
-                * legibility
+validated state + explicit parameters + explicit random inputs
+                    ->
+              bounded kernel
+                    ->
+          explicit state transition
 ```
 
-### 13.3 Elite feedback
+This does not require every subsystem to be purely functional. It does require the model's
+meaning to be separable from incidental runtime machinery.
 
-A possible positive feedback loop:
+### 12.3 Optimize measured bottlenecks without changing the model
+
+Prefer, in order:
+
+1. remove repeated work and allocation;
+2. separate immutable from dynamic data;
+3. improve data layout and locality;
+4. batch regular operations;
+5. reduce interpreter dispatch in hot paths;
+6. compile stable numerical kernels where measurement justifies it;
+7. parallelize independent simulations when ensemble throughput is the goal.
+
+Do not simplify scientific behavior merely to obtain a faster benchmark.
+
+### 12.4 Memory is a first-class scaling constraint
+
+Avoid architectures that require a dense cross-product of every conceptual dimension.
+Strata, world cells, technologies, social links, and histories should only multiply each
+other where the model genuinely requires that joint state.
+
+Large temporary tensors are as important to control as persistent state. Prefer bounded or
+chunked workspaces when an operation can be expressed that way.
+
+### 12.5 Conservation and invariants are executable documentation
+
+Continuously protect invariants such as:
+
+- population accounting across births, deaths, fission, fusion, and migration;
+- nonnegative resources and counts;
+- valid probability ranges;
+- conservation of explicitly conserved quantities;
+- valid split/merge semantics;
+- stable identifiers and table ownership.
+
+Assertions and tests around these rules are part of the scientific specification.
+
+---
+
+## 13. Long-Term Deployment Vision: Web and Client-Side Compute
+
+The intended end state is not only a research codebase. `madexplorer` should eventually be
+usable as an interactive web application in which users can configure scenarios, run
+simulations, inspect emergent histories, compare ensembles, and explore causal mechanisms.
+
+A major long-term goal is to make substantial simulation work executable on the **client's
+machine**, including use of the client's GPU where it is scientifically and technically
+appropriate. WebGPU is a plausible future execution target; WebAssembly or other browser
+runtimes may provide CPU execution and orchestration. These are deployment possibilities,
+not current implementation commitments.
+
+### 13.1 Architectural requirement today
+
+The durable requirement is:
+
+> Scientific semantics must remain separable from the execution backend so that the same
+> model can eventually run through validated CPU, server, and client-side accelerated
+> implementations without redefining the science.
+
+This requirement should influence architecture now even though a browser backend is not an
+MVP 3 deliverable.
+
+### 13.2 Decisions that support future client execution
+
+Prefer designs that make future portable kernels possible:
+
+- authoritative numeric state in explicit arrays or compact typed buffers;
+- stable shapes, dtypes, masks, and indices for hot state where scientifically sensible;
+- human-readable configuration compiled into numeric runtime views;
+- batched kernels with explicit inputs and outputs;
+- limited dependence on Python object graphs inside hot scientific computation;
+- deterministic iteration and stable identifiers where ordering matters;
+- sparse representations for genuinely sparse relationships;
+- reference implementations and backend differential tests;
+- clear boundaries between simulation state, orchestration, visualization, and persistence.
+
+Do **not** contort irregular scientific state into GPU-shaped tensors merely to claim GPU
+compatibility. Some mechanisms are naturally sparse, graph-like, event-driven, or branchy.
+A future browser implementation may be hybrid, with regular numerical kernels accelerated
+and orchestration/irregular state handled on the CPU.
+
+### 13.3 RNG portability will eventually need an explicit contract
+
+Named NumPy RNG streams are the correct current architecture, but NumPy's implementation
+should not be assumed to be the permanent cross-runtime RNG specification.
+
+Before exact cross-backend replay becomes a requirement, define whether the project needs:
+
+- byte-for-byte identical random streams across Python/WASM/WebGPU; or
+- statistically equivalent backend-specific streams with backend-specific golden fixtures.
+
+Make that decision deliberately rather than discovering it during a port.
+
+### 13.4 Current optimizations are implementation choices, not permanent dependencies
+
+Numba is useful for the current Python engine. It is not part of the scientific model.
+Likewise, future WebGPU kernels must not become a second scientific implementation that can
+drift unnoticed.
+
+The CPU/reference path should remain capable of validating accelerated paths through exact,
+logical, numerical, or statistical oracles appropriate to the mechanism.
+
+### 13.5 Browser deployment is not a reason to weaken the model
+
+Client-side execution should be pursued by better representation, kernel design, workload
+partitioning, streaming, and adaptive resolution—not by silently reducing stochastic
+independence, removing heterogeneity, or replacing mechanisms with game-like shortcuts.
+
+---
+
+## 14. Outputs and Experimentation
+
+The engine should support both interactive exploration and reproducible research.
+
+Persist useful results rather than every byte of state at every tick. Depending on the
+experiment, outputs may include:
+
+- time-series metrics;
+- periodic population/world snapshots;
+- event logs with provenance;
+- selected traced-unit histories;
+- run manifests;
+- ensemble summaries and distributions.
+
+Important analyses should be expressible as repeatable experiments:
 
 ```text
-wealth
-    -> retainers/coercion
-    -> resource control
-    -> preferential appropriation
-    -> more wealth
+scenario
++ parameter set
++ mechanism switches
++ seeds
++ recorded software/model version
+-> reproducible ensemble
 ```
 
-This loop should be counteracted by:
-
-- coalition resistance;
-- migration;
-- redistribution norms;
-- rebellion;
-- competing elites;
-- legitimacy constraints;
-- administrative failure.
-
-### 13.4 Inheritance
-
-Distinguish temporary inequality from persistent class hierarchy.
-
-Model inheritance of:
-
-- wealth;
-- office;
-- land;
-- status;
-- social links;
-- coercive assets.
-
-The degree of inheritance persistence is a crucial parameter.
-
-### 13.5 De-aggregate important tails
-
-The upper wealth/power tail should be represented at finer resolution than the mass population when it has disproportionate political leverage.
+Outputs should be designed so that the future web application can stream and visualize
+results without requiring the simulation core to know about UI concerns.
 
 ---
 
-## 14. State Formation and Political Organization
+## 15. Roadmap
 
-### 14.1 Separate state capacity from elite capture
+The roadmap is conceptual. Exact milestone contents may change as experiments reveal which
+mechanisms matter.
 
-Track at least:
+### MVP 1 — Ecological-demographic sandbox — COMPLETE
 
-```text
-state_capacity
-elite_capture
-```
+Established the basic world, ecology, population, movement, energetics, demography,
+reproducibility, and subsystem architecture.
 
-State capacity includes abilities such as:
+### MVP 2 / 2.1 — Agriculture, knowledge, and population dynamics — COMPLETE / FROZEN
 
-- taxation;
-- recordkeeping;
-- enforcement;
-- infrastructure construction;
-- military mobilization;
-- dispute resolution;
-- public-goods provision.
+Established bounded environmental knowledge, foraging, agriculture, trade, knowledge,
+technology, innovation, fission/fusion, migration, stronger validation, and the current
+scientific base. MVP 2.1 corrected the B1 merge-familiarity defect.
 
-Elite capture measures how strongly public institutions serve concentrated elite interests.
+### Performance Hardening — COMPLETE
 
-### 14.2 Coordination costs
+Established authoritative columnar population state, compiled scenario views, selective
+compiled kernels, sparse belief storage, exact/logical oracles, and large-scale performance
+measurements while preserving frozen semantics.
 
-Larger populations and territories require more coordination.
+The enduring result is architectural, not the historical benchmark numbers.
 
-Conceptually:
+### MVP 3 — Distributional Society — NEXT
 
-```text
-coordination_cost =
-    population^gamma
-    * territory^eta
-    * heterogeneity_factor
-    / (transport_tech * information_tech * administrative_tech)
-```
+MVP 3 should introduce the minimum within-group socioeconomic structure required for
+heterogeneous behavior.
 
-### 14.3 State reach
+Core goals:
 
-Political control should decay with distance and terrain unless technology offsets it.
-
-```text
-state_reach(distance) =
-    administrative_capacity
-    * transport_capacity
-    * information_capacity
-    * exp(-lambda * effective_distance)
-```
-
-### 14.4 State benefits and costs
-
-Populations experience both:
-
-```text
-state_benefits =
-    security
-    + infrastructure
-    + trade_access
-    + dispute_resolution
-    + famine_relief
-    + public_goods
-
-state_costs =
-    taxes
-    + forced_labor
-    + conscription
-    + elite_extraction
-    + restrictions
-    + disease_from_density
-    + autonomy_loss
-```
-
-Individuals and population units may tolerate, support, evade, resist, or exit states depending on their preferences and circumstances.
-
-### 14.5 Autonomous/frontier populations
-
-Do not create a `barbarian` agent type. Groups outside states may emerge because:
-
-- mobility is valuable;
-- state extraction is costly;
-- terrain makes control expensive;
-- pastoralism, hunting, trade, or raiding outperform incorporation;
-- cultural autonomy is strongly valued.
-
-A state may label such groups culturally, but the simulator should store objective characteristics rather than a civilizational category.
-
----
-
-## 15. Factions, Coalitions, and Political Competition
-
-### 15.1 Multi-level representation
-
-The simulation may use:
-
-```text
-world
-    -> polities / cultural groups
-        -> factions / lineages / elite coalitions
-            -> population units / individuals
-```
-
-### 15.2 Faction state
-
-```text
-Faction
-    wealth
-    status
-    coercive_resources
-    followers
-    legitimacy
-    kinship_network
-    offices
-    territorial_base
-    goals/preferences
-```
-
-### 15.3 Status competition
-
-Status is relative. Factions may spend resources on:
-
-- warfare;
-- monuments;
-- public works;
-- patronage;
-- ritual;
-- private consumption;
-- scholarship;
-- administration.
-
-Different cultural prestige systems can therefore channel elite competition toward state-building, public goods, destructive positional spending, or other outcomes.
-
----
-
-## 16. Social Fission, Merger, Rebellion, and Collapse
-
-### 16.1 Group fission
-
-Use probability/hazard rather than hard thresholds.
-
-Possible inputs:
-
-```text
-fission_hazard = sigmoid(
-    instability
-    + food_stress
-    + factionalism
-    + coordination_cost
-    + inequality
-    - cohesion
-    - institutional_capacity
-)
-```
-
-### 16.2 Merger and federation
-
-Groups may merge when benefits of:
-
-- defense;
-- trade;
-- infrastructure;
-- marriage alliances;
-- shared institutions
-
-outweigh autonomy and coordination costs.
-
-### 16.3 Collapse is not a state transition keyword
-
-Avoid a global `collapse()` rule.
-
-Instead, political systems should degrade through failure of components:
-
-- tax collection;
-- logistics;
-- legitimacy;
-- food security;
-- military cohesion;
-- trade;
-- infrastructure maintenance;
-- elite cooperation;
-- demographic stability.
-
-Observers may later classify a period as a collapse from recorded metrics.
-
-### 16.4 Resilience
-
-Track resilience as an analytical measure derived from:
-
-- food buffers;
-- trade diversity;
-- institutional capacity;
-- ecological health;
-- legitimacy;
-- social trust;
-- inequality;
-- military pressure;
-- redundancy.
-
-External shocks interact with internal fragility.
-
----
-
-## 17. Disease and Epidemiology
-
-Disease should be a modular subsystem.
-
-Each pathogen may have:
-
-- transmissibility;
-- virulence;
-- incubation;
-- immunity duration;
-- species reservoirs;
-- transmission mode;
-- environmental sensitivity.
-
-Transmission depends on:
-
-- density;
-- mobility;
-- trade;
-- sanitation;
-- species resistance;
-- urbanization;
-- climate.
-
-Disease should affect:
-
-- mortality;
-- fertility;
-- labor productivity;
-- migration;
-- political legitimacy;
-- military outcomes;
-- knowledge retention.
-
----
-
-## 18. Ecology and Niche Construction
-
-Intelligent populations modify the environment through:
-
-- fire;
-- forest clearing;
-- agriculture;
-- irrigation;
-- domestication;
-- selective hunting;
-- construction;
-- mining;
-- pollution;
-- transport infrastructure.
-
-The environment should therefore be partly endogenous.
-
-Species may have different niche-construction capabilities.
-
----
-
-## 19. Core Simulation Tick
-
-MVP 2 uses an annual discrete timestep and a staged subsystem pipeline. **Order is part of the frozen model because later subsystems observe state changes applied by earlier subsystems.**
-
-Canonical pipeline, subject to mechanism switches:
-
-```text
-1. climate
-2. ecology
-3. perception
-4. bounded knowledge sharing
-5. crop harvest / farming
-6. foraging
-7. trade
-8. energetics
-9. demography
-10. extinction
-11. field planning
-12. knowledge learning
-13. knowledge diffusion
-14. innovation
-15. fission
-16. fusion
-17. migration
-18. optional computational coarsening
-19. invariants, metrics, events and persistence
-```
-
-Canonical scientific scenarios disable step 18. Each subsystem follows the staged contract:
-
-```text
-evaluate(state, context) -> proposals
-proposal.apply(state, context)
-```
-
-This design makes causal order explicit and auditable. During performance hardening, internal batching or storage may change, but the observable semantics and ordering of the frozen pipeline must remain equivalent unless an explicit model revision is approved.
-
-Long-term versions may add seasonal/subannual or event-driven processes, but changing the time engine is a scientific model change rather than a pure optimization.
-
----
-
-## 20. Events and Time Modeling
-
-### 20.1 Hybrid time engine
-
-Recommended long-term architecture:
-
-- fixed timestep for environment, demography, and production;
-- event queues for rare political, technological, or disaster events.
-
-### 20.2 Event examples
-
-- birth/death at individual resolution;
-- leadership succession;
-- invention;
-- rebellion;
-- war declaration;
-- settlement founding;
-- migration wave;
-- epidemic introduction;
-- drought onset;
-- flood;
-- volcanic event;
-- institution creation.
-
-### 20.3 Deterministic replay
-
-Given:
-
-- identical configuration;
-- identical code version;
-- identical random seed;
-
-simulation outcomes should be replayable within documented numerical tolerances.
-
----
-
-## 21. Software Architecture
-
-Use explicit domain boundaries and keep the simulation engine thin. The current package structure is already modular and should be evolved rather than replaced wholesale:
-
-```text
-madexplorer/
-    config/          typed scenario schema and loading
-    core/            simulator, state, RNG, invariants, provenance, static context
-    world/           grid, generation, climate, hydrology
-    ecology/         resource state and ecological updates
-    species/         species profiles and life-history tables
-    population/      units, demography, energetics, familiarity, composition, groups, health
-    economy/         foraging, agriculture, trade
-    mobility/        movement, exploration, beliefs, knowledge sharing, migration
-    knowledge/       knowledge state, learning, diffusion, innovation
-    resolution/      experimental coarsening
-    metrics/         full/light recorders and observables
-    experiments/     ensembles and benchmarks
-    persistence/     run outputs
-    cli/             command-line interface
-```
-
-### 21.1 Frozen scientific layer vs. replaceable implementation layer
-
-Treat the codebase as three conceptual layers:
-
-1. **Frozen scientific semantics** - model equations, subsystem ordering, mechanism defaults and canonical scenario behavior.
-2. **Performance implementation** - storage layout, batching, indexes, proposal representation, temporary allocation, vectorization and compiled kernels. This layer may be aggressively refactored if frozen behavior is preserved.
-3. **Future scientific extensions** - MVP 3+ distributional society, politics, disease, richer ecology and fantasy species. These should not be mixed into performance-hardening patches.
-
-### 21.2 State representation direction
-
-The current `dict[str, PopulationUnit]` / object-rich architecture is readable and scientifically auditable but expensive at thousands of units. The preferred performance direction is a **structure-of-arrays or hybrid columnar state** for hot numeric fields, with stable unit IDs mapped to row indices. Group-level sparse/irregular objects may remain separate where vectorization provides little benefit.
-
-Do not blindly convert every field to a dense matrix. In particular:
-
-- age/sex cohorts are good candidates for batched arrays;
-- frequently accessed scalar state is a strong structure-of-arrays candidate;
-- technology/capability states should use interned/cached immutable representations;
-- beliefs need careful treatment because dense `units x cells` storage may itself become a scaling limit;
-- social links and variable-length reports may remain compressed/sparse.
-
-### 21.3 Proposal/apply semantics
-
-The proposal/apply model is scientifically useful because it exposes state transitions and model rules, but per-unit proposal dataclass allocation is a measurable implementation cost. Performance work may replace many small Python proposal objects with batched arrays or typed buffers **provided the same ordering, conservation rules, RNG semantics and state transitions are preserved**.
-
----
-
-## 22. Data Model and Configuration
-
-### 22.1 Configuration format
-
-Use YAML or TOML for scenario configuration. Validate with typed Python models.
-
-Example:
-
-```yaml
-simulation:
-  start_year: 0
-  end_year: 5000
-  timestep_years: 1
-  seed: 182736
-
-world:
-  topology_file: data/world.nc
-  climate_file: data/climate.nc
-
-species:
-  - id: human
-    profile: species/human.yaml
-
-initial_populations:
-  - species: human
-    cell: [120, 84]
-    population: 32
-    culture: proto_a
-```
-
-### 22.2 Typed schemas
-
-Recommended tools:
-
-- `dataclasses` for immutable domain data where appropriate;
-- Pydantic for external configuration validation;
-- NumPy arrays for dense numeric fields;
-- xarray for labeled gridded environmental data;
-- pandas or Polars only for analytics/output pipelines, not necessarily core inner loops.
-
-### 22.3 Units
-
-Use explicit units and document them.
-
-Strongly consider a units library at configuration boundaries, but avoid excessive runtime unit overhead in performance-critical loops. Normalize internal units, for example:
-
-- years;
-- kilometers;
-- kilograms;
-- kilocalories;
-- hectares;
-- Celsius or Kelvin;
-- persons.
-
-Never mix implicit units.
-
----
-
-## 23. Randomness and Reproducibility
-
-### 23.1 Central RNG service
-
-Do not call global `random` or `numpy.random` throughout the code.
-
-Use a central RNG manager that creates deterministic named streams:
-
-```text
-rng.environment
-rng.demography
-rng.innovation
-rng.migration
-rng.politics
-rng.disease
-```
-
-This makes debugging and partial reproducibility easier.
-
-### 23.2 Stable identifiers
-
-Agents, factions, settlements, and events should have stable IDs independent of list ordering.
-
-### 23.3 Version every run
-
-Persist:
-
-- git commit hash;
-- configuration hash;
-- model version;
-- random seed;
-- dependency lock hash;
-- timestamp;
-- scenario metadata.
-
----
-
-## 24. Persistence and Outputs
-
-### 24.1 Avoid full-state snapshots every tick
-
-For large simulations, full serialization at every timestep will be too expensive.
-
-Use:
-
-- periodic checkpoints;
-- event logs;
-- sampled metrics;
-- spatial summaries.
-
-### 24.2 Recommended outputs
-
-- population by cell/species/culture;
-- migration flows;
-- settlements;
-- wealth quantiles;
-- health metrics;
-- adult height distributions;
-- state borders and reach;
-- state capacity;
-- elite capture;
-- inequality measures;
-- technologies;
-- knowledge domains;
-- trade networks;
-- conflict events;
-- ecological condition;
-- land use;
-- disease prevalence;
-- autonomy/extraction measures;
-- major institutional changes.
-
-### 24.3 Event provenance
-
-Important state changes should record causes/inputs sufficient for debugging.
-
-Example:
-
-```json
-{
-  "event": "population_split",
-  "unit_id": "u1839",
-  "year": 821,
-  "reason": "migration_selection",
-  "moved_population": 8421,
-  "source_population": 50321,
-  "destination_cell": [42, 91]
-}
-```
-
----
-
-## 25. Experimentation Framework
-
-The simulator should support ensemble experiments as a first-class feature.
-
-### 25.1 Replicate runs
-
-A scenario should be runnable across many seeds:
-
-```bash
-socio-sim run scenario.yaml --seeds 1:1000
-```
-
-### 25.2 Parameter sweeps
-
-Support sweeping:
-
-- species traits;
-- climate variables;
-- status-seeking;
-- inheritance;
-- disease resistance;
-- mobility;
-- elite capture mechanisms;
-- autonomy preferences;
-- agricultural productivity.
-
-### 25.3 Ablation studies
-
-Allow mechanisms to be disabled to test causal importance.
-
-Examples:
-
-```text
-A: ecology + demography
-B: + surplus
-C: + appropriation
-D: + status competition
-E: + inheritance
-F: + counter-dominance
-G: + shocks
-```
-
-### 25.4 Outcome distributions
-
-Never rely only on one visually interesting run. Report distributions across runs.
-
----
-
-## 26. Calibration and Validation
-
-This is an exploratory generative model, not a direct historical reconstruction. Validation should occur at several levels.
-
-### 26.1 Unit-level validation
-
-Check whether submodels reproduce expected behavior:
-
-- disease model has correct qualitative epidemic curves;
-- demographic model produces plausible age structures;
-- movement costs respond monotonically to terrain;
-- wealth distribution preserves target moments/tails;
-- split/merge preserves population and total wealth.
-
-### 26.2 Stylized facts
-
-Test whether the model can reproduce broad qualitative patterns without directly encoding them.
-
-Examples:
-
-- higher storage/lootability can increase extractive hierarchy under some conditions;
-- roads increase state reach;
-- denser trade networks increase knowledge diffusion;
-- crowding increases disease transmission;
-- wealth inequality can create biological welfare gradients;
-- severe extraction can induce migration when exit is feasible.
-
-### 26.3 Historical calibration
-
-Historical data may later be used to calibrate selected submodels, but avoid fitting the entire simulation to a single civilization.
-
-### 26.4 Falsifiability
-
-A mechanism should be removable. If the model only generates an expected result because that result is directly encoded, it has low explanatory value.
-
----
-
-## 27. Performance Strategy
-
-### 27.1 Current phase: performance hardening under frozen semantics
-
-MVP 2 performance work is now a first-class milestone. Do **not** simplify the scientific model merely to make it faster. The freeze baseline exists so representation and implementation can change aggressively while model behavior remains fixed.
-
-### 27.2 Measure against the committed freeze baseline
-
-Every optimization should report, where relevant:
-
-- total CPU and wall time;
-- ms/tick and ms/unit/tick;
-- active unit counts;
-- subsystem time shares;
-- peak RSS;
-- exact or tolerance-based comparison to frozen reference outputs.
-
-The synthetic benchmark and seed-0 600-year benchmark in `benchmarks/perf/` are the primary performance regression references.
-
-### 27.3 Optimize in this order
-
-Prefer:
-
-1. eliminate repeated work and allocations;
-2. cache immutable/static scenario state;
-3. move hot scalar state from Python objects/dicts to contiguous arrays;
-4. batch unit-level operations;
-5. replace streams of tiny proposal objects with batched transition buffers where semantics permit;
-6. improve memory locality and reduce Python dispatch;
-7. use compiled kernels only for stable, measured hotspots;
-8. parallelize independent seeds for ensemble throughput.
-
-The freeze profile identifies belief sharing, migration, foraging, knowledge diffusion and demography as the first places to inspect.
-
-### 27.4 Structure-of-arrays before premature native rewrites
-
-Most measured MVP 2 cost is Python traversal and allocation around many small units, while arithmetic kernels are small. Therefore first attempt a structure-of-arrays/hybrid refactor and coarse NumPy batching. Numba, Cython or Rust should be introduced only where profiling after that refactor shows substantial residual kernel cost.
-
-### 27.5 Preserve RNG and numerical semantics deliberately
-
-Vectorization may change draw order even when probability laws are nominally identical. Classify optimizations as:
-
-- **exact behavior-preserving** - same seeded outcomes on the supported numeric platform;
-- **numerically equivalent** - differences bounded by a documented tolerance;
-- **stochastically equivalent** - same probability law but different exact draws.
-
-The latter two require explicit approval and statistical validation; they must not be smuggled in as ordinary speed-ups.
-
-### 27.6 Adaptive resolution is not a performance shortcut for MVP 2
-
-Naive group merging changes sociology and demographics. Canonical runs therefore keep aggregation off. The principled performance solution is MVP 3 adaptive statistical units that preserve internal heterogeneity and allow only selected fractions/strata to migrate, die, adopt technologies or change class.
-
-### 27.7 Parallel ensembles remain useful
-
-Independent seeds are embarrassingly parallel. Reuse static scenario state within workers, avoid BLAS/OpenMP oversubscription, and keep expensive research-scale ensembles separate from normal development validation.
-
----
-
-## 28. Python Engineering Best Practices
-
-### 28.1 Coding standards
-
-- Python 3.12+;
-- type hints on public APIs;
-- `ruff` for linting and formatting;
-- `mypy` or `pyright` for static checking;
-- `pytest` for tests;
-- docstrings for public modules/classes/functions;
-- avoid hidden global mutable state;
-- prefer composition over deep inheritance;
-- keep functions small and domain-focused;
-- use descriptive scientific names rather than game-like abbreviations.
-
-### 28.2 Immutability
-
-Prefer immutable configuration and value objects. Mutability should live in explicit simulation state containers.
-
-### 28.3 Pure functions where possible
-
-Submodels such as movement cost, production yield, health hazard, and innovation hazard should often be pure functions of state and parameters. This improves testing and reproducibility.
-
-### 28.4 Separate state transition from decision calculation
-
-Prefer:
-
-```text
-proposals = subsystem.evaluate(current_state)
-next_state = resolver.apply(current_state, proposals)
-```
-
-rather than subsystems mutating shared objects unpredictably.
-
-### 28.5 Avoid circular dependencies
-
-Subsystems should communicate through narrow interfaces, events, or typed state views.
-
-### 28.6 Dependency injection
-
-Inject:
-
-- RNG streams;
-- configuration;
-- clocks;
-- policy/behavior modules;
-
-rather than importing global singletons.
-
-### 28.7 Numerical stability
-
-- clamp probabilities to `[0, 1]`;
-- use log-space for very small likelihoods;
-- validate distributions before sampling;
-- guard against negative population/resources;
-- specify tolerances for conservation checks.
-
-### 28.8 Conservation invariants
-
-Continuously check:
-
-- population conservation across split/merge/migration, except births/deaths;
-- wealth/resource conservation except production, consumption, loss, or explicit transfer;
-- probability normalization;
-- nonnegative counts.
-
-Assertions should be enabled in debug/testing configurations.
-
-### 28.9 Logging
-
-Use structured logging. Avoid excessive per-agent text logs in large runs.
-
-Levels:
-
-- `DEBUG`: detailed subsystem traces;
-- `INFO`: major scenario milestones;
-- `WARNING`: model instability or invalid corrections;
-- `ERROR`: run-threatening failures.
-
-### 28.10 Configuration over hard-coded constants
-
-Model constants must live in versioned parameter sets, not scattered source literals.
-
----
-
-## 29. Testing Strategy
-
-Maintain separate test classes because they answer different scientific and engineering questions.
-
-### 29.1 Unit and mechanism tests
-
-Test mathematical relationships and local causal rules independently. Examples include:
-
-- forest density increases movement cost for baseline humans;
-- worse soil does not improve crop yield;
-- uncertainty shrinkage reduces reliance on noisy observations;
-- relayed geographic reports lose confidence;
-- familiarity decays toward its baseline without practice;
-- field replacement cost depends on future reconstruction labor, not sunk clearing effort;
-- crowding does not reduce crowding mortality;
-- split/merge operations conserve required totals.
-
-### 29.2 Property-based tests
-
-Use property testing for invariants such as non-negative stocks, population conservation, valid distributions, bounded probabilities and composition-rule completeness.
-
-### 29.3 Golden regression tests
-
-Maintain small deterministic scenarios with fixed seeds and expected outputs. For the frozen MVP 2 model, golden fixtures are a primary guard against accidental semantic changes during performance refactors. Exact replay is numeric-platform specific and must be treated accordingly.
-
-### 29.4 Statistical mechanism tests
-
-Use small matched ensembles only where stochastic system behavior cannot be established locally. The compact pressure scenario is the canonical MVP 2 agriculture test: under resource pressure, cultivation-enabled runs must support materially higher sustainable population/density than cultivation-disabled matched controls.
-
-### 29.5 Long research validation is manual
-
-Large multi-seed, long-horizon statistical suites are not required for ordinary CI, small refactors or every MVP freeze. Keep them available as explicitly slow/manual research tests. Use the smallest experiment capable of falsifying the mechanism under review.
-
-### 29.6 Performance tests
-
-Maintain both:
-
-- synthetic controlled-unit-count benchmarks for scaling and subsystem attribution;
-- at least one realistic frozen scenario benchmark for end-to-end cost.
-
-Performance changes should not be judged from wall time alone; record CPU time, active units and per-unit/tick metrics.
-
----
-
-## 30. Observability and Debugging
-
-A complex emergent simulation is difficult to debug without explainability.
-
-Every high-level decision should optionally expose component scores.
-
-Example migration explanation:
-
-```text
-PopulationUnit u812 migration score:
-    expected_food      +0.43
-    trade_opportunity  +0.18
-    autonomy_gain      +0.27
-    movement_cost      -0.31
-    disease_risk       -0.08
-    uncertainty        -0.11
-    final_hazard        0.38
-```
-
-The engine should support a trace mode for selected agents, cells, or factions.
-
----
-
-## 31. Scenario Analysis Metrics
-
-Recommended global metrics:
-
-### Demographic
-
-- total population;
-- population density;
-- urbanization;
-- migration rate;
-- age structure;
-- life expectancy.
-
-### Economic
-
-- total production;
-- per-capita consumption;
-- stored surplus;
-- trade volume;
-- wealth Gini;
-- top 1% wealth share.
-
-### Biological welfare
-
-- health index;
-- childhood nutrition;
-- adult stature distribution;
-- disease burden;
-- mortality.
-
-### Political
-
-- state capacity;
-- elite capture;
-- autonomy;
-- extraction rate;
-- institutional legitimacy;
-- territory;
-- state reach.
-
-### Knowledge
-
-- technology vector;
-- knowledge diversity;
-- diffusion speed;
-- innovation rate.
-
-### Ecological
-
-- biomass;
-- soil health;
-- forest cover;
-- biodiversity;
-- human appropriation of productivity.
-
-### Social
-
-- inequality;
-- faction count;
-- cohesion;
-- conflict rate;
-- status concentration;
-- cultural diversity.
-
----
-
-## 32. Example Emergent Hypotheses the Simulator Should Permit
-
-The engine should make it possible, but not inevitable, to observe hypotheses such as:
-
-1. storable, concentrated agricultural surplus can support durable extraction and hierarchy;
-2. difficult terrain and low state legibility can preserve political autonomy;
-3. populations may choose lower-productivity regions to escape extraction;
-4. state-building can improve aggregate production while reducing the biological welfare of lower economic strata;
-5. political collapse can sometimes improve commoner nutrition through reduced extraction, but can also worsen welfare through conflict and infrastructure loss;
-6. status competition can either build state capacity or waste surplus depending on culturally rewarded status pathways;
-7. longer-lived species may have lower political turnover and stronger intergenerational memory;
-8. highly mobile/flying species may be difficult to territorially control;
-9. very small species may have excellent personal mobility but weak heavy-logistics capacity;
-10. resource ecology can influence political organization through taxability and transport costs without explicitly determining government type.
-
-These are experiment targets, not truths hard-coded into the engine.
-
----
-
-## 33. MVP Scope and Current Roadmap
-
-### MVP 1: Ecological-demographic sandbox - COMPLETE
-
-Implemented and frozen as part of the current codebase:
-
-- grid world, topology and climate;
-- ecological food resources;
-- baseline human species profile;
-- group-level population units with age/sex cohorts;
-- movement and foraging;
-- energetics, fertility and mortality;
-- local perception and beliefs;
-- migration;
-- reproducible runs, events, metrics and provenance.
-
-### MVP 2: Agriculture and technology - COMPLETE / MODEL FROZEN
-
-Implemented and validated:
-
-- cultivation and field investment;
-- soil effects;
-- food storage;
-- simple trade;
-- domain knowledge, learning and diffusion;
-- technology invention and capability effects;
-- bounded social geographic information;
-- familiarity and relearning;
-- settlement crowding mortality;
-- fission and fusion;
-- migration with agricultural capital replacement cost;
-- ensemble tooling, regression baselines and performance benchmarks.
-
-MVP 2 deliberately does **not** claim scientifically neutral population aggregation. The coarsening subsystem is experimental and disabled in canonical scenarios.
-
-### Inter-MVP milestone: MVP 2 Performance Hardening - CURRENT
-
-Objective: make the frozen MVP 2 simulation substantially faster without changing its model semantics.
-
-Primary work:
-
-- reduce Python object and dictionary overhead;
-- redesign hot state into structure-of-arrays/hybrid storage;
-- batch subsystem work;
-- reduce proposal allocation;
-- improve cache locality;
-- preserve exact/tolerance-validated frozen outcomes;
-- use compiled kernels only after post-refactor profiling.
-
-This milestone should finish before substantial MVP 3 science is added.
-
-### MVP 3: Distributional society - NEXT SCIENTIFIC MILESTONE
-
-Add:
-
-- weighted socioeconomic strata / representative quantile particles;
-- wealth distributions with heavy upper tails where appropriate;
-- health and nutrition distributions;
+- joint weighted socioeconomic strata;
+- wealth and material access;
+- health, nutrition, and biological welfare by stratum;
 - occupations and specialization;
-- within-unit preference heterogeneity;
-- selective migration, mortality, fertility and technology adoption;
-- wealth-health pathways;
-- biological welfare and developmental outcomes such as adult stature;
-- scientifically defensible adaptive split/merge and resolution.
+- relevant within-group preferences/status;
+- selective demographic and migration responses;
+- principled adaptive population resolution;
+- efficient stratified demography with bounded working memory;
+- explicit split/merge semantics for all new state.
 
-Preferred representation:
+MVP 3 should begin with the **strata representation and lifecycle contract**, not with a
+collection of disconnected social mechanisms.
 
-```text
-shared group-level state
-    +
-N[sex, age, stratum]
-    +
-stratum attributes (wealth, health, occupation, preferences, ...)
-```
+### MVP 4 — Hierarchy, Institutions, and Politics
 
-The key requirement is to preserve **joint correlations**. Do not implement independent marginal distributions that lose the relation between wealth, health, occupation, migration propensity and political leverage.
+Candidate mechanisms include:
 
-Goal: represent inequality and selective social processes without individualizing millions of people, while reducing the number of independent group actors required for large populations.
-
-### MVP 4: Politics and hierarchy
-
-Add:
-
-- status systems;
-- factions and coalitions;
-- appropriability and wealth concentration;
+- appropriation and wealth concentration;
 - inheritance;
+- status competition;
+- elites, factions, and coalitions;
 - coercive capacity;
-- state capacity and elite capture as separate dimensions;
-- public goods and extraction;
-- exit, rebellion and counter-dominance;
-- infrastructure and political reach.
+- taxation/tribute and public goods;
+- state capacity versus elite capture;
+- legitimacy, autonomy, resistance, and rebellion;
+- political fission, federation, conquest, and collapse.
 
-Goal: allow decentralized societies, extractive states, cooperative states, frontier populations and collapse dynamics to emerge from explicit mechanisms.
+These should build on MVP 3 distributions rather than invent a parallel political actor
+model disconnected from material society.
 
-### MVP 5: Fantasy species and multi-species worlds
+### MVP 5+ — Richer Worlds and Species
 
-Generalize the already configurable species layer to support:
+Candidate extensions include:
 
-- substantially different lifespans and maturation schedules;
-- body-size/metabolic differences;
-- flight and other movement modes;
-- different sensory and cognitive profiles;
-- cross-species ecology;
-- multi-species trade, competition and conflict.
-
-Goal: use fantasy biology as controlled counterfactual experimentation about which social patterns are species-specific and which arise from more general coordination/ecological pressures.
-
----
-
-## 34. Non-Goals for Early Versions
-
-Do not initially attempt:
-
-- photorealistic geography;
-- perfect historical reconstruction;
-- individual neural-network agents;
-- full natural-language culture;
-- realistic tactical combat;
-- millions of individually simulated people;
-- unrestricted machine-learning decision systems;
-- every known disease;
-- every historical technology;
-- real-time graphical rendering.
-
-The priority is a scientifically interpretable, reproducible mechanism-based engine.
+- richer ecology and seasonality;
+- disease and epidemiology;
+- domestication and broader production systems;
+- infrastructure and transport networks;
+- multi-species interaction;
+- fantasy and non-human species;
+- longer-run cultural or biological evolution where justified;
+- interactive browser deployment and validated client-side acceleration.
 
 ---
 
-## 35. Recommended First Technical Stack
+## 16. Non-Goals
 
-Suggested starting dependencies:
+The project should resist several attractive but damaging directions.
 
-```text
-Python 3.12+
-numpy
-scipy
-pydantic
-xarray
-networkx
-pyyaml or tomllib/tomli
-pyarrow
-pytest
-hypothesis
-ruff
-mypy or pyright
-```
+It is not currently trying to:
 
-Optional later:
-
-```text
-numba
-polars
-zarr
-h5py
-geopandas
-rasterio
-jax
-ray / dask
-```
-
-Use dependencies only when they solve a demonstrated need.
+- reproduce one real civilization exactly;
+- predict the real political future;
+- simulate every individual person;
+- include every known social-science theory simultaneously;
+- maximize realism independent of explanatory value;
+- turn historical stage names into transition rules;
+- treat one random seed as a scientific result;
+- use naive aggregation as a performance shortcut;
+- rewrite working mechanisms simply to adopt a fashionable technology;
+- make every subsystem GPU-compatible before a browser backend exists.
 
 ---
 
-## 36. Suggested Public API
+## 17. Definition of Success
 
-A minimal user-facing Python API might be:
+The project is succeeding when it can answer questions of the following form without the
+answer being hard-coded:
 
-```python
-from socioecology_sim import Scenario, Simulator
+- Under what ecological and informational conditions does cultivation become attractive?
+- When does increased production improve biological welfare, and when is it captured or
+  offset by population growth or inequality?
+- How do mobility, storage, trade, and resource appropriability change the distribution of
+  wealth and power?
+- When do specialists, elites, factions, institutions, or states emerge?
+- Under what conditions do populations remain decentralized despite high productivity?
+- How do shocks propagate differently through unequal or differently organized societies?
+- Which conclusions are robust across seeds, parameter uncertainty, and alternative
+  behavioral hypotheses?
+- Which macro outcomes depend on mechanisms that can be isolated and falsified?
 
-scenario = Scenario.from_yaml("scenario.yaml")
+Software success means the same scientific questions can be investigated without the engine
+becoming an unmaintainable collection of special cases.
 
-sim = Simulator(scenario)
-result = sim.run()
-
-result.save("runs/experiment_001")
-```
-
-For ensembles:
-
-```python
-from socioecology_sim.experiments import Ensemble
-
-ensemble = Ensemble(
-    scenario="scenario.yaml",
-    seeds=range(1000),
-)
-
-summary = ensemble.run()
-```
-
-### CLI
-
-```bash
-socio-sim validate scenario.yaml
-socio-sim run scenario.yaml
-socio-sim run scenario.yaml --seed 42
-socio-sim ensemble scenario.yaml --seeds 1:1000
-socio-sim inspect runs/experiment_001
-```
+Long-term platform success means users can explore these questions interactively—including,
+where practical, by running validated simulations on their own CPU/GPU through a web
+application—without creating a separate, scientifically divergent simulator.
 
 ---
 
-## 37. Example Internal Interfaces
+## 18. Canonical Rules for Future Work
 
-```python
-class Subsystem(Protocol):
-    def evaluate(self, state: WorldState, ctx: StepContext) -> list[Proposal]:
-        ...
+When making a design decision, prefer the option that best preserves these rules:
 
+1. **Mechanisms over narratives.** Never script the social outcome we are trying to explain.
+2. **Explicit assumptions.** Important behavioral hypotheses must be inspectable and
+   testable.
+3. **Minimum sufficient heterogeneity.** Preserve distributions and correlations only where
+   they change mechanisms, but do not average away causal structure.
+4. **Local information.** Actors may use only information the model gives them a plausible
+   way to possess.
+5. **Scientific semantics before optimization.** Representation and execution may change;
+   the model must not change accidentally with them.
+6. **One authoritative hot state.** Avoid competing mutable representations of the same
+   numeric state.
+7. **Dense when dense, sparse when sparse.** Do not materialize conceptual cross-products
+   without evidence they are required.
+8. **Lifecycle semantics are explicit.** New state must define split, merge, migration, and
+   conservation behavior.
+9. **Randomness is governed.** Preserve named streams, provenance, and declared
+   reproducibility guarantees.
+10. **Validate causally.** Use mechanism tests, ablations, ensembles, and independent
+    oracles; do not optimize for one attractive trajectory.
+11. **Keep the architecture portable.** Scientific kernels should not depend unnecessarily
+    on Python objects or any one execution backend.
+12. **Less is more.** Add complexity only when it represents a necessary mechanism,
+    protects correctness, or solves a measured engineering problem.
 
-class Proposal(Protocol):
-    priority: int
-
-    def apply(self, state: MutableWorldState) -> None:
-        ...
-```
-
-The exact interfaces may differ, but the architecture should encourage staged evaluation and controlled mutation.
-
-### Population distribution abstraction
-
-```python
-class Distribution(Protocol):
-    def mean(self) -> float: ...
-    def variance(self) -> float: ...
-    def quantile(self, q: float) -> float: ...
-    def sample(self, rng, n: int) -> np.ndarray: ...
-    def condition(self, predicate) -> "Distribution": ...
-    def merge(self, other: "Distribution", weight: float) -> "Distribution": ...
-```
-
-Where exact conditional distributions are impossible, use explicit approximation policies and record approximation error when feasible.
-
----
-
-## 38. Conservation and Integrity Rules
-
-The engine must continuously respect invariants.
-
-### Population
-
-```text
-population_next = population_now
-                + births
-                - deaths
-                + immigration
-                - emigration
-```
-
-### Resources
-
-All resource changes must be explainable by:
-
-- production;
-- transfer;
-- consumption;
-- spoilage;
-- destruction;
-- ecological regeneration.
-
-### Wealth
-
-Transfers do not create wealth. Production, destruction, consumption, or valuation changes must be explicit.
-
-### Split/merge
-
-Splits and merges must conserve weighted totals within numerical tolerance.
-
----
-
-## 39. Model Governance
-
-### 39.1 Rule metadata
-
-Every model equation or rule should have metadata:
-
-```text
-name
-version
-rationale
-source_type: empirical | theoretical | heuristic | placeholder
-parameters
-expected_domain
-known_limitations
-```
-
-This is important because many social-science mechanisms will initially be heuristic.
-
-The codebase should make it easy to answer:
-
-> Why does this rule exist?
-
-and
-
-> What happens if we remove or change it?
-
-### 39.2 Frozen-model change protocol
-
-After an MVP model freeze, classify every subsequent change explicitly:
-
-- **implementation optimization** - intended to preserve frozen semantics exactly;
-- **numerical reformulation** - same mechanism with documented tolerance;
-- **model change** - changes a scientific assumption or causal relationship;
-- **bug fix** - corrects behavior that contradicts the documented rule.
-
-During MVP 2 Performance Hardening, model changes are prohibited unless a genuine correctness bug is demonstrated. Any accepted model change invalidates the previous semantic freeze and must update regression fixtures, provenance, baselines and this document if the canonical rule changes.
-
-### 39.3 Experiment discipline
-
-Use the smallest experiment capable of falsifying a proposed mechanism. Prefer analytical checks, unit tests, decision-level probes and short matched runs before expensive ensembles. Large research ensembles are for uncertainty estimation and publication-grade analysis, not routine engineering decisions.
-
----
-
-## 40. Guiding Principle
-
-The simulator should be built around the following conceptual hierarchy:
-
-```text
-physics / geography
-        ↓
-ecology
-        ↓
-species biology
-        ↓
-individual and population behavior
-        ↓
-economy and subsistence
-        ↓
-culture and social networks
-        ↓
-institutions and politics
-        ↓
-knowledge and technology
-        ↓
-feedback into ecology and society
-```
-
-No upper layer should be completely predetermined by a lower layer. Lower layers create constraints and incentives; upper layers create feedback and path dependence.
-
-The final ambition is a simulation in which:
-
-- species traits alter ecological opportunities;
-- ecological opportunities alter subsistence;
-- subsistence alters surplus and mobility;
-- surplus and mobility alter hierarchy and state formation;
-- political organization alters distribution;
-- distribution alters health and demography;
-- institutions alter knowledge accumulation;
-- technology alters the environment and carrying capacity;
-- cultural values redirect universal or species-specific motivations;
-- all of these processes recursively change the future.
-
-The simulator should therefore be capable of producing histories that are plausible but not predetermined, and of comparing repeated histories across different assumptions.
-
----
-
-## 41. Definition of Success
-
-The project has already satisfied a meaningful subset of this definition through MVP 2: users can provide a world/scenario, initial populations, time horizon and seed and obtain reproducible ecological-demographic-technological histories with endogenous migration and agriculture. The remaining items below describe the **full project ambition**, not the current implementation state.
-
-The project is successful when a user can provide:
-
-1. a topology/environment;
-2. ecological parameters;
-3. one or more species profiles;
-4. initial population seeds;
-5. a time horizon;
-6. a random seed;
-
-and receive a reproducible simulation containing:
-
-- evolving population distributions;
-- migration and settlement histories;
-- ecological changes;
-- economic production and inequality;
-- health and demographic outcomes;
-- cultural differentiation;
-- technological evolution;
-- political organization;
-- conflict and cooperation;
-- adaptive population resolution;
-- interpretable event logs and metrics.
-
-Crucially, the engine should not require the user to specify in advance where civilizations, states, empires, frontiers, elites, or collapses will occur.
-
-Those should be outputs.
-
----
-
-## 42. Canonical Reminder for Future Implementation Agents
-
-When extending this project:
-
-1. Do not infer current requirements from old experiment plans in `status.md` without checking this objective and the freeze manifest.
-2. Do not tune the model to reproduce one seed or a desired historical narrative.
-3. Do not use naive aggregation to obtain speed; it is known to change scientific behavior.
-4. Keep group-level shared state separate from future distributional strata so MVP 3 does not multiply every subsystem by the number of strata.
-5. Preserve the frozen MVP 2 behavior during performance hardening.
-6. Treat wealth, health, hierarchy, state capacity and fantasy-species effects as future explicit mechanisms, not labels or hard-coded outcomes.
-7. Prefer interpretable mechanisms, conservation rules, reproducibility and falsifiable experiments over opaque realism.
-
-The long-term purpose remains unchanged: build a computational laboratory in which large-scale social history is an emergent consequence of ecology, biology, information, incentives, culture, technology and stochastic path dependence rather than a scripted sequence.
+If future implementation work conflicts with these principles, the conflict should be made
+explicit and resolved scientifically rather than hidden inside a refactor.
