@@ -1,8 +1,56 @@
-# Implementation Status — MVP 2.1 → MVP 3 Handoff
+# Implementation Status — MVP 3 (staged)
 
 **Updated:** 2026-10-02\
 **Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
-**Next milestone:** MVP 3 — Distributional Society
+**Current milestone:** MVP 3 — staged socioeconomic differentiation
+
+## MVP 3 stage handoff
+
+**Completed stage:** Stage 0 — formal design specification (complete). Design:
+`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`. No MVP 3 code exists yet.
+
+**Next stage:** Stage 1 — neutral strata representation. Starts only on explicit approval.
+Scope: a `StrataTable` (padded `[capacity, S_max]`, row-aligned with `UnitTable` slots)
+owned by `PopulationStore`; a `strata` field in `fields.py` (`Storage.STRATA`); one stratum
+per unit with `share = 1`; lifecycle (found, fission copies, fusion merges back to one
+stratum while homogeneous, removal resets, slot reuse, deepcopy); invariant tests;
+`stratum_composition` model rule; MVP 2.1 oracles identical.
+
+**Scientific decisions locked in (pending review of the open questions below)**
+- A stratum is a label-free component of an adaptive mixture: share + quantities + opaque
+  id. No class types, no societal states as causal switches.
+- Minimal `[U,S]` vector: `share` p, `field_claim` f, `store_claim` c (fractions of the
+  unit's physical `fields_ha` and `stores_kcal`). Physical stock stays `[U]`.
+- Demography stays `[U, sex, age]`; stratum people = `p·N` (shared age–sex composition).
+- Strata never read by `[U]` mechanisms through Stage 4, use no RNG and no unit
+  `IdAllocator`, and write no frozen metrics or events, so the MVP 2.1 oracles stay
+  identical. The first feedback stage (5 or 6A) gets a new versioned baseline.
+- First mechanism (Stage 3): appropriable returns to field claims (`α`) plus explicit
+  intra-unit pooling, with fusion as the existing source of heterogeneity. No injected
+  noise.
+- `S_max` is a resolution limit, not a number of classes.
+
+**Open questions (need a decision before the stage that uses them)**
+1. Canonical default of `α` (Stage 3); `α > 0` implies claim holders receive part of the
+   output of pooled labor.
+2. Strata metrics and events in a separate output stream (Stage 1), required for frozen
+   exactness.
+3. Event-driven stratum creation (point masses carry no internal variance) instead of a
+   statistical split test (Stage 4).
+4. Resolution merge needed from Stage 2, because fusion concatenates strata.
+5. Reordering/ID neutrality at float-rounding tolerance, not bit-exact.
+6. Independence of age and socioeconomic position until differential demography is shown
+   to be needed.
+
+**Do not forget**
+- Never `[U,S,sex,age]` or `[U,S,S]` without a demonstrated need; no per-stratum Python
+  objects in hot paths.
+- Do not use strata to brake population growth (§4 known demographic simplification).
+- Leave changes uncommitted; stop after each stage.
+
+---
+
+## MVP 2.1 base handoff
 
 A short, durable handoff: current state, what to preserve, accepted limitations, lessons
 and open questions. Read other artifacts by role:
@@ -20,8 +68,7 @@ and open questions. Read other artifacts by role:
 - MVP 2.1 is frozen and is the base for future science. Its only semantic difference from
   MVP 2 is **B1**, the merge-familiarity decay-year fix.
 - The pre-MVP 3 consolidation is complete: an exact, semantics-preserving refactor (§2).
-- Next: **design the socioeconomic-strata schema and its lifecycle semantics before
-  implementing any MVP 3 mechanism.**
+- MVP 3 has started (stage handoff above).
 
 ### Frozen artifacts
 
@@ -177,6 +224,5 @@ commit 2ada934).
 
 ## 10. Handoff
 
-> **MVP 2.1 is frozen and consolidated. Design the joint socioeconomic-strata
-> representation — its schema in `population/fields.py`-style declarations and its home in
-> `PopulationStore` — before implementing MVP 3 mechanisms.**
+> **MVP 2.1 is frozen and consolidated. MVP 3 proceeds stage by stage from
+> `objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`; see the stage handoff at the top.**
