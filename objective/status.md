@@ -1,7 +1,7 @@
 # Implementation Status — MVP 2.1 → MVP 3 Handoff
 
-**Updated:** 2026-10-02  
-**Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete  
+**Updated:** 2026-10-02\
+**Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
 **Next milestone:** MVP 3 — Distributional Society
 
 A short, durable handoff: current state, what to preserve, accepted limitations, lessons

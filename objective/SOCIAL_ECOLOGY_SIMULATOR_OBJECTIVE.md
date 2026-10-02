@@ -2,11 +2,11 @@
 
 ## Canonical Objective and Architectural Direction
 
-**Project:** `madexplorer`  
-**Document version:** 3.0  
-**Canonicalized through:** MVP 2.1 freeze, 2026-10-01; pre-MVP 3 consolidation, 2026-10-02  
-**Current scientific milestone:** MVP 2.1 frozen; MVP 3 next  
-**Current implementation:** Python 3.13+  
+**Project:** `madexplorer`\
+**Document version:** 3.0\
+**Canonicalized through:** MVP 2.1 freeze, 2026-10-01; pre-MVP 3 consolidation, 2026-10-02\
+**Current scientific milestone:** MVP 2.1 frozen; MVP 3 next\
+**Current implementation:** Python 3.13+\
 **Document role:** durable project objective, scientific principles, and architectural constraints
 
 This document defines what `madexplorer` is trying to become and the constraints that
