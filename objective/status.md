@@ -6,45 +6,61 @@
 
 ## MVP 3 stage handoff
 
-**Completed stage:** Stage 0 — formal design specification (complete). Design:
-`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`. No MVP 3 code exists yet.
+**Completed stage:** Stage 0 — formal design specification (complete; decisions resolved
+2026-10-02). Design: `objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`. No MVP 3 code exists
+yet.
 
 **Next stage:** Stage 1 — neutral strata representation. Starts only on explicit approval.
-Scope: a `StrataTable` (padded `[capacity, S_max]`, row-aligned with `UnitTable` slots)
-owned by `PopulationStore`; a `strata` field in `fields.py` (`Storage.STRATA`); one stratum
-per unit with `share = 1`; lifecycle (found, fission copies, fusion merges back to one
-stratum while homogeneous, removal resets, slot reuse, deepcopy); invariant tests;
-`stratum_composition` model rule; MVP 2.1 oracles identical.
+Scope:
+- `StrataTable` (padded `[capacity, S_max]`, `S_max = 8`, row-aligned with `UnitTable`
+  slots) owned by `PopulationStore`, with its own column schema;
+- at most one unit field `strata` (`Storage.STRATA`) in `fields.py`;
+- one stratum per unit (`share = field_claim = store_claim = 1`);
+- lifecycle: founding, fission copies, fusion back to one stratum while homogeneous,
+  removal and slot reuse reset, deepcopy;
+- invariant tests and the `stratum_composition` model rule;
+- MVP 2.1 oracles identical.
 
-**Scientific decisions locked in (pending review of the open questions below)**
-- A stratum is a label-free component of an adaptive mixture: share + quantities + opaque
-  id. No class types, no societal states as causal switches.
-- Minimal `[U,S]` vector: `share` p, `field_claim` f, `store_claim` c (fractions of the
-  unit's physical `fields_ha` and `stores_kcal`). Physical stock stays `[U]`.
-- Demography stays `[U, sex, age]`; stratum people = `p·N` (shared age–sex composition).
-- Strata never read by `[U]` mechanisms through Stage 4, use no RNG and no unit
-  `IdAllocator`, and write no frozen metrics or events, so the MVP 2.1 oracles stay
-  identical. The first feedback stage (5 or 6A) gets a new versioned baseline.
-- First mechanism (Stage 3): appropriable returns to field claims (`α`) plus explicit
-  intra-unit pooling, with fusion as the existing source of heterogeneity. No injected
-  noise.
-- `S_max` is a resolution limit, not a number of classes.
+**Scientific decisions locked in**
+- A stratum is a label-free mixture component: `share` (population weight), entitlement
+  and control shares over unit-level physical stocks (`field_claim`, `store_claim`), and
+  an opaque id. No class types or societal states as causal switches.
+- Physical stock stays `[U]`; control stays `[U,S]`. Socioeconomic position is
+  `claim / share` (1 = proportional). Neutral allocation is `claim = share`. If a stock is
+  zero, claims equal shares (no NaNs, no invented inequality). There are no zero-population
+  strata.
+- Fusion inherits prior absolute positions (`claim × unit stock`, renormalized by the new
+  total), with neutral fallback at zero total. Fission copies.
+- A mechanism that creates new stock must state who controls it. Claims are never silently
+  preserved or diluted.
+- Strata share the unit's age–sex structure (canonical); no `[U,S,sex,age]` until a
+  mechanism creates demographically meaningful stratum differences.
+- Strata metrics and events go only to a sidecar stream keyed by
+  `(year, unit_id, stratum_id)`, which never feeds back. The frozen MVP 2.1 metrics and
+  event schemas are unchanged.
+- Through Stage 4 no `[U]` mechanism reads strata, so the MVP 2.1 oracles stay identical.
+  A new versioned baseline comes only when socioeconomic state intentionally affects
+  existing behavior.
+- Creation is mechanism-driven; there is no statistical split test.
+- Stage 2 adds capacity coalescence (deterministic, numerical, ties broken by state);
+  Stage 4 adds adaptive merging of indistinguishable components.
+- Stage 3 entitlement weight (e.g. `field_entitlement_weight`): neutral 0 = the legacy
+  equal-pooling limit. Nonzero values are hypotheses and sensitivity cases, never tuned. A
+  reference value is set only with an MVP 3 baseline.
+- Neutrality: ID renumbering is bit-exact; reordering holds within a strict float
+  tolerance; conserved totals use the tightest invariant. Stochastic mechanisms must never
+  depend on stratum IDs or storage order.
+- `S_max = 8` is a numerical resolution limit, not a number of classes. Test sensitivity
+  once adaptive strata are behaviorally active.
 
-**Open questions (need a decision before the stage that uses them)**
-1. Canonical default of `α` (Stage 3); `α > 0` implies claim holders receive part of the
-   output of pooled labor.
-2. Strata metrics and events in a separate output stream (Stage 1), required for frozen
-   exactness.
-3. Event-driven stratum creation (point masses carry no internal variance) instead of a
-   statistical split test (Stage 4).
-4. Resolution merge needed from Stage 2, because fusion concatenates strata.
-5. Reordering/ID neutrality at float-rounding tolerance, not bit-exact.
-6. Independence of age and socioeconomic position until differential demography is shown
-   to be needed.
+**Open questions**
+- Stage 3: the explicit allocation rule for newly cleared land and newly stored surplus
+  (proposed: ∝ share plus the §F attribution).
+- Stage 4: the adaptive-merge criterion and tolerance in relative-position space.
 
 **Do not forget**
 - Never `[U,S,sex,age]` or `[U,S,S]` without a demonstrated need; no per-stratum Python
-  objects in hot paths.
+  objects in hot paths; do not flatten stratum columns into the unit-field ontology.
 - Do not use strata to brake population growth (§4 known demographic simplification).
 - Leave changes uncommitted; stop after each stage.
 
