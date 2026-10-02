@@ -168,6 +168,46 @@ heterogeneity and selective responses required by the science are preserved.
 The current naive coarsening mechanism is therefore **not scientifically neutral** and is
 disabled in canonical scientific scenarios.
 
+### 2.7 Emergence and ontological restraint
+
+> Hardcode lower-level causal mechanisms and genuine affordances. Simulate quantities,
+> relationships, practices, stocks, and environmental state. Infer higher-level historical
+> and sociological categories from the resulting data rather than using those categories
+> as causal switches.
+
+Emergence does not mean the simulator may contain no discrete variables. A genuinely
+discrete discovery, technique, or physical threshold may be represented discretely when
+that is scientifically justified. What must be avoided is promoting an *interpretive*
+category into causal state.
+
+Keep the following conceptually distinct, even when an early milestone represents several
+of them with one coarse variable:
+
+| Kind of state | Example |
+|---|---|
+| knowledge or competence | skill in agriculture as a domain |
+| knowledge of a technique | knowing how a storage structure is built |
+| practice / adoption | actually cultivating, actually storing |
+| material stock or infrastructure | hectares of cleared fields, storage capacity actually built |
+| biological / ecological state modified by practice | depleted soil, (future) domesticated crop traits |
+| derived classification | "farming society", "sedentary", "chiefdom", "state" |
+
+Knowing how to build a granary is not the same state as owning substantial storage. A
+technique being known does not imply that it is practiced, and practice does not imply that
+the infrastructure or biological change that practice can produce already exists.
+
+The last row must remain *derived*. Avoid causal state such as `agriculture_stage`,
+`chiefdom = true`, `state_society = true`, `elite = true`, or `collapse = true` whenever
+the same concept can be inferred from underlying quantities and relationships. A future
+"elite" should be identified from persistent differences in wealth, access, power, labor
+obligations, reproductive outcomes, and similar quantities; a future "state" from durable
+organizational capacities and relationships. Metrics and analyses may compute such labels;
+mechanisms should not branch on them.
+
+MVP 2 contains accepted coarse abstractions that bundle several rows of the table, most
+notably the Boolean technologies (§8). They are modeling hypotheses at a stated resolution,
+not the project's final ontology.
+
 ---
 
 ## 3. Canonical Project State
@@ -484,6 +524,50 @@ it should not be an automatic clock toward a predetermined tech tree.
 
 Diffusion should depend on contact and social structure. Knowledge may be lost where
 practice, teachers, population, or institutional support disappear.
+
+### 8.1 The MVP 2 technology table is a coarse hypothesis
+
+MVP 2 represents technologies as Boolean possession with hard prerequisites and capability
+effects (`technologies/*.yaml`). This is an accepted, frozen MVP 2 representation and a
+modeling hypothesis at a stated resolution. It is **not** the universal architecture for
+cultural evolution, and the project is not fundamentally a tech-tree simulator.
+
+Hard prerequisites should be used only where a dependency is genuinely physical or
+logical. Where A merely makes B easier or more probable, future models should prefer:
+
+- knowledge dependence;
+- ecological preconditions;
+- continuous competence;
+- probabilistic opportunity;
+- material prerequisites;
+- soft causal dependence;
+
+rather than a mandatory historical chain. New broad societal concepts should not be added to
+the technology table.
+
+Several current technologies combine kinds of state that §2.7 keeps distinct. For example,
+`granaries` bundles knowing a storage technique with possessing storage capacity (its
+retention effect applies as soon as the technology is held), and its hard prerequisite on
+`plant_cultivation` encodes a historical association rather than a physical necessity;
+`plant_cultivation` acts as a coarse discrete affordance: before it, crop capability is zero;
+after it, cultivation is possible and the economic decision about fields takes over. That is
+an accepted MVP 2 abstraction, not necessarily the final representation of agriculture.
+
+### 8.2 Future refinement of agriculture
+
+A future agricultural milestone may need to distinguish:
+
+- deliberate cultivation practice;
+- local species domesticability (an ecological property of places and taxa);
+- repeated selection pressure from cultivation;
+- biological domestication state of crop populations;
+- material agricultural infrastructure (cleared, improved, irrigated land);
+- actual agricultural calorie dependence (an outcome, measured rather than declared).
+
+Where scientifically appropriate these should evolve continuously from practice and
+environment, rather than forming a scripted sequence of named stages such as
+"proto-cultivation → domestication → agriculture". No domestication ladder should be added
+to the Boolean technology table as a shortcut.
 
 ---
 
@@ -900,6 +984,7 @@ application—without creating a separate, scientifically divergent simulator.
 When making a design decision, prefer the option that best preserves these rules:
 
 1. **Mechanisms over narratives.** Never script the social outcome we are trying to explain.
+   Hardcode mechanisms and affordances; infer historical categories from the data (§2.7).
 2. **Explicit assumptions.** Important behavioral hypotheses must be inspectable and
    testable.
 3. **Minimum sufficient heterogeneity.** Preserve distributions and correlations only where
