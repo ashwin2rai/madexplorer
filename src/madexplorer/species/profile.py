@@ -122,7 +122,6 @@ class SubsistenceBehavior(FrozenModel):
     """How groups adjust cultivation effort (a behavioral hypothesis, spec §4.5)."""
 
     field_adjustment_rate: float = Field(ge=0, le=1)
-    initial_plot_ha: float = Field(ge=0)
     return_comparison_margin: float  # farming must beat marginal foraging by this fraction
     max_farm_labor_share: float = Field(ge=0, le=1)
 
@@ -174,10 +173,9 @@ class MigrationBehavior(FrozenModel):
     food_utility: Literal["capped_log", "log1p", "saturating", "log"]
     food_ratio_cap: float = Field(gt=0)  # capped_log only: stock (years of need) valued at most
     food_half_saturation_years: float = Field(gt=0)  # saturating only: R with half the value
-    abandoned_stores_weight: float = Field(ge=0)  # per year of need left behind when moving
-    # Per year of need of crop output forgone; used only with mechanisms.field_replacement_cost
-    # off (that rule charges re-clearing labor at abandoned_stores_weight instead).
-    abandoned_fields_weight: float = Field(ge=0)
+    # Per year of need of food capital left behind when moving: stores beyond what can be
+    # carried, and the labor to re-clear abandoned fields (field_replacement_cost).
+    abandoned_stores_weight: float = Field(ge=0)
     # Optional cap on destinations evaluated per year (nearest by path cost, utility-blind);
     # null = every reachable known cell (physical reachability is the bound).
     max_considered_destinations: int | None = Field(ge=2)

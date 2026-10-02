@@ -49,7 +49,6 @@ SPECIES_PARAMETERS: tuple[str, ...] = (
     "migration.movement_reference_km",
     "migration.uncertainty_weight",
     "migration.abandoned_stores_weight",
-    "migration.abandoned_fields_weight",
     "movement.carry_kcal_per_capita",
     "movement.travel_kcal_per_km",
 )

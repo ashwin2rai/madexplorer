@@ -1,4 +1,4 @@
-"""P5 migration-capital correction: leaving fields costs their replacement, not their crop."""
+"""Leaving fields costs the labor to replace them, not their crop (already in staying)."""
 
 import math
 
@@ -15,12 +15,9 @@ from madexplorer.population.unit import BeliefMap, Observation, PopulationUnit
 from tests.conftest import ROOT, mvp2_scenario_dict, step_context
 
 
-def _farmer(replacement: bool) -> tuple[Simulator, PopulationUnit]:
+def _farmer() -> tuple[Simulator, PopulationUnit]:
     data = mvp2_scenario_dict()
-    data["mechanisms"] = {
-        "field_replacement_cost": replacement,
-        "direct_observation_shrinkage": False,
-    }
+    data["mechanisms"] = {"direct_observation_shrinkage": False}
     sim = Simulator(Scenario.from_dict(data, base_dir=ROOT))
     (unit,) = sim.state.units.values()
     reachable = sim.movement[unit.species_id].reachable(unit.cell)
@@ -67,7 +64,7 @@ def test_replacement_cost_is_zero_without_fields_or_need() -> None:
 
 
 def test_leaving_cost_uses_home_clearing_conditions_and_the_stores_scale() -> None:
-    sim, unit = _farmer(replacement=True)
+    sim, unit = _farmer()
     ctx = step_context(sim)
     per_ha = clearing_hours_per_ha(
         float(sim.world.vegetation_density[unit.cell]),
@@ -83,25 +80,21 @@ def test_leaving_cost_uses_home_clearing_conditions_and_the_stores_scale() -> No
 
 
 def test_crop_output_is_not_charged_again_when_leaving() -> None:
-    sim, unit = _farmer(replacement=True)
+    sim, unit = _farmer()
     base = _fields_cost(sim, unit)
     unit.crop_yield_kcal_per_ha *= 3  # the crop is valued in the stay term only
     assert _fields_cost(sim, unit) == base
-    sim_old, unit_old = _farmer(replacement=False)
-    old = _fields_cost(sim_old, unit_old)
-    unit_old.crop_yield_kcal_per_ha *= 3
-    assert _fields_cost(sim_old, unit_old) == pytest.approx(3 * old)  # the legacy double count
 
 
 def test_labor_already_spent_clearing_is_sunk() -> None:
-    sim, unit = _farmer(replacement=True)
+    sim, unit = _farmer()
     base = _fields_cost(sim, unit)
     unit.clearing_hours, unit.labor_debt_hours = 1e5, 1e5
     assert _fields_cost(sim, unit) == base
 
 
 def test_replacement_cost_scales_with_fields_and_the_value_of_labor() -> None:
-    sim, unit = _farmer(replacement=True)
+    sim, unit = _farmer()
     base = _fields_cost(sim, unit)
     unit.fields_ha *= 2
     assert _fields_cost(sim, unit) == pytest.approx(2 * base)
@@ -109,22 +102,10 @@ def test_replacement_cost_scales_with_fields_and_the_value_of_labor() -> None:
     assert _fields_cost(sim, unit) == 0.0
 
 
-def test_fields_still_anchor_a_group_but_less_than_the_double_count() -> None:
-    hazards = {}
-    for replacement in (False, True):
-        sim, unit = _farmer(replacement)
-        unit.fields_ha = 0.0
-        no_fields = _hazard(sim, unit)
-        unit.fields_ha = 4.0
-        hazards[replacement] = _hazard(sim, unit)
-        assert hazards[replacement] < no_fields
-    assert hazards[False] < hazards[True]
-    assert math.isfinite(hazards[True])
-
-
-def test_switch_off_restores_the_legacy_penalty() -> None:
-    sim, unit = _farmer(replacement=False)
-    prepared = MigrationSubsystem()._prepare(unit, sim.state, step_context(sim))
-    assert prepared is not None
-    legacy = prepared.behavior.abandoned_fields_weight * 4.0 * 6e5 / prepared.costs.need_kcal
-    assert prepared.costs.fields_cost == pytest.approx(legacy)
+def test_fields_still_anchor_a_group() -> None:
+    sim, unit = _farmer()
+    unit.fields_ha = 0.0
+    no_fields = _hazard(sim, unit)
+    unit.fields_ha = 4.0
+    with_fields = _hazard(sim, unit)
+    assert math.isfinite(with_fields) and with_fields < no_fields

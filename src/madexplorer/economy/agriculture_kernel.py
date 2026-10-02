@@ -1,17 +1,14 @@
 """Compiled field planning: every unit's desired fields and every cell's arable sharing (PH4a).
 
-The model is :mod:`madexplorer.economy.agriculture` (``expected_tenure_years``,
-``clearing_hours_per_ha``, ``fields_toward_target``, ``adjusted_fields_ha`` and
-``FieldPlanningSubsystem._evaluate_reference``). This module transcribes those scalar
-rules operation by operation (Level A; differential tests against the Python path):
+The model is :mod:`madexplorer.economy.agriculture` (``clearing_hours_per_ha``,
+``fields_toward_target`` and ``FieldPlanningSubsystem._evaluate_reference``). This module
+transcribes those scalar rules operation by operation (Level A; differential tests against
+the Python path):
 
 - Python's ``min``/``max`` keep their argument-order semantics (the first extreme wins);
-- ``p ** H`` with an integer ``H`` is C ``pow``, as Python's float power;
 - the per-cell ``sum()`` of desired fields is the compensated builtin
   (:func:`~madexplorer.core.jit.python_sum`).
 """
-
-import math
 
 import numpy as np
 
@@ -37,17 +34,6 @@ def _clearing_hours_per_ha(
 
 
 @kernel
-def _expected_tenure(move_hazard: float, horizon: int, residence: int) -> float:
-    if math.isnan(move_hazard):
-        r = residence if residence > 1 else 1  # min(max(residence, 1), horizon)
-        return float(horizon if horizon < r else r)
-    p = _min2(_max2(1.0 - move_hazard, 0.0), 1.0)
-    if 1.0 - p < 1e-9:
-        return float(horizon)
-    return p * (1.0 - math.pow(p, float(horizon))) / (1.0 - p)
-
-
-@kernel
 def _return_gap(value: float, threshold: float) -> float:
     m = value
     if threshold > m:
@@ -66,7 +52,6 @@ def plan_fields(
     fields_now: np.ndarray,
     marginal: np.ndarray,
     residence: np.ndarray,  # (U,) int64
-    hazard: np.ndarray,
     cells: np.ndarray,  # (U,) int64
     species: np.ndarray,  # (U,) int64
     clearing_efficiency: np.ndarray,
@@ -81,13 +66,10 @@ def plan_fields(
     surplus_target: np.ndarray,
     adjustment_rate: np.ndarray,
     margin: np.ndarray,
-    initial_plot_ha: np.ndarray,
     # scenario configuration
     cultivation_hours_per_ha: float,
     clearing_hours_per_ha: float,
     clearing_vegetation_multiplier: float,
-    expected_tenure: bool,
-    growth_to_target: bool,
     # outputs (capacity U); returns the number of plans
     plan_rows: np.ndarray,
     plan_fields: np.ndarray,
@@ -116,11 +98,8 @@ def plan_fields(
             clearing_efficiency[i],
         )
         h = horizon[s]
-        if expected_tenure:
-            tenure = _expected_tenure(hazard[i], h, residence[i])
-        else:
-            r = residence[i] if residence[i] > 1 else 1
-            tenure = float(h if h < r else r)
+        r = residence[i] if residence[i] > 1 else 1  # min(max(residence, 1), horizon)
+        tenure = float(h if h < r else r)
         share = max_farm_labor_share[s]
         farm_labor = share * labor[i]
         labor_cap = farm_labor / cult
@@ -130,24 +109,14 @@ def plan_fields(
         new_land_return = yield_per_ha / (cult + clearing / _max2(tenure, 1.0))
         expand_gap = _return_gap(new_land_return, threshold)
         rate = adjustment_rate[s]
-        if growth_to_target:  # fields_toward_target
-            if expand_gap > 0:
-                target_step = rate * (need_cap - f_now)
-                labor_step = _max2(farm_labor - f_now * cult, 0.0) / (share * clearing + cult)
-                step = _min2(target_step, labor_step)
-                if step <= 0:
-                    fields, gap = f_now, expand_gap
-                else:
-                    fields, gap = f_now + step, expand_gap
+        if expand_gap > 0:  # fields_toward_target
+            target_step = rate * (need_cap - f_now)
+            labor_step = _max2(farm_labor - f_now * cult, 0.0) / (share * clearing + cult)
+            step = _min2(target_step, labor_step)
+            if step <= 0:
+                fields, gap = f_now, expand_gap
             else:
-                keep_gap = _return_gap(yield_per_ha / cult, threshold)
-                if keep_gap < 0 and f_now > 0:
-                    fields, gap = f_now * (1.0 + rate * _max2(keep_gap, -1.0)), keep_gap
-                else:
-                    fields, gap = f_now, 0.0
-        elif expand_gap > 0:  # adjusted_fields_ha
-            fields = f_now + rate * expand_gap * (f_now + initial_plot_ha[s])
-            gap = expand_gap
+                fields, gap = f_now + step, expand_gap
         else:
             keep_gap = _return_gap(yield_per_ha / cult, threshold)
             if keep_gap < 0 and f_now > 0:

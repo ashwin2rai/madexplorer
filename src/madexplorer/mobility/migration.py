@@ -209,12 +209,15 @@ def choose_destination(
         "reconstruction labor (current fields x clearing hours per ha) is valued at the group's "
         "marginal foraging return, the opportunity cost of labor that field planning also uses, "
         "and expressed in years of need, the scale of the abandoned-stores cost. The labor "
-        "already spent clearing the current fields is sunk and plays no part. Switchable "
-        "(mechanisms.field_replacement_cost); off restores the earlier penalty "
-        "abandoned_fields_weight x crop output / need, which counted the crop a second time."
+        "already spent clearing the current fields is sunk and plays no part. Weighted by "
+        "abandoned_stores_weight, like other food capital left behind."
     ),
     source_type="heuristic",
-    parameters=("clearing_hours_per_ha", "clearing_vegetation_multiplier"),
+    parameters=(
+        "clearing_hours_per_ha",
+        "clearing_vegetation_multiplier",
+        "abandoned_stores_weight",
+    ),
     expected_domain="years of need, >= 0; 0 without fields",
     known_limitations=(
         "Reconstruction is priced at the home cell's clearing conditions (vegetation, the "
@@ -510,9 +513,7 @@ class MigrationSubsystem:
         carry = n * profile.movement.carry_kcal_per_capita
         abandoned = max(unit.stores_kcal - carry, 0.0)
         stores_cost = behavior.abandoned_stores_weight * abandoned / need if need > 0 else 0.0
-        if not ctx.mechanisms.field_replacement_cost:
-            fields_cost = behavior.abandoned_fields_weight * farm_kcal / need if need > 0 else 0.0
-        elif unit.fields_ha > 0 and need > 0:
+        if unit.fields_ha > 0 and need > 0:
             clearing = clearing_hours_per_ha(
                 float(state.world.vegetation_density[unit.cell]),
                 ctx.scenario.config.agriculture,
@@ -810,21 +811,17 @@ class MigrationSubsystem:
         safe_need = np.where(positive, need, 1.0)
         stores_weight = p_("migration.abandoned_stores_weight")[species]
         stores_cost = np.where(positive, stores_weight * abandoned / safe_need, 0.0)
-        if not ctx.mechanisms.field_replacement_cost:
-            fields_weight = p_("migration.abandoned_fields_weight")[species]
-            fields_cost = np.where(positive, fields_weight * farm_kcal / safe_need, 0.0)
-        else:
-            config = ctx.scenario.config.agriculture
-            farming = (fields > 0) & positive
-            efficiency = np.where(farming, capability_column(cols, ctx, "clearing_efficiency"), 1.0)
-            vegetation = state.world.vegetation_density[home_cell].astype(np.float64)
-            clearing = (
-                config.clearing_hours_per_ha
-                * (1.0 + config.clearing_vegetation_multiplier * vegetation)
-            ) / np.maximum(efficiency, 1e-6)
-            marginal = cols.get("forage_marginal_kcal_per_hour")
-            replacement = fields * clearing * np.maximum(marginal, 0.0) / safe_need
-            fields_cost = np.where(farming, stores_weight * replacement, 0.0)
+        config = ctx.scenario.config.agriculture
+        farming = (fields > 0) & positive
+        efficiency = np.where(farming, capability_column(cols, ctx, "clearing_efficiency"), 1.0)
+        vegetation = state.world.vegetation_density[home_cell].astype(np.float64)
+        clearing = (
+            config.clearing_hours_per_ha
+            * (1.0 + config.clearing_vegetation_multiplier * vegetation)
+        ) / np.maximum(efficiency, 1e-6)
+        marginal = cols.get("forage_marginal_kcal_per_hour")
+        replacement = fields * clearing * np.maximum(marginal, 0.0) / safe_need
+        fields_cost = np.where(farming, stores_weight * replacement, 0.0)
         signal = cols.get("food_log_signal_var")
         noise = np.array([p.cognition.observation_noise_sigma**2 for p in profiles])[species]
         if ctx.mechanisms.direct_observation_shrinkage:

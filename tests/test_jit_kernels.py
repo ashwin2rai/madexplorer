@@ -241,21 +241,12 @@ def _plans_state(plans: object) -> tuple[object, ...]:
 
 
 @settings(max_examples=10, deadline=None)
-@given(st.integers(0, 10_000), st.booleans(), st.booleans())
-def test_compiled_field_planning_equals_the_reference_evaluate(
-    seed: int, expected_tenure: bool, growth_to_target: bool
-) -> None:
+@given(st.integers(0, 10_000))
+def test_compiled_field_planning_equals_the_reference_evaluate(seed: int) -> None:
     from madexplorer.economy.agriculture import FieldPlanningSubsystem
 
-    scenario = (
-        Scenario.from_yaml(ROOT / "scenarios" / "mvp2_neolithic.yaml")
-        .with_overrides(seed=seed)
-        .with_settings(
-            {
-                "mechanisms.expected_tenure": expected_tenure,
-                "mechanisms.field_growth_to_target": growth_to_target,
-            }
-        )
+    scenario = Scenario.from_yaml(ROOT / "scenarios" / "mvp2_neolithic.yaml").with_overrides(
+        seed=seed
     )
     sim = synthetic_simulator(scenario, 160, farming=True)
     for _ in range(3):
@@ -263,8 +254,7 @@ def test_compiled_field_planning_equals_the_reference_evaluate(
     rng = np.random.default_rng(seed)
     units = list(sim.state.units.values())
     crowded = [u.cell for u in units[:4]]
-    for unit in units:  # every branch: hazards, tenure, thresholds, arable scarcity
-        unit.move_hazard = float(rng.choice([np.nan, 0.0, 1.0, rng.uniform(0, 1)]))
+    for unit in units:  # every branch: tenure, thresholds, arable scarcity
         unit.residence_years = int(rng.integers(0, 40))
         unit.fields_ha = float(rng.choice([0.0, 0.01, rng.uniform(0, 30)]))
         unit.forage_marginal_kcal_per_hour = float(rng.lognormal(np.log(800), 1.0))
@@ -275,13 +265,3 @@ def test_compiled_field_planning_equals_the_reference_evaluate(
     (reference,) = subsystem._evaluate_reference(sim.state, step_context(sim))
     assert _plans_state(fast) == _plans_state(reference)
     assert len(fast.rows) > 10  # many plans, including shrinking and expanding ones
-
-
-@settings(max_examples=300, deadline=None)
-@given(st.floats(0.0, 1.0), st.integers(1, 60))
-def test_kernel_power_is_pythons_float_power(p: float, horizon: int) -> None:
-    from madexplorer.economy.agriculture import expected_tenure_years
-    from madexplorer.economy.agriculture_kernel import _expected_tenure
-
-    hazard = 1.0 - p
-    assert _expected_tenure(hazard, horizon, 3) == expected_tenure_years(hazard, horizon, 3)

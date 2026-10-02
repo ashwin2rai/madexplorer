@@ -8,8 +8,8 @@ from madexplorer.config.schema import AgricultureConfig
 from madexplorer.core.simulation import Simulator
 from madexplorer.ecology.subsystems import EcologySubsystem
 from madexplorer.economy.agriculture import (
-    adjusted_fields_ha,
     clearing_hours_per_ha,
+    fields_toward_target,
     update_soil_nutrients,
 )
 from madexplorer.economy.trade import delivered_fraction
@@ -17,28 +17,27 @@ from madexplorer.metrics.recorder import MetricsRecorder
 from tests.conftest import ROOT, mvp2_scenario_dict, step_context
 
 
+def _fields(fields: float, yield_per_ha: float, marginal: float, tenure: float = 10.0):  # type: ignore[no-untyped-def]
+    # args: fields, yield/ha, cultivation h/ha, clearing h/ha, tenure, marginal forage,
+    # adjustment rate, margin, need area, farm labor hours, labor share
+    return fields_toward_target(
+        fields, yield_per_ha, 600.0, 1500.0, tenure, marginal, 0.3, 0.1, 50.0, 1e6, 0.9
+    )
+
+
 def test_fields_expand_when_farming_beats_foraging() -> None:
-    fields, gap = adjusted_fields_ha(10.0, 1e6, 600.0, 0.0, 10, 500.0, 0.3, 2.0, 0.1)
+    fields, gap, _ = _fields(10.0, 1e6, 500.0)
     assert gap > 0 and fields > 10.0
 
 
 def test_fields_shrink_when_foraging_is_better() -> None:
-    fields, gap = adjusted_fields_ha(10.0, 1e5, 600.0, 0.0, 10, 2000.0, 0.3, 2.0, 0.1)
+    fields, gap, _ = _fields(10.0, 1e5, 2000.0)
     assert gap < 0 and fields < 10.0
 
 
 def test_clearing_cost_deters_mobile_groups_but_not_settled_ones() -> None:
-    args = dict(
-        yield_per_ha=6e5,
-        cultivation_hours_per_ha=600.0,
-        clearing_hours=1500.0,
-        forage_marginal=600.0,
-        adjustment_rate=0.3,
-        initial_plot_ha=2.0,
-        margin=0.1,
-    )
-    mobile, _ = adjusted_fields_ha(0.0, expected_tenure_years=1, **args)
-    settled, _ = adjusted_fields_ha(0.0, expected_tenure_years=10, **args)
+    mobile, _, _ = _fields(0.0, 6e5, 600.0, tenure=1)
+    settled, _, _ = _fields(0.0, 6e5, 600.0, tenure=10)
     assert mobile == 0.0 and settled > 0.0
 
 

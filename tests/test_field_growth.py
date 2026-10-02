@@ -1,6 +1,5 @@
-"""P5 field investment: growth toward a target (A, accepted) and expected tenure (B, off)."""
+"""Field investment: growth toward the area that meets need, limited by labor."""
 
-import itertools
 import math
 
 import numpy as np
@@ -13,8 +12,6 @@ from madexplorer.core.simulation import Simulator
 from madexplorer.economy import agriculture
 from madexplorer.economy.agriculture import (
     FieldPlanningSubsystem,
-    adjusted_fields_ha,
-    expected_tenure_years,
     fields_toward_target,
     unit_labor_hours,
 )
@@ -56,11 +53,10 @@ def test_ongoing_cultivation_labor_is_counted_before_new_clearing() -> None:
     assert 0 <= large < small
 
 
-def test_no_expansion_when_farming_does_not_pay_and_shrinking_is_unchanged() -> None:
+def test_no_expansion_when_farming_does_not_pay_and_fields_shrink_at_the_rate() -> None:
     fields, gap, limit = _grow(5.0, need=50.0, labor=1e6, forage_marginal=1000.0)
-    old, old_gap = adjusted_fields_ha(5.0, 6e5, CULT, CLEAR, 5.0, 1000.0, RATE, 2.0, MARGIN)
-    assert gap < 0 and limit == "" and fields < 5.0
-    assert (fields, gap) == (old, old_gap)
+    assert gap < 0 and limit == ""
+    assert fields == 5.0 * (1.0 + RATE * max(gap, -1.0))
     assert _grow(0.0, need=50.0, labor=1e6, forage_marginal=1000.0)[0] == 0.0
 
 
@@ -69,13 +65,11 @@ def test_growth_stops_at_the_need_area() -> None:
     assert _grow(49.0, need=50.0, labor=1e6)[0] <= 50.0
 
 
-def test_the_bootstrap_trap_is_gone() -> None:
-    new, old = 0.0, 0.0
+def test_no_bootstrap_trap_from_zero_fields() -> None:
+    fields = 0.0
     for _ in range(10):
-        new = _grow(new, need=50.0, labor=1e6)[0]
-        old = min(adjusted_fields_ha(old, 6e5, CULT, CLEAR, 5.0, 400.0, RATE, 2.0, MARGIN)[0], 50)
-    assert new > 0.95 * 50.0  # 1 - 0.7^10 = 0.97
-    assert old < 0.25 * 50.0  # the old rule compounds from a tiny first plot
+        fields = _grow(fields, need=50.0, labor=1e6)[0]
+    assert fields > 0.95 * 50.0  # 1 - 0.7^10 = 0.97, not compounding from a tiny first plot
 
 
 @settings(max_examples=100, deadline=None)
@@ -93,19 +87,6 @@ def test_expansion_never_exceeds_the_need_area_or_the_labor_budget(
     if added > 0:
         assert new <= max(need, fields) + 1e-9
         assert (labor - added * CLEAR) * SHARE >= new * CULT - 1e-6 * max(new * CULT, 1)
-
-
-def test_expected_tenure_matches_the_geometric_sum_and_its_limits() -> None:
-    for m in (0.05, 0.3, 0.9):
-        p = 1 - m
-        assert expected_tenure_years(m, 10, 3) == pytest.approx(sum(p**t for t in range(1, 11)))
-    assert expected_tenure_years(0.0, 10, 3) == 10.0
-    assert expected_tenure_years(1e-15, 10, 3) == 10.0  # p ~ 1 handled without 0/0
-    assert expected_tenure_years(1.0, 10, 3) == 0.0
-    assert expected_tenure_years(math.nan, 10, 3) == 3.0  # unknown: past-residence proxy
-    assert expected_tenure_years(math.nan, 10, 0) == 1.0
-    values = [expected_tenure_years(m, 10, 3) for m in np.linspace(0, 1, 21)]
-    assert all(a >= b for a, b in itertools.pairwise(values))
 
 
 def _unit(uid: str, n: int, hazard: float) -> PopulationUnit:
@@ -165,32 +146,32 @@ def test_migration_records_last_years_hazard_and_moving_resets_it() -> None:
     assert any(not math.isnan(u.move_hazard) for u in sim.state.units.values())
 
 
-def test_field_planning_amortizes_over_tenure_expected_from_the_stored_hazard(
+def test_field_planning_amortizes_clearing_over_past_residence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: list[float] = []
-    original = agriculture.adjusted_fields_ha
+    original = agriculture.fields_toward_target
 
     def spy(*args, **kwargs):  # type: ignore[no-untyped-def]
         seen.append(args[4])  # expected_tenure_years
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(agriculture, "adjusted_fields_ha", spy)
-    cases = ((True, 0.5, 1 - 0.5**10), (True, math.nan, 7.0), (False, 0.5, 7.0))
-    for enabled, hazard, expected in cases:
-        # The spy watches the proportional rule, so pin it (A, the default, bypasses it).
-        sim = _farmers(expected_tenure=enabled, field_growth_to_target=False)
+    monkeypatch.setattr(agriculture, "fields_toward_target", spy)
+    horizon = 10  # species/human.yaml planning_horizon_years
+    for residence, expected in ((0, 1), (7, 7), (40, horizon)):
+        sim = _farmers()
         unit = next(iter(sim.state.units.values()))
-        unit.move_hazard, unit.residence_years = hazard, 7
+        unit.residence_years = residence
+        unit.move_hazard = 0.5  # last year's hazard plays no part
         seen.clear()
         # The spy needs the Python rule path; the compiled evaluate is tested equal to it
         # (tests/test_jit_kernels.py).
         FieldPlanningSubsystem()._evaluate_reference(sim.state, step_context(sim))
-        assert seen == [pytest.approx(expected)]
+        assert seen == [expected]
 
 
-def test_with_target_growth_fields_stay_within_labor_and_arable_land() -> None:
-    sim = _farmers(field_growth_to_target=True, expected_tenure=True)
+def test_fields_stay_within_labor_and_arable_land() -> None:
+    sim = _farmers()
     grew = False
     for _ in range(60):
         sim.step()

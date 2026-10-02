@@ -154,17 +154,6 @@ class MechanismsConfig(FrozenModel):
     # unknown-cell level on the memory timescale, and merges average it by population instead
     # of keeping the maximum. Off = the pre-reform rules exactly (permanent, max-merged).
     familiarity_decay: bool = True
-    # MVP 2 stabilization (P5, accepted 2026-09-30): when new fields pay, close a fraction
-    # (field_adjustment_rate) of the gap to the fields that meet need, limited by the labor to
-    # clear and then work them, instead of growing in proportion to current fields.
-    field_growth_to_target: bool = True
-    # P5, rejected (kept off): amortize clearing over the tenure expected from last year's
-    # move hazard instead of past residence. Tested; too little effect for its complexity.
-    expected_tenure: bool = False
-    # P5, accepted 2026-09-30: leaving fields costs the labor to re-clear them
-    # (field_replacement_cost), not a second charge for the crop already in the stay
-    # utility. Off = the old penalty.
-    field_replacement_cost: bool = True
 
 
 class OutputConfig(FrozenModel):

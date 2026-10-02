@@ -8,7 +8,6 @@ more per hectare and depletes wild stocks less, so it wins where crowding and
 depletion have driven foraging returns down.
 """
 
-import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -149,76 +148,35 @@ def update_soil_nutrients(
 
 
 @model_rule(
-    name="field_adjustment",
-    version="1.2",
-    rationale=(
-        "Groups expand fields when farming's return per hour, with clearing labor amortized over "
-        "the tenure they expect (years resident so far, capped by the planning horizon), beats "
-        "marginal foraging by a margin; they shrink fields when the return on existing fields "
-        "(clearing already sunk) falls short. Adjustment speed is bounded, and fields never "
-        "exceed what meets requirement plus the surplus target (satisficing, as in foraging)."
-    ),
-    source_type="heuristic",
-    parameters=(
-        "field_adjustment_rate",
-        "initial_plot_ha",
-        "return_comparison_margin",
-        "max_farm_labor_share",
-        "planning_horizon_years",
-    ),
-    expected_domain="new field area >= 0 hectares",
-    known_limitations="Myopic (uses this year's returns); no risk diversification motive yet.",
-)
-def adjusted_fields_ha(
-    fields_ha: float,
-    yield_per_ha: float,
-    cultivation_hours_per_ha: float,
-    clearing_hours: float,
-    expected_tenure_years: float,
-    forage_marginal: float,
-    adjustment_rate: float,
-    initial_plot_ha: float,
-    margin: float,
-) -> tuple[float, float]:
-    """Return ``(desired_fields_ha, return_gap)`` for next year."""
-    threshold = forage_marginal * (1.0 + margin)
-    new_land_return = yield_per_ha / (
-        cultivation_hours_per_ha + clearing_hours / max(expected_tenure_years, 1.0)
-    )
-    expand_gap = (new_land_return - threshold) / max(new_land_return, threshold, 1e-9)
-    if expand_gap > 0:
-        return fields_ha + adjustment_rate * expand_gap * (fields_ha + initial_plot_ha), expand_gap
-    existing_return = yield_per_ha / cultivation_hours_per_ha
-    keep_gap = (existing_return - threshold) / max(existing_return, threshold, 1e-9)
-    if keep_gap < 0 and fields_ha > 0:
-        return fields_ha * (1.0 + adjustment_rate * max(keep_gap, -1.0)), keep_gap
-    return fields_ha, 0.0
-
-
-@model_rule(
     name="field_growth_to_target",
     version="1.0",
     rationale=(
-        "When new land pays (the same return comparison as field_adjustment), a group closes a "
-        "fraction of the gap between its fields and the area that meets its requirement plus "
-        "the surplus target each year, as an investment decision on a multi-year timescale. "
-        "The step is limited by labor: land cleared this year (its clearing labor is charged "
-        "to next year) must still leave enough of next year's farm labor share to work all "
-        "fields, existing ones included. Existing fields shrink as in field_adjustment."
+        "Groups expand fields when farming's return per hour on new land, with clearing labor "
+        "amortized over the tenure they expect (years resident so far, at least 1, capped by "
+        "the planning horizon), beats marginal foraging by a margin. They then close a "
+        "fraction of the gap between their fields and the area that meets requirement plus "
+        "the surplus target each year, an investment decision on a multi-year timescale. The "
+        "step is limited by labor: land cleared this year (its clearing labor is charged to "
+        "next year) must still leave enough of next year's farm labor share to work all "
+        "fields, existing ones included. When the return on existing fields (clearing already "
+        "sunk) falls short, fields shrink at the same adjustment rate."
     ),
     source_type="heuristic",
     parameters=(
         "field_adjustment_rate",
         "return_comparison_margin",
         "max_farm_labor_share",
+        "planning_horizon_years",
         "cultivation_hours_per_ha",
         "clearing_hours_per_ha",
     ),
     expected_domain="new field area in [0, need area]; expansion <= labor-feasible area",
     known_limitations=(
-        "Myopic returns; the target is the whole requirement, and mixed subsistence arises "
-        "only through the yearly return comparison (foraging's marginal return rises as "
-        "foraging effort falls); arable limits are applied per cell afterwards."
+        "Myopic returns (this year's yield and foraging margin); no risk diversification "
+        "motive; tenure is extrapolated from past residence. The target is the whole "
+        "requirement, and mixed subsistence arises only through the yearly return comparison "
+        "(foraging's marginal return rises as foraging effort falls); arable limits are "
+        "applied per cell afterwards."
     ),
 )
 def fields_toward_target(
@@ -259,32 +217,6 @@ def fields_toward_target(
     if keep_gap < 0 and fields_ha > 0:
         return fields_ha * (1.0 + adjustment_rate * max(keep_gap, -1.0)), keep_gap, ""
     return fields_ha, 0.0, ""
-
-
-@model_rule(
-    name="expected_tenure",
-    version="1.0",
-    rationale=(
-        "Durable field investment is amortized over the years the group expects to stay: "
-        "with last year's annual move hazard m and stay probability p = 1 - m, the expected "
-        "number of future years within the planning horizon H is sum_{t=1..H} p^t = "
-        "p(1 - p^H)/(1 - p) (H when p = 1). The hazard is last year's, so investment and "
-        "moving do not depend on each other within a year. Without a known hazard (just "
-        "arrived, never evaluated) the pre-reform proxy min(max(residence, 1), H) is used."
-    ),
-    source_type="theoretical",
-    parameters=("planning_horizon_years",),
-    expected_domain="[0, H] years",
-    known_limitations="Assumes a constant hazard over the horizon.",
-)
-def expected_tenure_years(move_hazard: float, horizon_years: int, residence_years: int) -> float:
-    """Expected future years in the current cell within the planning horizon."""
-    if math.isnan(move_hazard):
-        return float(min(max(residence_years, 1), horizon_years))
-    p = min(max(1.0 - move_hazard, 0.0), 1.0)
-    if 1.0 - p < 1e-9:
-        return float(horizon_years)
-    return p * (1.0 - p**horizon_years) / (1.0 - p)
 
 
 def unit_labor_hours(unit: PopulationUnit, ctx: StepContext) -> float:
@@ -538,7 +470,6 @@ class FieldPlanningSubsystem:
 
         config = ctx.scenario.config.agriculture
         potential = ctx.crop_potential(state)
-        mechanisms = ctx.mechanisms
         cols = ctx.columns(state)
         n_units = len(cols)
         if n_units == 0:
@@ -563,7 +494,6 @@ class FieldPlanningSubsystem:
             np.ascontiguousarray(cols.get("fields_ha"), dtype=f64),
             np.ascontiguousarray(cols.get("forage_marginal_kcal_per_hour"), dtype=f64),
             np.ascontiguousarray(cols.get("residence_years"), dtype=i64),
-            np.ascontiguousarray(cols.get("move_hazard"), dtype=f64),
             np.ascontiguousarray(cols.get("cell"), dtype=i64),
             np.ascontiguousarray(cols.species(), dtype=i64),
             np.ascontiguousarray(capability_column(cols, ctx, "clearing_efficiency"), dtype=f64),
@@ -577,12 +507,9 @@ class FieldPlanningSubsystem:
             per_species([p.foraging.surplus_target for p in profiles]),
             per_species([p.subsistence.field_adjustment_rate for p in profiles]),
             per_species([p.subsistence.return_comparison_margin for p in profiles]),
-            per_species([p.subsistence.initial_plot_ha for p in profiles]),
             float(config.cultivation_hours_per_ha),
             float(config.clearing_hours_per_ha),
             float(config.clearing_vegetation_multiplier),
-            bool(mechanisms.expected_tenure),
-            bool(mechanisms.field_growth_to_target),
             plan_rows,
             out[0],
             out[1],
@@ -611,7 +538,6 @@ class FieldPlanningSubsystem:
         config = ctx.scenario.config.agriculture
         potential = ctx.crop_potential(state)
         arable = ctx.arable_ha
-        mechanisms = ctx.mechanisms
         cols = ctx.columns(state)
         n_units = len(cols)
         if n_units == 0:
@@ -625,7 +551,6 @@ class FieldPlanningSubsystem:
         fields_now = cols.get("fields_ha").tolist()
         marginal = cols.get("forage_marginal_kcal_per_hour").tolist()
         residence = cols.get("residence_years").tolist()
-        hazard = cols.get("move_hazard").tolist()
         cells = cols.get("cell").tolist()
         species = cols.species().tolist()
         clearing_efficiency = capability_column(cols, ctx, "clearing_efficiency").tolist()
@@ -643,40 +568,23 @@ class FieldPlanningSubsystem:
             clearing = clearing_hours_per_ha(
                 float(vegetation[cells[i]]), config, clearing_efficiency[i]
             )
-            horizon = profile.cognition.planning_horizon_years
-            if mechanisms.expected_tenure:
-                tenure = expected_tenure_years(hazard[i], horizon, residence[i])
-            else:
-                tenure = min(max(residence[i], 1), horizon)
+            tenure = min(max(residence[i], 1), profile.cognition.planning_horizon_years)
             farm_labor = behavior.max_farm_labor_share * labor[i]
             labor_cap = farm_labor / config.cultivation_hours_per_ha
             need_cap = needs[i] * (1.0 + profile.foraging.surplus_target) / yield_per_ha
-            if mechanisms.field_growth_to_target:
-                fields, gap, _limit = fields_toward_target(
-                    fields_now[i],
-                    yield_per_ha,
-                    config.cultivation_hours_per_ha,
-                    clearing,
-                    tenure,
-                    marginal[i],
-                    behavior.field_adjustment_rate,
-                    behavior.return_comparison_margin,
-                    need_cap,
-                    farm_labor,
-                    behavior.max_farm_labor_share,
-                )
-            else:
-                fields, gap = adjusted_fields_ha(
-                    fields_now[i],
-                    yield_per_ha,
-                    config.cultivation_hours_per_ha,
-                    clearing,
-                    tenure,
-                    marginal[i],
-                    behavior.field_adjustment_rate,
-                    behavior.initial_plot_ha,
-                    behavior.return_comparison_margin,
-                )
+            fields, gap, _limit = fields_toward_target(
+                fields_now[i],
+                yield_per_ha,
+                config.cultivation_hours_per_ha,
+                clearing,
+                tenure,
+                marginal[i],
+                behavior.field_adjustment_rate,
+                behavior.return_comparison_margin,
+                need_cap,
+                farm_labor,
+                behavior.max_farm_labor_share,
+            )
             desired.append((min(fields, labor_cap, need_cap), farm_return, marginal[i], gap, ""))
         index = ctx.spatial(state)
         order, starts = index.order.tolist(), index.starts.tolist()
