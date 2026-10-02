@@ -49,7 +49,7 @@ def check_state_units(state: "SimulationState", year: int) -> None:
     it also checks that cached population counts equal the cohort sums."""
     table = state.table
     units = state.units
-    if table is None or not hasattr(units, "slots"):
+    if table is None:
         check_units(units.values(), state.world.n_cells, year)
         return
     slots = units.slots()

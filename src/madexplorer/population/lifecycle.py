@@ -19,11 +19,9 @@ Floating-point operations are the reference's, in the same order, on the same op
 
 import math
 from collections import deque
-from collections.abc import MutableMapping
 
 import numpy as np
 
-from madexplorer.core.state import UnitRegistry
 from madexplorer.core.types import IntArray
 from madexplorer.population.composition import (
     MergeMode,
@@ -34,6 +32,7 @@ from madexplorer.population.composition import (
 )
 from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.fields import EXTENSIVE_FIELDS, INTENSIVE_FIELDS
+from madexplorer.population.store import PopulationStore
 from madexplorer.population.unit import (
     HARVEST_MEMORY_YEARS,
     PopulationUnit,
@@ -42,33 +41,25 @@ from madexplorer.population.unit import (
 )
 
 
-def _rows(units: MutableMapping[str, PopulationUnit]) -> UnitRegistry | None:
-    """The registry if unit state lives in its table (row operations apply), else None."""
-    if isinstance(units, UnitRegistry) and units.table is not None:
-        return units
-    return None
-
-
-def create_unit(units: MutableMapping[str, PopulationUnit], unit: PopulationUnit) -> None:
+def create_unit(population: PopulationStore, unit: PopulationUnit) -> None:
     """Insert a detached unit (founding, synthetic states); it gets a slot at the end of
     the processing order."""
-    units[unit.id] = unit
+    population.units[unit.id] = unit
 
 
-def remove_unit(units: MutableMapping[str, PopulationUnit], unit_id: str) -> PopulationUnit:
+def remove_unit(population: PopulationStore, unit_id: str) -> PopulationUnit:
     """Remove a unit that leaves the simulation (extinction).
 
     With a table its rows are freed without copying state back: read what is needed (an
     event's fields) before removing it.
     """
-    registry = _rows(units)
-    if registry is not None:
-        return registry.discard(unit_id)
-    return units.pop(unit_id)
+    if population.table is not None:
+        return population.units.discard(unit_id)
+    return population.units.pop(unit_id)
 
 
 def split_unit(
-    units: MutableMapping[str, PopulationUnit],
+    population: PopulationStore,
     parent_id: str,
     leave_f: IntArray,
     leave_m: IntArray,
@@ -78,14 +69,12 @@ def split_unit(
 ) -> PopulationUnit:
     """Split the people in ``leave_f``/``leave_m`` off ``parent_id`` as a new unit, inserted
     at the end of the processing order (:func:`~madexplorer.population.composition.split_off`)."""
+    units, table, store = population.units, population.table, population.beliefs
     parent = units[parent_id]
-    registry = _rows(units)
-    if registry is None:
+    if table is None:
         daughter = split_off(parent, leave_f, leave_m, daughter_id, year, familiarity)
         units[daughter.id] = daughter
         return daughter
-    table, store = registry.table, registry.store
-    assert table is not None and store is not None
     p = belief_slot(parent)
     before = int(table.population[p])
     moved = int(leave_f.sum() + leave_m.sum())
@@ -97,7 +86,7 @@ def split_unit(
     if (remain_f < 0).any() or (remain_m < 0).any():
         raise ValueError("departing cohorts exceed the parent's")
     share = moved / before
-    d = registry.claim_slot(int(table.species_code[p]))  # may grow the table
+    d = population.claim_slot(int(table.species_code[p]))  # may grow the table
     table.copy_row(p, d)
     store.copy_row(p, d)
     columns = table.columns
@@ -132,7 +121,7 @@ def split_unit(
 
 
 def merge_units(
-    units: MutableMapping[str, PopulationUnit],
+    population: PopulationStore,
     source_id: str,
     target_id: str,
     mode: MergeMode,
@@ -141,19 +130,17 @@ def merge_units(
 ) -> None:
     """Merge ``source_id`` into ``target_id``, rewire the trade network and remove the source
     (:func:`~madexplorer.population.composition.absorb`)."""
-    registry = _rows(units)
-    if registry is None:
+    units, table, store = population.units, population.table, population.beliefs
+    if table is None:
         absorb(units, source_id, target_id, mode, year, familiarity)
         return
-    table, store = registry.table, registry.store
-    assert table is not None and store is not None
     target, source = units[target_id], units[source_id]
     if target.species_id != source.species_id or target.cell != source.cell:
         raise ValueError("only co-located units of one species can merge")
     rewire_ties(units, source_id, target_id)
     t, s = belief_slot(target), belief_slot(source)
-    population, columns = table.population, table.columns
-    n_t, n_s = int(population[t]), int(population[s])
+    counts, columns = table.population, table.columns
+    n_t, n_s = int(counts[t]), int(counts[s])
     reserve = columns["reserve_kcal_per_capita"]
     total_reserve = float(reserve[t]) * n_t + float(reserve[s]) * n_s
     for name in INTENSIVE_FIELDS:
@@ -191,7 +178,7 @@ def merge_units(
         table.females[t, :n] + table.females[s, :n],
         table.males[t, :n] + table.males[s, :n],
     )
-    merged = int(population[t])
+    merged = int(counts[t])
     reserve[t] = total_reserve / merged if merged else 0.0
     store.merge_row(s, t)
     target.report_cells = np.union1d(target.report_cells, source.report_cells)
@@ -201,4 +188,4 @@ def merge_units(
         )
     # Effective familiarity of both units at the merge year (MVP 2.1, B1 fixed).
     target.familiarity.merge(source.familiarity, n_t, n_s, year, familiarity)
-    registry.discard(source_id)
+    units.discard(source_id)

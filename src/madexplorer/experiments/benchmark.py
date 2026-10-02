@@ -101,7 +101,7 @@ def synthetic_simulator(
             placement,
             sim.knowledge,
         )
-        create_unit(sim.state.units, unit)
+        create_unit(sim.state.population, unit)
     return sim
 
 

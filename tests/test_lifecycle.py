@@ -7,6 +7,7 @@ knowledge, scalars or beliefs) and reused; afterwards ordinary simulation steps 
 two states must stay identical.
 """
 
+import copy
 from dataclasses import fields
 
 import numpy as np
@@ -16,12 +17,12 @@ from hypothesis import strategies as st
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
-from madexplorer.core.state import UnitRegistry
 from madexplorer.experiments.benchmark import synthetic_simulator
 from madexplorer.population.composition import MergeMode
 from madexplorer.population.familiarity import familiarity_rule
 from madexplorer.population.fields import TABLE_FIELDS
 from madexplorer.population.lifecycle import create_unit, merge_units, remove_unit, split_unit
+from madexplorer.population.store import PopulationStore
 from madexplorer.population.unit import (
     EXTERNAL_FIELDS,
     PopulationUnit,
@@ -47,10 +48,9 @@ def _assert_same_units(a: Simulator, b: Simulator) -> None:
 
 
 def _assert_rows_consistent(sim: Simulator) -> None:
-    registry = sim.state.units
-    assert isinstance(registry, UnitRegistry)
-    table, store = registry.table, registry.store
-    assert table is not None and store is not None
+    population = sim.state.population
+    registry, table, store = population.units, population.table, population.beliefs
+    assert table is not None
     technologies = sim.compiled.technologies if sim.compiled else None
     assert technologies is not None
     slots = registry.slots()
@@ -59,7 +59,7 @@ def _assert_rows_consistent(sim: Simulator) -> None:
     for unit, slot in zip(registry.values(), slots.tolist(), strict=True):
         assert belief_slot(unit) == slot
         assert table.technology_mask[slot] == technologies.mask(unit.technologies)
-    for slot in registry._free:  # released rows are reset: nothing can leak into a reuse
+    for slot in population._free:  # released rows are reset: nothing can leak into a reuse
         assert all(not array[slot] for array in table.columns.values())
         assert not table.females[slot].any() and not table.males[slot].any()
         assert table.population[slot] == 0 and table.n_ages[slot] == 0
@@ -109,7 +109,7 @@ def _random_operations(a: Simulator, b: Simulator, seed: int, n_ops: int) -> int
     for k in range(n_ops):
         ids = list(a.state.units)
         op = rng.choice(["split", "move", "merge", "remove", "create", "retech"])
-        before_free = set(a.state.units._free)  # type: ignore[attr-defined]
+        before_free = set(a.state.population._free)
         if op == "split":
             uid = ids[rng.integers(len(ids))]
             unit = a.state.units[uid]
@@ -120,7 +120,7 @@ def _random_operations(a: Simulator, b: Simulator, seed: int, n_ops: int) -> int
                 continue
             for sim in (a, b):
                 split_unit(
-                    sim.state.units, uid, leave_f.copy(), leave_m.copy(), f"s{k}", year, rule
+                    sim.state.population, uid, leave_f.copy(), leave_m.copy(), f"s{k}", year, rule
                 )
         elif op == "move" and len(ids) > 1:
             uid, other = (ids[i] for i in rng.choice(len(ids), 2, replace=False))
@@ -137,16 +137,16 @@ def _random_operations(a: Simulator, b: Simulator, seed: int, n_ops: int) -> int
             source, target = (group[i] for i in rng.choice(len(group), 2, replace=False))
             mode = MergeMode.FUSION if rng.random() < 0.5 else MergeMode.AGGREGATION
             for sim in (a, b):
-                merge_units(sim.state.units, source, target, mode, year, rule)
+                merge_units(sim.state.population, source, target, mode, year, rule)
         elif op == "remove" and len(ids) > 4:
             uid = ids[rng.integers(len(ids))]
             for sim in (a, b):
-                remove_unit(sim.state.units, uid)
+                remove_unit(sim.state.population, uid)
         elif op == "create":
             template = a.state.units[ids[rng.integers(len(ids))]]
             ua, ub = _new_unit(template, f"c{k}", rng, techs)
-            create_unit(a.state.units, ua)
-            create_unit(b.state.units, ub)
+            create_unit(a.state.population, ua)
+            create_unit(b.state.population, ub)
         elif op == "retech" and techs:
             uid = ids[rng.integers(len(ids))]
             chosen = frozenset(t for t in techs if rng.random() < 0.5)
@@ -184,7 +184,74 @@ def test_removed_unit_keeps_only_external_state() -> None:
     sim.state.units[ids[1]].cell = sim.state.units[ids[0]].cell
     source = sim.state.units[ids[1]]
     rule = familiarity_rule(next(iter(scenario.species.values())), scenario.config.mechanisms)
-    merge_units(sim.state.units, ids[1], ids[0], MergeMode.FUSION, sim.state.year, rule)
+    merge_units(sim.state.population, ids[1], ids[0], MergeMode.FUSION, sim.state.year, rule)
     assert ids[1] not in sim.state.units and source.id == ids[1]
     with pytest.raises(AttributeError, match="removed"):
         _ = source.food_ratio
+
+
+def _same_unit(a: PopulationUnit, b: PopulationUnit) -> None:
+    sa, sb = unit_state(a), unit_state(b)
+    for key, value in sa.items():
+        assert _same(value, sb[key]), key
+
+
+def test_detach_and_rebind_round_trips_unit_state_between_stores() -> None:
+    scenario = Scenario.from_yaml(SCENARIO)
+    sim = synthetic_simulator(scenario, 6, belief_backend="dense")
+    for _ in range(2):
+        sim.step()
+    uid = list(sim.state.units)[2]
+    before = copy.deepcopy(sim.state.units[uid])
+    slot = belief_slot(sim.state.units[uid])
+    unit = sim.state.units.pop(uid)  # state copied back onto the object, slot freed
+    assert belief_slot(unit) == -1
+    _same_unit(unit, before)
+    assert slot in sim.state.population._free
+    _assert_rows_consistent(sim)
+    other = PopulationStore(
+        sim.world.n_cells,
+        belief_backend="dense",
+        technology_table=sim.compiled.technologies,
+        species_index=sim.compiled.species_index,
+    )
+    other.units[uid] = unit  # bound to the other store's rows
+    assert unit.__dict__["_table"] is other.table
+    _same_unit(unit, before)
+    other.units.pop(uid)  # a unit leaves one store before joining another
+    sim.state.units[uid] = unit  # rebound to the freed slot (last freed, first reused)
+    assert belief_slot(unit) == slot
+    _same_unit(unit, before)
+    _assert_rows_consistent(sim)
+
+
+def test_deepcopy_gives_an_independent_consistently_bound_state() -> None:
+    scenario = Scenario.from_yaml(SCENARIO)
+    sim = synthetic_simulator(scenario, 8, farming=True)
+    sim.step()
+    state = copy.deepcopy(sim.state)
+    population = state.population
+    assert population is not sim.state.population
+    for uid, unit in state.units.items():
+        assert unit.__dict__["_table"] is population.table
+        assert unit.__dict__["_belief_store"] is population.beliefs
+        assert belief_slot(unit) == belief_slot(sim.state.units[uid])
+        _same_unit(unit, sim.state.units[uid])
+    uid = next(iter(state.units))
+    original = sim.state.units[uid].stores_kcal
+    state.units[uid].stores_kcal = original + 1e6
+    del state.units[list(state.units)[-1]]
+    state.units[uid] = state.units.pop(uid)  # rebinding within the copy
+    assert sim.state.units[uid].stores_kcal == original
+    assert state.units[uid].stores_kcal == original + 1e6
+    assert len(sim.state.units) == 8 and len(state.units) == 7
+    _assert_rows_consistent(sim)
+    sim.step()  # the original runs on, unaffected
+
+
+def test_population_views_cannot_be_rebound() -> None:
+    sim = synthetic_simulator(Scenario.from_yaml(SCENARIO), 3)
+    with pytest.raises(AttributeError):
+        sim.state.units = {}  # type: ignore[misc, assignment]
+    with pytest.raises(AttributeError):
+        sim.state.table = None  # type: ignore[misc]

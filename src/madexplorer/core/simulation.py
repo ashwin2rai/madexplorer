@@ -42,6 +42,7 @@ from madexplorer.population.energetics import EnergeticsSubsystem
 from madexplorer.population.groups import ExtinctionSubsystem, FissionSubsystem, FusionSubsystem
 from madexplorer.population.initialization import found_unit
 from madexplorer.population.lifecycle import create_unit
+from madexplorer.population.store import PopulationStore
 from madexplorer.resolution.coarsening import CoarseningSubsystem
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
@@ -150,11 +151,13 @@ class Simulator:
             world=self.world,
             climate=climate,
             ecology=initial_ecology(self.world, climate, config.ecology),
-            units={},
-            table_mode=unit_table,
-            technology_table=self.compiled.technologies,
-            species_index=self.compiled.species_index,
-            belief_backend=self.belief_backend,
+            population=PopulationStore(
+                self.world.n_cells,
+                belief_backend=self.belief_backend,
+                table=unit_table,
+                technology_table=self.compiled.technologies,
+                species_index=self.compiled.species_index,
+            ),
         )
         # Expiry horizons per species code: lets a sparse store reclaim expired entries.
         self.state.belief_store.configure_expiry(
@@ -182,7 +185,7 @@ class Simulator:
                 rng,
                 self.knowledge,
             )
-            create_unit(self.state.units, unit)
+            create_unit(self.state.population, unit)
             self.events.emit(
                 self.state.year,
                 "unit_founded",

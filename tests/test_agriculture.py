@@ -14,6 +14,7 @@ from madexplorer.economy.agriculture import (
 )
 from madexplorer.economy.trade import delivered_fraction
 from madexplorer.metrics.recorder import MetricsRecorder
+from madexplorer.population.store import PopulationStore
 from tests.conftest import ROOT, mvp2_scenario_dict, step_context
 
 
@@ -122,7 +123,12 @@ def test_farming_metrics_do_not_change_when_identical_groups_are_split() -> None
     rows = []
     for units in ({unit.id: double}, {unit.id: unit, twin.id: twin}):
         state = copy.copy(sim.state)
-        state.units = units
+        state.population = PopulationStore(
+            sim.world.n_cells,
+            technology_table=sim.compiled.technologies,
+            species_index=sim.compiled.species_index,
+        )
+        state.units.update(units)
         recorder = MetricsRecorder(sim.scenario, 1000)
         rows.append(recorder.record(state, step_context(sim)))
     keys = [k for k in rows[0] if k.startswith(("farmed_", "arable_", "cultivated_", "farm_"))]

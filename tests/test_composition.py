@@ -269,6 +269,6 @@ def test_row_level_merge_uses_the_merge_year() -> None:
     rule = familiarity_rule(next(iter(scenario.species.values())), scenario.config.mechanisms)
     expected = FamiliarityMap({4: 0.95}, {4: 1})
     expected.merge(FamiliarityMap({4: 0.75}, {4: 30}), n_t, n_s, year, rule)
-    merge_units(sim.state.units, source.id, target.id, MergeMode.FUSION, year, rule)
+    merge_units(sim.state.population, source.id, target.id, MergeMode.FUSION, year, rule)
     assert target.familiarity._value == expected._value
     assert target.familiarity._year == expected._year

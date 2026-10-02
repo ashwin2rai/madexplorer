@@ -54,7 +54,12 @@ class Coalesce:
         merged = source.population
         rule = familiarity_rule(ctx.species(target.species_id), ctx.mechanisms)
         merge_units(
-            state.units, self.source_id, self.target_id, MergeMode.AGGREGATION, state.year, rule
+            state.population,
+            self.source_id,
+            self.target_id,
+            MergeMode.AGGREGATION,
+            state.year,
+            rule,
         )
         ctx.ledger.resolution_merges += 1
         ctx.events.emit(

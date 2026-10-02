@@ -126,7 +126,7 @@ class Fission:
             return
         rule = familiarity_rule(ctx.species(parent.species_id), ctx.mechanisms)
         daughter = split_unit(
-            state.units, parent.id, leave_f, leave_m, ctx.ids.next("u"), state.year, rule
+            state.population, parent.id, leave_f, leave_m, ctx.ids.next("u"), state.year, rule
         )
         ctx.ledger.fissions += 1
         ctx.events.emit(
@@ -158,7 +158,9 @@ class Fusion:
         source, target = state.units[self.source_id], state.units[self.target_id]
         merged = source.population
         rule = familiarity_rule(ctx.species(target.species_id), ctx.mechanisms)
-        merge_units(state.units, self.source_id, self.target_id, MergeMode.FUSION, state.year, rule)
+        merge_units(
+            state.population, self.source_id, self.target_id, MergeMode.FUSION, state.year, rule
+        )
         ctx.ledger.fusions += 1
         ctx.events.emit(
             state.year,
@@ -185,7 +187,7 @@ class Extinction:
         ctx.invalidate_spatial()
         unit = state.units[self.unit_id]
         cell, founded_year = unit.cell, unit.founded_year
-        remove_unit(state.units, self.unit_id)
+        remove_unit(state.population, self.unit_id)
         ctx.ledger.extinctions += 1
         ctx.events.emit(
             state.year,
