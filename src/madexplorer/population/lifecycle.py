@@ -1,13 +1,15 @@
 """Unit lifecycle on the authoritative rows: create, remove, split, merge (PH3b).
 
 The model rules for combining and dividing unit state are declared in
-:mod:`madexplorer.population.composition` (``FIELD_RULES``, :func:`merge_state`,
-:func:`split_off`); this module adds no semantics. With a unit table (production), the same
-rules are applied directly to unit-table rows and belief-store rows: a daughter's row is
-copied from its parent's and then divided, a merge folds the source row into the target
-row, and a unit that leaves the simulation frees its rows without its state being copied
-back onto the object. Only the irregular external state (familiarity, residence, report
-cells, harvest history, trade ties) is handled on objects, by the same code paths.
+:mod:`madexplorer.population.fields` (``FIELD_RULES``; the extensive and intensive field
+groups) and implemented on objects by :mod:`madexplorer.population.composition`
+(:func:`merge_state`, :func:`split_off`); this module adds no semantics. With a unit
+table (production), the same rules are applied directly to unit-table rows and
+belief-store rows: a daughter's row is copied from its parent's and then divided, a merge
+folds the source row into the target row, and a unit that leaves the simulation frees its
+rows without its state being copied back onto the object. Only the irregular external
+state (familiarity, residence, report cells, harvest history, trade ties) is handled on
+objects, by the same code paths.
 
 Without a table (the object-authoritative reference engine) every function delegates to
 the composition functions, so whole-engine differential tests compare the two paths.
@@ -24,8 +26,6 @@ import numpy as np
 from madexplorer.core.state import UnitRegistry
 from madexplorer.core.types import IntArray
 from madexplorer.population.composition import (
-    _SUMMED,
-    _WEIGHTED_MEAN,
     MergeMode,
     _weighted,
     absorb,
@@ -33,6 +33,7 @@ from madexplorer.population.composition import (
     split_off,
 )
 from madexplorer.population.familiarity import FamiliarityRule
+from madexplorer.population.fields import EXTENSIVE_FIELDS, INTENSIVE_FIELDS
 from madexplorer.population.unit import (
     HARVEST_MEMORY_YEARS,
     PopulationUnit,
@@ -103,7 +104,7 @@ def split_unit(
     columns["founded_year"][d] = year
     groups = columns["groups"]
     groups[d] = 1
-    for name in _SUMMED:
+    for name in EXTENSIVE_FIELDS:
         column = columns[name]
         value = float(column[p])
         portion = value * share
@@ -155,10 +156,10 @@ def merge_units(
     n_t, n_s = int(population[t]), int(population[s])
     reserve = columns["reserve_kcal_per_capita"]
     total_reserve = float(reserve[t]) * n_t + float(reserve[s]) * n_s
-    for name in _WEIGHTED_MEAN:
+    for name in INTENSIVE_FIELDS:
         column = columns[name]
         column[t] = _weighted(float(column[t]), n_t, float(column[s]), n_s)
-    for name in _SUMMED:
+    for name in EXTENSIVE_FIELDS:
         column = columns[name]
         column[t] = float(column[t]) + float(column[s])
     hazards = columns["move_hazard"]

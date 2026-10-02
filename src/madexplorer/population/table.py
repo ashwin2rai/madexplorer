@@ -10,7 +10,8 @@ descriptors that read and write its row (no copy lives on the object); a detache
 (test fixture, a daughter before insertion) keeps plain attribute values. Hot subsystems
 read and write whole columns for the ordered active slots instead of touching objects.
 Irregular external state (familiarity, residence records, report cells, trade ties,
-harvest history) stays on the unit object.
+harvest history) stays on the unit object. Which field lives where is declared once in
+:mod:`madexplorer.population.fields`.
 
 Slots are storage only: the processing order is the unit registry's insertion order,
 exposed as an ordered slot array. A released row is reset to defaults so nothing leaks
@@ -23,39 +24,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
+from madexplorer.population.fields import BOOL_FIELDS, FLOAT_FIELDS, INT_FIELDS
 
 if TYPE_CHECKING:
     from madexplorer.core.compiled import TechnologyTable
 
-# Scalar columns moved into the table: name -> (dtype, default for a fresh row).
-FLOAT_FIELDS: tuple[str, ...] = (
-    "reserve_kcal_per_capita",
-    "energy_debt_kcal",
-    "harvest_kcal",
-    "food_ratio",
-    "energy_deficit",
-    "food_log_prior",
-    "food_log_signal_var",
-    "stores_kcal",
-    "fields_ha",
-    "labor_debt_hours",
-    "farm_harvest_kcal",
-    "farm_hours",
-    "forage_harvest_kcal",
-    "forage_hours",
-    "forage_marginal_kcal_per_hour",
-    "forage_plant_share",
-    "crop_yield_kcal_per_ha",
-    "clearing_hours",
-    "stored_kcal",
-    "move_hazard",
-)
-INT_FIELDS: tuple[str, ...] = ("cell", "groups", "residence_years", "founded_year")
-BOOL_FIELDS: tuple[str, ...] = ("ever_cultivated",)
-MATRIX_FIELDS: tuple[str, ...] = ("females", "males", "knowledge")
-TABLE_FIELDS: tuple[str, ...] = (
-    FLOAT_FIELDS + INT_FIELDS + BOOL_FIELDS + MATRIX_FIELDS + ("technologies",)
-)
 GROWTH_FRACTION = 0.25
 MIN_CAPACITY = 64
 

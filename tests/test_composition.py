@@ -8,13 +8,19 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from madexplorer.population.composition import (
-    FIELD_RULES,
     MergeMode,
     absorb,
     merge_state,
     split_off,
 )
 from madexplorer.population.familiarity import FamiliarityMap, FamiliarityRule
+from madexplorer.population.fields import (
+    FIELD_RULES,
+    UNIT_FIELDS,
+    Composition,
+    Storage,
+    UnitField,
+)
 from madexplorer.population.unit import PopulationUnit
 
 RULE = FamiliarityRule(baseline=0.6, time_constant_years=20.0)
@@ -40,8 +46,50 @@ def _unit(uid: str, n_female: int, n_male: int = 0, cell: int = 0) -> Population
     )
 
 
+def test_every_unit_field_is_declared_once_in_order() -> None:
+    assert [f.name for f in UNIT_FIELDS] == [f.name for f in fields(PopulationUnit)]
+
+
 def test_every_unit_field_has_merge_and_split_rules() -> None:
     assert set(FIELD_RULES) == {f.name for f in fields(PopulationUnit)}
+    assert all(merge and split for merge, split in FIELD_RULES.values())
+
+
+def test_shared_compositions_are_declared_without_specific_rules() -> None:
+    with pytest.raises(ValueError):
+        UnitField("x", Storage.FLOAT, Composition.EXTENSIVE, merge="sum")
+    with pytest.raises(ValueError):
+        UnitField("x", Storage.FLOAT)  # a specific rule must be written down
+    with pytest.raises(ValueError):
+        UnitField("x", Storage.OBJECT, Composition.INTENSIVE)
+
+
+@pytest.mark.parametrize("mode", list(MergeMode))
+def test_shared_compositions_merge_and_split_as_declared(mode: MergeMode) -> None:
+    extensive = [f.name for f in UNIT_FIELDS if f.composition is Composition.EXTENSIVE]
+    intensive = [f.name for f in UNIT_FIELDS if f.composition is Composition.INTENSIVE]
+    a, b = _unit("a", 30), _unit("b", 10)
+    for k, name in enumerate(extensive + intensive):
+        setattr(a, name, 1.0 + k)
+        setattr(b, name, 5.0 + 2 * k)
+    expected = {
+        name: getattr(a, name) + getattr(b, name)
+        if name in extensive
+        else (30 * getattr(a, name) + 10 * getattr(b, name)) / 40
+        for name in extensive + intensive
+    }
+    merge_state(a, b, mode, 5, RULE)
+    for name, value in expected.items():
+        assert getattr(a, name) == pytest.approx(value), name
+    leave = np.zeros(91, dtype=np.int64)
+    leave[20] = 10  # a quarter of the 40 people
+    daughter = split_off(a, leave, np.zeros(91, dtype=np.int64), "d", 6, RULE)
+    for name, value in expected.items():
+        if name in extensive:
+            assert getattr(daughter, name) == pytest.approx(value / 4), name
+            assert getattr(a, name) == pytest.approx(3 * value / 4), name
+        else:
+            assert getattr(daughter, name) == getattr(a, name) == pytest.approx(value), name
 
 
 def test_merge_rejects_units_in_different_cells() -> None:

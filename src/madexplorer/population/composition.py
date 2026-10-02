@@ -2,10 +2,13 @@
 
 Every field of :class:`PopulationUnit` has one declared rule for merging two units
 (fusion of social groups, or computational aggregation) and one for splitting a
-unit (fission, and later selective migration). The rules live here, and only
-here, so that new state added in MVP 3 (wealth, health, preference strata) must
-declare its semantics before it can be merged or split. ``FIELD_RULES`` is
-checked against the dataclass fields by the test suite.
+unit (fission, and later selective migration), declared with the field in
+:mod:`madexplorer.population.fields` (``FIELD_RULES``), so that new state added in
+MVP 3 must declare its semantics before it can be merged or split. Extensive and
+intensive fields share one rule each; this module implements those and every
+field-specific rule on unit objects. :mod:`madexplorer.population.lifecycle`
+applies the same rules to table rows (an independent implementation, compared by
+differential tests).
 
 Merging also rewires the social network: third-party trade ties that pointed at
 the absorbed unit are redirected to the surviving unit, duplicate edges combine
@@ -21,6 +24,7 @@ import numpy as np
 
 from madexplorer.core.types import IntArray
 from madexplorer.population.familiarity import FamiliarityRule
+from madexplorer.population.fields import EXTENSIVE_FIELDS, INTENSIVE_FIELDS
 from madexplorer.population.unit import PopulationUnit
 
 
@@ -29,79 +33,6 @@ class MergeMode(Enum):
 
     FUSION = "fusion"  # one group joins another's social structure
     AGGREGATION = "aggregation"  # computational coarsening; both groups persist inside the unit
-
-
-# Field -> (merge rule, split rule). Documentation and a completeness contract: the test
-# suite fails if a PopulationUnit field is missing, so every new field gets explicit semantics.
-FIELD_RULES: dict[str, tuple[str, str]] = {
-    "id": ("keep target", "new id"),
-    "species_id": ("must match", "copy"),
-    "cell": ("must match", "copy"),
-    "females": ("vector sum", "binomial draw per cohort (given)"),
-    "males": ("vector sum", "binomial draw per cohort (given)"),
-    "reserve_kcal_per_capita": ("conserve total", "copy per-capita value (conserves total)"),
-    "founded_year": ("keep target", "split year"),
-    "parent_id": ("keep target", "parent id"),
-    "energy_debt_kcal": ("sum", "proportional to people"),
-    "harvest_kcal": ("sum", "proportional to people"),
-    "food_ratio": ("population-weighted mean", "copy"),
-    "energy_deficit": ("population-weighted mean", "copy"),
-    "beliefs": ("freshest observation per cell (fewer relays on ties)", "copy"),
-    "food_log_prior": ("population-weighted mean", "copy"),
-    "food_log_signal_var": ("population-weighted mean", "copy"),
-    "report_cells": ("union", "copy"),
-    "recent_residence": ("latest year per cell", "copy"),
-    "familiarity": (
-        "population-weighted mean of values decayed to the merge year (max per cell when "
-        "familiarity_decay is off)",
-        "copy of the values decayed to the split year",
-    ),
-    "groups": ("sum (aggregation) / keep target (fusion)", "one group leaves a multi-group unit"),
-    "knowledge": ("population-weighted mean", "copy"),
-    "technologies": ("union", "copy"),
-    "stores_kcal": ("sum", "proportional to people"),
-    "fields_ha": ("sum", "proportional to people"),
-    "ever_cultivated": ("or", "copy"),
-    "labor_debt_hours": ("sum", "proportional to people"),
-    "farm_harvest_kcal": ("sum", "proportional to people"),
-    "farm_hours": ("sum", "proportional to people"),
-    "forage_harvest_kcal": ("sum", "proportional to people"),
-    "forage_hours": ("sum", "proportional to people"),
-    "forage_marginal_kcal_per_hour": ("population-weighted mean", "copy"),
-    "forage_plant_share": ("population-weighted mean", "copy"),
-    "crop_yield_kcal_per_ha": ("keep target (same cell and technology)", "copy"),
-    "clearing_hours": ("sum", "proportional to people"),
-    "stored_kcal": ("sum", "proportional to people"),
-    "residence_years": ("keep target (the larger unit)", "copy"),
-    "move_hazard": ("population-weighted mean of known values (NaN if neither known)", "copy"),
-    "harvest_history": ("population-weighted mean of aligned recent years", "copy"),
-    "trade_ties": (
-        "additive union, rewired network",
-        "stay with the parent (daughter unconnected)",
-    ),
-}
-
-_SUMMED = (
-    "energy_debt_kcal",
-    "harvest_kcal",
-    "stores_kcal",
-    "fields_ha",
-    "labor_debt_hours",
-    "farm_harvest_kcal",
-    "farm_hours",
-    "forage_harvest_kcal",
-    "forage_hours",
-    "clearing_hours",
-    "stored_kcal",
-)
-_WEIGHTED_MEAN = (
-    "food_ratio",
-    "energy_deficit",
-    "forage_marginal_kcal_per_hour",
-    "forage_plant_share",
-    "food_log_prior",
-    "food_log_signal_var",
-)
 
 
 def _weighted(a: float, n_a: int, b: float, n_b: int) -> float:
@@ -124,9 +55,9 @@ def merge_state(
         raise ValueError("only co-located units of one species can merge")
     n_t, n_s = target.population, source.population
     total_reserve = target.total_reserve_kcal + source.total_reserve_kcal
-    for name in _WEIGHTED_MEAN:
+    for name in INTENSIVE_FIELDS:
         setattr(target, name, _weighted(getattr(target, name), n_t, getattr(source, name), n_s))
-    for name in _SUMMED:
+    for name in EXTENSIVE_FIELDS:
         setattr(target, name, getattr(target, name) + getattr(source, name))
     if math.isnan(target.move_hazard) or math.isnan(source.move_hazard):
         known = [h for h in (target.move_hazard, source.move_hazard) if not math.isnan(h)]
@@ -210,8 +141,8 @@ def split_off(
     """Detach the people in ``leave_f``/``leave_m`` from ``parent`` as a new unit.
 
     Extensive quantities (stores, fields, debts, this year's flows) are divided in
-    proportion to people; per-capita and informational state is copied. The caller
-    guarantees ``0 < departing < parent.population``.
+    proportion to people; intensive, per-capita and informational state is copied. The
+    caller guarantees ``0 < departing < parent.population``.
     """
     before = parent.population
     moved = int(leave_f.sum() + leave_m.sum())
@@ -227,25 +158,21 @@ def split_off(
         reserve_kcal_per_capita=parent.reserve_kcal_per_capita,
         founded_year=year,
         parent_id=parent.id,
-        food_ratio=parent.food_ratio,
-        energy_deficit=parent.energy_deficit,
         beliefs=parent.beliefs.copy(),  # maps are owned and patched in place
-        food_log_prior=parent.food_log_prior,
-        food_log_signal_var=parent.food_log_signal_var,
         report_cells=parent.report_cells.copy(),
         recent_residence=dict(parent.recent_residence),
         familiarity=parent.familiarity.materialized(year, familiarity),
         knowledge=parent.knowledge.copy(),
         technologies=parent.technologies,
         ever_cultivated=parent.ever_cultivated,
-        forage_marginal_kcal_per_hour=parent.forage_marginal_kcal_per_hour,
-        forage_plant_share=parent.forage_plant_share,
         crop_yield_kcal_per_ha=parent.crop_yield_kcal_per_ha,
         residence_years=parent.residence_years,
         move_hazard=parent.move_hazard,
     )
     daughter.harvest_history.extend(parent.harvest_history)
-    for name in _SUMMED:
+    for name in INTENSIVE_FIELDS:
+        setattr(daughter, name, getattr(parent, name))
+    for name in EXTENSIVE_FIELDS:
         portion = getattr(parent, name) * share
         setattr(daughter, name, portion)
         setattr(parent, name, getattr(parent, name) - portion)

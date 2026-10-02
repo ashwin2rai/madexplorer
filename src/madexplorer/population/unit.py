@@ -16,6 +16,7 @@ import numpy.typing as npt
 
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.population.familiarity import FamiliarityMap
+from madexplorer.population.fields import OBJECT_FIELDS, TABLE_FIELDS, UNIT_FIELDS, Storage
 
 if TYPE_CHECKING:
     from madexplorer.core.state import SimulationState, StepContext
@@ -368,12 +369,6 @@ class PopulationUnit:
         return bool((self.females * female_ok).sum() > 0), bool((self.males * male_ok).sum() > 0)
 
 
-for _name in ("females", "males"):
-    _descriptor = _Cohort()
-    _descriptor.__set_name__(PopulationUnit, _name)
-    setattr(PopulationUnit, _name, _descriptor)
-
-
 class _Beliefs:
     """Descriptor for ``unit.beliefs``: the unit's row of the belief store while it is
     registered (a compatibility view; assignment copies into the row), else a private map.
@@ -474,35 +469,32 @@ class _Technologies:
             table.set_technologies(state["_slot"], value)
 
 
-def _install_table_descriptors() -> None:
-    from madexplorer.population.table import BOOL_FIELDS, FLOAT_FIELDS, INT_FIELDS
+def _install_storage_descriptors() -> None:
+    """Point every non-object field at its storage (``population.fields``) while registered."""
+    casts = {Storage.FLOAT: float, Storage.INT: int, Storage.BOOL: bool}
+    for spec in UNIT_FIELDS:
+        if spec.storage in casts:
+            descriptor: object = _TableField(spec.name, casts[spec.storage])
+        elif spec.storage is Storage.COHORT:
+            descriptor = _Cohort()
+            descriptor.__set_name__(PopulationUnit, spec.name)
+        elif spec.storage is Storage.KNOWLEDGE:
+            descriptor = _Knowledge()
+        elif spec.storage is Storage.TECHNOLOGIES:
+            descriptor = _Technologies()
+        elif spec.storage is Storage.BELIEFS:
+            descriptor = _Beliefs()
+        else:
+            continue  # Storage.OBJECT: a plain attribute
+        setattr(PopulationUnit, spec.name, descriptor)
 
-    for name in FLOAT_FIELDS:
-        setattr(PopulationUnit, name, _TableField(name, float))
-    for name in INT_FIELDS:
-        setattr(PopulationUnit, name, _TableField(name, int))
-    for name in BOOL_FIELDS:
-        setattr(PopulationUnit, name, _TableField(name, bool))
-    PopulationUnit.knowledge = _Knowledge()  # type: ignore[assignment]
-    PopulationUnit.technologies = _Technologies()  # type: ignore[assignment]
-    PopulationUnit.beliefs = _Beliefs()  # type: ignore[assignment]
 
-
-_install_table_descriptors()
+_install_storage_descriptors()
 
 
 # Fields that always live on the unit object (everything else is in the table or the belief
-# store while the unit is registered). Checked against the dataclass by the test suite.
-EXTERNAL_FIELDS: tuple[str, ...] = (
-    "id",
-    "species_id",
-    "parent_id",
-    "report_cells",
-    "recent_residence",
-    "familiarity",
-    "harvest_history",
-    "trade_ties",
-)
+# store while the unit is registered).
+EXTERNAL_FIELDS: tuple[str, ...] = OBJECT_FIELDS
 
 
 def _removed(unit: object, name: str) -> AttributeError:
@@ -546,8 +538,6 @@ def attach_unit(
 
     Afterwards the object holds no copy of that state: its descriptors read the stores.
     """
-    from madexplorer.population.table import TABLE_FIELDS
-
     state = unit.__dict__
     if table is not None:
         values = {name: getattr(unit, name) for name in TABLE_FIELDS}

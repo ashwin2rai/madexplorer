@@ -20,8 +20,8 @@ from madexplorer.core.state import UnitRegistry
 from madexplorer.experiments.benchmark import synthetic_simulator
 from madexplorer.population.composition import MergeMode
 from madexplorer.population.familiarity import familiarity_rule
+from madexplorer.population.fields import TABLE_FIELDS
 from madexplorer.population.lifecycle import create_unit, merge_units, remove_unit, split_unit
-from madexplorer.population.table import TABLE_FIELDS
 from madexplorer.population.unit import (
     EXTERNAL_FIELDS,
     PopulationUnit,
