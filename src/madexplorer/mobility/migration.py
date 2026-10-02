@@ -11,7 +11,7 @@ because there are more of them (no best-of-many-noise bias).
 """
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
@@ -23,6 +23,7 @@ from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.economy.agriculture import clearing_hours_per_ha
 from madexplorer.mobility.exploration import report_confidence
+from madexplorer.population.beliefs import BeliefStore
 from madexplorer.population.energetics import (
     annual_need_columns,
     annual_need_kcal,
@@ -455,6 +456,100 @@ class MoveHazards:
             unit.move_hazard = self.hazards.get(unit_id, math.nan)
 
 
+def best_destinations(
+    scores: FloatArray, staying: BoolArray, counts: IntArray
+) -> tuple[IntArray, IntArray, IntArray] | None:
+    """Destination choice for many units at once (candidates contiguous, unit by unit).
+
+    ``counts`` gives each unit's number of candidates, its own cell included (``staying``).
+    Returns the candidate row of each deciding unit's best destination other than staying
+    (the first maximum), every unit's staying row, and which units decide (have an
+    alternative), all in unit order; or ``None`` on an exact tie, which needs a random
+    tie-break draw (:func:`choose_destination`, unit by unit).
+    """
+    owner = np.repeat(np.arange(counts.size), counts)
+    starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
+    values = np.where(staying, -np.inf, scores)
+    best_value = np.maximum.reduceat(values, starts)
+    decided = np.isfinite(best_value)
+    is_best = (values == best_value[owner]) & decided[owner]
+    if (np.add.reduceat(is_best, starts)[decided] > 1).any():
+        return None
+    return np.flatnonzero(is_best), np.flatnonzero(staying), np.flatnonzero(decided)
+
+
+@dataclass(frozen=True, eq=False)
+class CandidateSet:
+    """Each deciding unit's candidate cells and its beliefs about them, flat and unit-major.
+
+    Candidates are group-level: the cells a unit can reach in one relocation and holds a
+    current belief about, its own cell included. A unit with no current belief about its
+    own cell cannot evaluate staying and does not decide.
+    """
+
+    index: IntArray  # deciding units, as rows of the phase's columns (in unit order)
+    counts: IntArray  # candidates per deciding unit
+    owner: IntArray  # per candidate: the deciding unit (position in ``index``)
+    home_cell: IntArray  # per deciding unit
+    cells: IntArray  # per candidate, ascending within a unit
+    staying: BoolArray  # the candidate is the unit's own cell
+    path_costs: FloatArray  # km
+    observed: np.ndarray  # belief year
+    food: np.ndarray  # believed food (float32)
+    others: np.ndarray  # believed other people
+    hops: np.ndarray  # relays behind the belief
+
+
+def gather_candidates(
+    cols: "UnitColumns",
+    species: IntArray,
+    store: BeliefStore,
+    memory_years: Sequence[int],
+    reachable: Sequence[Callable[[int], tuple[IntArray, FloatArray]]],
+    year: int,
+) -> CandidateSet | None:
+    """Candidates of every populated unit of ``cols``, read from the belief store at once.
+
+    ``species`` are the rows' species codes; ``memory_years`` and ``reachable`` (cells and
+    path costs from an origin) are per species code. ``None`` if no unit can decide.
+    """
+    unit_cells = cols.get("cell")
+    rows = np.flatnonzero(cols.population() > 0).tolist()
+    if not rows:
+        return None
+    reach = [
+        reachable[code](cell)
+        for cell, code in zip(unit_cells[rows].tolist(), species[rows].tolist(), strict=True)
+    ]
+    sizes = np.array([len(r[0]) for r in reach], dtype=np.int64)
+    all_cells = np.concatenate([r[0] for r in reach])
+    all_costs = np.concatenate([r[1] for r in reach])
+    horizon = year - np.array(memory_years, dtype=np.int64)[species[rows]]
+    slot_rep = np.repeat(cols.slots[rows], sizes)
+    known = store.years(slot_rep, all_cells) > np.repeat(horizon, sizes)
+    cells = all_cells[known]
+    owner = np.repeat(np.arange(len(rows)), sizes)[known]
+    counts = np.bincount(owner, minlength=len(rows)).astype(np.int64)
+    index = np.array(rows, dtype=np.int64)
+    home_cell = unit_cells[rows]
+    staying = cells == home_cell[owner]
+    has_home = np.bincount(owner, weights=staying, minlength=index.size) > 0
+    path_costs = all_costs[known]
+    observed, food, others, hops = store.gather(slot_rep[known], cells)
+    if not has_home.all():  # cannot evaluate staying without a current observation
+        keep_units = np.flatnonzero(has_home)
+        if keep_units.size == 0:
+            return None
+        keep = has_home[owner]
+        index, counts, home_cell = index[keep_units], counts[keep_units], home_cell[keep_units]
+        cells, staying, path_costs = cells[keep], staying[keep], path_costs[keep]
+        observed, food, others, hops = observed[keep], food[keep], others[keep], hops[keep]
+        owner = np.repeat(np.arange(index.size), counts)
+    return CandidateSet(
+        index, counts, owner, home_cell, cells, staying, path_costs, observed, food, others, hops
+    )
+
+
 @dataclass(frozen=True)
 class MigrationDecision:
     """A unit's best-believed destination and its annual probability of moving there."""
@@ -695,21 +790,15 @@ class MigrationSubsystem:
             return [MoveHazards({})]
         blocks = self._scores(prepared, state.year, state.world.water_access)
         counts = np.array([p.candidates.size for p in prepared])
-        starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
         owner = np.repeat(np.arange(len(prepared)), counts)
         cells = np.concatenate([p.candidates for p in prepared])
         scores = np.concatenate([b[0] for b in blocks])
         ratios = np.concatenate([b[1] for b in blocks])
         staying = cells == np.array([p.unit.cell for p in prepared])[owner]
-        values = np.where(staying, -np.inf, scores)
-        best_value = np.maximum.reduceat(values, starts)
-        decided = np.isfinite(best_value)
-        is_best = (values == best_value[owner]) & decided[owner]
-        if (np.add.reduceat(is_best, starts)[decided] > 1).any():
+        choice = best_destinations(scores, staying, counts)
+        if choice is None:
             return self._evaluate_sequentially(prepared, blocks, state, ctx, rng)
-        best_rows = np.flatnonzero(is_best)  # one per decided unit, in unit order
-        home_rows = np.flatnonzero(staying)  # one per unit
-        chosen = np.flatnonzero(decided)
+        best_rows, home_rows, chosen = choice
         gains = scores[best_rows] - scores[home_rows[chosen]]
         draws = rng.random(chosen.size)
         hazards = {p.unit.id: 0.0 for p in prepared}  # no alternative destination: 0
@@ -751,50 +840,12 @@ class MigrationSubsystem:
         year = state.year
         memory = [p.cognition.memory_years for p in profiles]
         reach = [ctx.movement[sid].reachable_arrays for sid in compiled.species_ids]
-        # Per unit: reachable cells with a current belief, and their belief fields, gathered
-        # from the belief store for all units at once.
-        all_cells_by_unit = everyone.get("cell")
-        rows = np.flatnonzero(everyone.population() > 0).tolist()
-        if not rows:
+        found = gather_candidates(everyone, species_all, state.belief_store, memory, reach, year)
+        if found is None:
             return [MoveHazards({})]
-        store = state.belief_store
-        reachable = [
-            reach[code](cell)
-            for cell, code in zip(
-                all_cells_by_unit[rows].tolist(), species_all[rows].tolist(), strict=True
-            )
-        ]
-        sizes = np.array([len(r[0]) for r in reachable], dtype=np.int64)
-        all_cells = np.concatenate([r[0] for r in reachable])
-        all_costs = np.concatenate([r[1] for r in reachable])
-        slots = everyone.slots[rows]
-        horizon = year - np.array(memory, dtype=np.int64)[species_all[rows]]
-        slot_rep = np.repeat(slots, sizes)
-        known = store.years(slot_rep, all_cells) > np.repeat(horizon, sizes)
-        cells = all_cells[known]
-        owner = np.repeat(np.arange(len(rows)), sizes)[known]
-        counts = np.bincount(owner, minlength=len(rows)).astype(np.int64)
-        index = np.array(rows, dtype=np.int64)
-        home_cell = all_cells_by_unit[rows]
-        staying = cells == home_cell[owner]
-        has_home = np.bincount(owner, weights=staying, minlength=index.size) > 0
-        path_costs = all_costs[known]
-        observed, believed_food, others, hops = store.gather(slot_rep[known], cells)
-        if not has_home.all():  # cannot evaluate staying without a current observation
-            keep_units = np.flatnonzero(has_home)
-            keep_rows = has_home[owner]
-            index, counts = index[keep_units], counts[keep_units]
-            cells, staying = cells[keep_rows], staying[keep_rows]
-            path_costs, observed = path_costs[keep_rows], observed[keep_rows]
-            believed_food, others, hops = (
-                believed_food[keep_rows],
-                others[keep_rows],
-                hops[keep_rows],
-            )
-            owner = np.repeat(np.arange(index.size), counts)
-            home_cell = home_cell[keep_units]
-            if index.size == 0:
-                return [MoveHazards({})]
+        index, counts, owner, home_cell = found.index, found.counts, found.owner, found.home_cell
+        cells, staying, path_costs = found.cells, found.staying, found.path_costs
+        observed, believed_food, others, hops = found.observed, found.food, found.others, found.hops
         cols = everyone.subset(index)
         units = cols.units
         species = species_all[index]
@@ -869,17 +920,11 @@ class MigrationSubsystem:
             weights,
         )
         # Destination choice and move draws (as in the reference evaluate).
-        starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
-        values = np.where(staying, -np.inf, scores)
-        best_value = np.maximum.reduceat(values, starts)
-        decided = np.isfinite(best_value)
-        is_best = (values == best_value[owner]) & decided[owner]
-        if (np.add.reduceat(is_best, starts)[decided] > 1).any():
+        choice = best_destinations(scores, staying, counts)
+        if choice is None:
             return self._evaluate_reference(state, ctx)
+        best_rows, home_rows, chosen = choice
         rng = ctx.rng.stream(Streams.MIGRATION)
-        best_rows = np.flatnonzero(is_best)
-        home_rows = np.flatnonzero(staying)
-        chosen = np.flatnonzero(decided)
         gains = (scores[best_rows] - scores[home_rows[chosen]]).tolist()
         draws = rng.random(chosen.size).tolist()
         hazards = {u.id: 0.0 for u in units}

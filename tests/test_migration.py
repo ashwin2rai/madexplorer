@@ -13,6 +13,7 @@ from madexplorer.mobility.migration import (
     MigrationSubsystem,
     Relocation,
     attention_set,
+    best_destinations,
     choose_destination,
     destination_components,
     direct_confidence,
@@ -319,3 +320,25 @@ def test_batched_decisions_equal_unit_by_unit_decisions_and_draws() -> None:
         assert batched == sequential
         compared += len(prepared)
     assert compared > 100
+
+
+def test_best_destinations_takes_the_first_maximum_other_than_staying() -> None:
+    # Unit 0: home + two cells (second is best); unit 1: home only; unit 2: home is best,
+    # but the best alternative is still chosen (the hazard decides whether to move).
+    scores = np.array([1.0, 2.0, 3.0, 9.0, 5.0, 4.0, 4.5])
+    staying = np.array([True, False, False, True, True, False, False])
+    counts = np.array([3, 1, 3])
+    choice = best_destinations(scores, staying, counts)
+    assert choice is not None
+    best_rows, home_rows, chosen = choice
+    assert chosen.tolist() == [0, 2]  # unit 1 has no alternative
+    assert best_rows.tolist() == [2, 6]
+    assert home_rows.tolist() == [0, 3, 4]
+
+
+def test_best_destinations_defers_exact_ties_to_the_sequential_path() -> None:
+    scores = np.array([1.0, 2.0, 2.0])
+    staying = np.array([True, False, False])
+    assert best_destinations(scores, staying, np.array([3])) is None
+    staying_tie = np.array([False, True, False])  # a tie with home is not a tie
+    assert best_destinations(np.array([2.0, 2.0, 1.0]), staying_tie, np.array([3])) is not None
