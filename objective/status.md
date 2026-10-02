@@ -6,11 +6,62 @@
 
 ## MVP 3 stage handoff
 
-**Completed stage:** Stage 2.1 — exact strata compaction (on top of Stage 2, passive
-heterogeneous strata, and Stage 1, neutral representation; design:
-`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`).
+**Completed stage:** Stage 3A — economic flow design and accounting audit (design:
+`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md` §L). Production behavior unchanged; Stage
+2.1 (exact compaction), Stage 2 (passive heterogeneous strata) and Stage 1 underneath.
 
-**Stage 2.1 in brief.** Within one unit, components at exactly the same position
+**Stage 3A locked decisions** (§L)
+- Food flows are not a fungible pool:
+  - fed units eat from harvest and store the leftover;
+  - short units eat harvest, then stores, then reserves;
+  - a unit never both adds to and withdraws from stores in one year;
+  - trade donors and recipients are disjoint;
+  - pre-trade `harvest = crop + forage` bitwise.
+
+  Verified by `scripts/probes/food_flow_audit.py`.
+- `fields_ha` changes only in field planning (F0 → F1), migration (→ 0), fission and fusion.
+- Land: new land ∝ share; loss proportional; zero → share; normalize by Σ absolute.
+- Parameter `field_output_claim_weight` (w, replaces `field_entitlement_weight`):
+  `crop_output_share = (1−w)·share + w·field_claim`. It is an attribution basis before
+  pooling, not an extraction rate. w = 0 is the neutral legacy limit; probes use
+  0/0.25/0.5/1; no canonical nonzero value.
+- Pre-pool attribution: forage, trade received and reserves ∝ share; crop per w; trade given
+  ∝ the unit's pre-trade attribution (from harvest) or ∝ store_claim (from stores);
+  withdrawals ∝ store_claim.
+- Pooling stays the MVP 2.1 behavior (need and reserves ∝ share). The recorded
+  `pool_transfer_i = post-pool − pre-pool` sums to 0 and carries no institutional label.
+- Store claims: depletion proportional; new stores (fed years only) ∝ allocated pre-pool
+  leftover `ℓ_i = L·share_i + g·w·Y·(field_claim_i − share_i)`, with negative ℓ covered pro
+  rata; zero stores → share.
+- Gross flows come from a read-only per-step `FoodAccounts`, filled by the trade and
+  energetics apply, never from `K1 − K0`.
+- Numerics: convex or self-normalized updates in difference form; no thresholds on
+  positions; exact compaction after updates; no epsilon merge.
+- Baseline: MVP 2.1 oracles stay frozen and identical through 3B/3C; add versioned sidecar
+  fixtures only; the next full baseline comes when strata change unit outcomes.
+
+**Stage 3B implementation scope** (recommended split)
+- Stage 3B (neutral accounting, w fixed at 0):
+  - `FoodAccounts` instrumentation;
+  - land accretion;
+  - store accretion;
+  - pooling transfers in the sidecar;
+  - rules `field_claim_accretion`, `store_claim_accretion`, `food_pooling_transfer`;
+  - tests per §L12.
+
+  Note: this already changes strata state at w = 0 (new stores ∝ share instead of the
+  Stage 2 carry-forward), but not unit state.
+- Stage 3C: activate `field_output_claim_weight` sensitivity (`crop_output_attribution`,
+  a scientific hypothesis).
+
+**Still unresolved:**
+- how pooled deficits are covered (pro rata for now);
+- whether new land should ever follow control rather than labor;
+- whether body reserves should stay ∝ share once access differs (Stage 6A).
+
+**Next:** Stage 3B — first causal socioeconomic accounting mechanism (only on approval).
+
+**Stage 2.1 (exact compaction) in brief.** Within one unit, components at exactly the same position
 (`claim/share`, bit-identical) are one stratum: `compact_exact_strata` sums them (fresh id;
 rule `strata_exact_compaction`, a lossless representation identity). Passes repeat until no
 exact duplicate remains, because a merged position can shift by a last bit.
@@ -105,13 +156,6 @@ neolithic run 4.4–5.0 s (4.6 s before); `bench-quick` 97–107 ms CPU/tick (no
   - fuse 8+8 and coalesce to 8 ≈ 0.6 ms (pure Python; rare);
   - `bench-quick` 99–106 ms CPU/tick against 96–98 before (noise to a few %).
 
-**Next stage:** Stage 3 — first causal economic differentiation. Starts only on explicit
-approval. Stage 3 must decide:
-- the allocation/control of newly cleared land;
-- the allocation/control of newly stored surplus;
-- the exact meaning and sensitivity of `field_entitlement_weight` (neutral 0);
-- how food pooling becomes an explicit recorded transfer.
-
 **Scientific decisions locked in**
 - A stratum is a label-free mixture component: `share` (population weight), entitlement
   and control shares over unit-level physical stocks (`field_claim`, `store_claim`), and
@@ -135,9 +179,9 @@ approval. Stage 3 must decide:
 - Creation is mechanism-driven; there is no statistical split test.
 - Stage 2 adds capacity coalescence (deterministic, numerical, ties broken by state);
   Stage 4 adds adaptive merging of indistinguishable components.
-- Stage 3 entitlement weight (e.g. `field_entitlement_weight`): neutral 0 = the legacy
-  equal-pooling limit. Nonzero values are hypotheses and sensitivity cases, never tuned. A
-  reference value is set only with an MVP 3 baseline.
+- Crop-attribution weight `field_output_claim_weight` (Stage 3A, §L4): neutral 0 = the
+  legacy equal-pooling limit. Nonzero values are hypotheses and sensitivity cases, never
+  tuned. A reference value is set only with an MVP 3 baseline.
 - Neutrality: ID renumbering is bit-exact; reordering holds within a strict float
   tolerance; conserved totals use the tightest invariant. Stochastic mechanisms must never
   depend on stratum IDs or storage order.
@@ -160,7 +204,7 @@ approval. Stage 3 must decide:
 
 **Do not forget**
 - No named classes; no arbitrary inequality targets.
-- `field_entitlement_weight` = 0 remains the legacy neutral limit.
+- `field_output_claim_weight` = 0 remains the legacy neutral limit.
 - Stage 4 adaptive merging has not been implemented; neither exact compaction nor capacity
   coalescence is it.
 - Never `[U,S,sex,age]` or `[U,S,S]` without a demonstrated need; no per-stratum Python

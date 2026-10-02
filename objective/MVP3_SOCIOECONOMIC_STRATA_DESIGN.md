@@ -386,3 +386,224 @@ Python-object-per-stratum loops are ruled out for hot paths.
   as the mechanism's explicit hypothesis.
 - **Stage 4:** the adaptive-merge criterion and tolerance in relative-position space, and
   how the representation error is bounded.
+
+---
+
+## L. Stage 3 economic accounting (Stage 3A audit and Stage 3B specification)
+
+Audited from the code, and verified by `scripts/probes/food_flow_audit.py` (neolithic seed 0
+× 400 y and pressure seed 1 × 300 y: every check passes; the probed run is identical).
+
+### L1. Food flows in one step (actual code)
+
+```text
+Farming      FarmHarvests.apply     farm_harvest_kcal = Y          (crop; fields worked by pooled labor)
+Foraging     ForageHarvests.apply   forage_harvest_kcal = W,       harvest_kcal = H0 = Y + W   (bitwise)
+                                    (foraging targets need·(1+surplus) − Y: it adjusts to the crop)
+Trade        TradeRound.apply       donor (balance > 0):  H = H0 − D_h; stores −= S_out (only if sent > H0)
+                                    recipient (< 0):      H = H0 + R          (a unit is never both)
+Energetics   EnergyUpdates.apply    K0 = stores after trade, r = storage_retention, cap = reserve cap
+               fed   (H ≥ need):    reserve += Δres ≤ cap; leftover L = H − need − Δres;
+                                    stored A = L if r > 0 else 0 (rest spoils); K1 = (K0 + A)·r
+               short (H < need):    withdrawn X = min(need − H, K0); then reserves; K1 = (K0 − X)·r
+                                    (never both A > 0 and X > 0 in one year)
+Migration    Relocation.apply       stores −= max(stores − carry, 0)    (abandonment)
+Lifecycle    fission (∝ people) / fusion, aggregation (sum)   — strata rules exist (§A, §G)
+```
+
+Consumption is not a fungible mixed pool: fed units eat from harvest and store only the
+leftover; short units eat all harvest, then stores, then body reserves. `TickLedger` keeps
+only scalar totals (harvest, need, farm harvest, spoilage, trade volume, transport loss,
+abandoned stores). Per unit, `farm_harvest_kcal`, `forage_harvest_kcal`, `harvest_kcal`
+(post-trade) and `stored_kcal` persist; `K0`, `X`, `S_out` and `L` are not recorded.
+
+### L2. Cultivated land (actual code)
+
+`fields_ha` changes only in:
+- `FieldPlans.apply` (field planning: expansion by clearing, shrinking, arable sharing
+  within a cell, zeroing below 0.05 ha), which has `F0` and `F1` at hand;
+- `Relocation.apply` (migration: `F1 = 0`);
+- fission (∝ people) and fusion/aggregation (sum), which have strata rules already.
+
+Farming and soil never change `fields_ha`. New land is cleared in year t and first harvested
+in year t + 1.
+
+### L3. Land claims (Stage 3B)
+
+Ordinary field change in `FieldPlans.apply`, per unit with `ΔF = F1 − F0`:
+
+```text
+F1 == 0:        field_claim = share                                  (claim_zero_stock)
+F1 <  F0:       field_claim unchanged                                (proportional loss)
+F1 >  F0:       a_i = field_claim_i·F0 + share_i·ΔF                  (new land ∝ share)
+                field_claim_i = a_i / Σ a                            (normalize by Σ a, not F1)
+```
+
+New land ∝ `share` is the least assumptive rule without an explicit institution or
+differentiated labor: labor clears land, and labor is ∝ share. It is not a claim that
+tenure was egalitarian. Normalizing by `Σ a` keeps a single stratum at exactly 1.
+
+### L4. Crop-output attribution: `field_output_claim_weight` (w)
+
+Recommended name: `field_output_claim_weight`. It is preferred to `field_entitlement_weight`,
+which suggests an institution the model does not contain.
+
+```text
+crop_output_share_i = (1 − w)·share_i + w·field_claim_i          0 ≤ w ≤ 1
+```
+
+- `w` is the fraction of crop-output *attribution* (before pooling) that follows field
+  control rather than the neutral labor baseline (∝ share while labor is undifferentiated).
+- `w` is not an extraction rate: nothing is taken from anyone, and consumption stays pooled.
+- `w = 0` is the neutral legacy limit. Probes use `w ∈ {0, 0.25, 0.5, 1}`.
+- No canonical nonzero value; one is chosen only with an MVP 3 baseline and its provenance.
+
+### L5. Pre-pool attribution of food and pooling transfers
+
+Pre-pool attribution by source:
+
+| Source | Attribution | Heterogeneous only with |
+|---|---|---|
+| foraging `W` | ∝ share | differentiated labor or access |
+| crop `Y` | ∝ crop_output_share (L4) | — |
+| trade received `R` | ∝ share | stratum-level exchange ties |
+| trade given from harvest `D_h` | ∝ the unit's pre-trade harvest attribution | stratum-level exchange decisions |
+| trade given from stores `S_out` | ∝ store_claim (proportional loss) | stratum-level exchange decisions |
+| store withdrawal `X` | ∝ store_claim (proportional loss) | differentiated access (Stage 6A) |
+| body reserves | ∝ share (physically per capita) | — |
+
+Post-trade harvest attribution, in a numerically stable form:
+
+```text
+g = min(1, H / (Y + W))        (fraction of own harvest kept; 0 if Y + W = 0)
+H·h_i = H·share_i + g·w·Y·(field_claim_i − share_i)          Σ_i of the second term = 0
+```
+
+Post-pool allocation stays the MVP 2.1 behavior: need and reserve top-up ∝ share.
+
+**Pooling transfer** (observational, kcal, per stratum per year):
+
+```text
+pool_transfer_i = post_pool_allocation_i − pre_pool_attribution_i        Σ_i = 0
+short year:  H·(share_i − h_i) + X·(share_i − store_claim_i)
+fed year:    L̃_i − ℓ_i      (ℓ_i the stratum's pre-pool leftover and L̃_i its allocation; see L6)
+```
+
+- Positive means the stratum receives more from pooling than it contributes.
+- It is not labeled tax, rent or tribute.
+- Recorded combined per stratum (one quantity), with the unit total `Σ|transfer|/2`. A split
+  by source is not needed while consumption is pooled.
+
+### L6. Store claims from gross flows
+
+Existing stores (`K0`, `store_claim`) lose `S_out`, `X`, spoilage `(1 − r)` and migration
+abandonment proportionally, so depletion never changes fractions. New stored food appears
+only in fed years:
+
+```text
+pre-pool leftover    ℓ_i = L·share_i + g·w·Y·(field_claim_i − share_i)    Σ ℓ_i = L = A + spoiled
+allocated leftover   L̃_i = L · max(ℓ_i, 0) / Σ_j max(ℓ_j, 0)             (negative ℓ covered pro rata)
+new stores           A_i = A · L̃_i / L
+store_claim_i'       = (store_claim_i·K0 + A_i) / Σ_j (store_claim_j·K0 + A_j)    (then ·r cancels)
+K1 == 0:             store_claim = share                                  (claim_zero_stock)
+```
+
+- At `w = 0`, `ℓ_i = L·share_i`, so new stores ∝ share, and existing store differences decay
+  as stores turn over.
+- This changes one Stage 2 passive convention: positive stock growth carried fractions
+  forward, which implicitly gave new stores ∝ existing claims. Stage 3B makes the
+  allocation explicit, so it changes strata state even at `w = 0`. Unit state is unchanged.
+- Needed instrumentation, read-only: per-unit `K0`, `A`, `X`, `L`, `S_out` for the year. The
+  proposal objects already hold them (`EnergyUpdates`, `TradeRound`). Record them in a
+  per-step `FoodAccounts` (per-unit arrays) beside `TickLedger`, written by those `apply`s
+  and read by a passive strata-accounting step right after energetics. The physical
+  equations are not touched. Inferring `A` from `K1 − K0` is not used.
+
+### L7. Numerical requirements (no amplification of last-bit differences)
+
+- Every update is a convex combination or a ratio normalized by its own sum, so a single
+  stratum stays exactly at 1 and the column totals stay within 1e-12.
+- Deviations are computed in difference form (`field_claim − share`), never as differences of
+  large attributions.
+- There are no thresholds or branches on positions. `max(ℓ, 0)` is continuous, and its sign
+  is decided at magnitude `L`, not at last-bit scale.
+- Updates are Lipschitz in positions: two strata a few ulps apart stay a few ulps apart.
+  Test it.
+- Exact compaction (`normalize_strata`) runs after each accounting update. There is no
+  approximate merge.
+
+### L8. Composition with lifecycle
+
+- Accounting happens at fixed points: land in field planning, food after energetics.
+- Fission, fusion, migration, exact compaction and capacity coalescence later in the step act
+  on the updated claims with the existing rules.
+- Fusion inheritance already weights claims by predecessor stocks, which is consistent with
+  absolute holdings.
+- Representative fission copies fractions, and stocks split ∝ people: consistent.
+- Migration empties fields (zero-stock rule) and scales stores proportionally: consistent.
+- No inconsistency found.
+
+### L9. Recommended Stage 3B scope (and split)
+
+| Item | Kind | Assumptions |
+|---|---|---|
+| land accretion (L3) | neutral convention | new land ∝ share |
+| `FoodAccounts` gross flows | instrumentation | none (read-only) |
+| store accretion (L6) | neutral convention | new stores ∝ pre-pool leftover; deficits pooled pro rata |
+| pooling transfers (L5) | observation | none |
+| `field_output_claim_weight` > 0 (L4) | **scientific hypothesis** | crop attribution follows field control |
+
+The items are coherent together, but `w > 0` is the only substantive hypothesis.
+Recommended:
+- **Stage 3B:** the neutral accounting rows, with `w` present but fixed at 0. This is
+  falsifiable on its own: reconciliation, neutrality, decay of fusion-born store differences.
+- **Stage 3C:** activate `w` as explicit sensitivity cases (0, 0.25, 0.5, 1) with provenance.
+
+Caloric access, food ratio and demography stay pooled and unchanged throughout.
+
+### L10. Baseline policy
+
+- The MVP 2.1 raw and logical oracles stay frozen and must stay identical through Stage 3B/3C,
+  because claims still feed no unit mechanism.
+- New targeted, versioned sidecar fixtures cover strata state and flows (e.g. a small
+  heterogeneous scenario's `strata_rows`/flows digest per `w`). They are not a full
+  scientific baseline.
+- The next full baseline (`baselines/mvp3_x/`) comes only when strata change existing
+  outcomes (Stage 5/6).
+
+### L11. Provenance (Stage 3B/3C model rules)
+
+| Rule | Class | Notes |
+|---|---|---|
+| `field_claim_accretion` | neutral accounting convention | new land ∝ share; loss proportional |
+| `store_claim_accretion` | neutral accounting convention | proportional depletion; new stores ∝ allocated leftover |
+| `food_pooling_transfer` | accounting identity (observational) | makes MVP 2.1 equal pooling explicit |
+| `crop_output_attribution` | **scientific hypothesis** (3C) | `w`; heuristic, no empirical value; neutral at 0 |
+| shared-age-structure ∝ share | MVP simplification | already `stratum_composition` |
+
+### L12. Stage 3B/3C controlled scenarios (deterministic, no random strata)
+
+- **Neutral:** `share = field_claim = store_claim`. Claims stay exactly neutral at every
+  `w`, and transfers are 0.
+- **Fusion-born field inequality:** fields per person 10 vs 2. At `w = 0` store claims follow
+  share; at `w > 0` the field-rich stratum's store position rises while crop exists, and
+  transfers are nonzero.
+- **Cross-cutting:** field-rich A, store-rich B. Track both positions separately (no single
+  rank).
+- **No farming** (`Y = 0`): no `w` effect at any `w`.
+- **Zero to positive stores:** the first additions follow L6.
+- **Depletion with stores remaining positive:** fractions unchanged.
+- **Exhaustion:** claims = share.
+- **Land:** expansion (∝ share), shrink (unchanged), zeroing (share).
+- **Reconciliation:** gross flows reproduce `K1` and `F1` per unit; transfers sum to 0.
+- **Sensitivity:** `w ∈ {0, 0.25, 0.5, 1}`, comparing the distributions over time (no
+  targets).
+- **Exactness:** MVP 2.1 oracles identical in all of these (strata are passive for `[U]`).
+
+### L13. Open scientific questions
+
+- Should pooled deficits be covered pro rata (as here), or according to some other
+  allocation? That is an institution, so it is deferred.
+- Should newly cleared land follow labor (∝ share) or, with `w`, follow existing control?
+  This is deferred to the labor-differentiation stage.
+- Body reserves stay ∝ share, which is exact while access is pooled (Stage 6A will revisit).
