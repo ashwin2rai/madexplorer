@@ -112,7 +112,7 @@ def test_farming_metrics_do_not_change_when_identical_groups_are_split() -> None
         sim.step()
     farmers = [u for u in sim.state.units.values() if u.fields_ha > 0]
     assert farmers
-    unit = farmers[0]
+    unit = sim.state.units.pop(farmers[0].id)  # detached: copies belong to no store
     # One unit of doubled size versus two identical copies of the original.
     double = copy.deepcopy(unit)
     double.females, double.males = unit.females * 2, unit.males * 2
@@ -121,7 +121,7 @@ def test_farming_metrics_do_not_change_when_identical_groups_are_split() -> None
     twin = copy.deepcopy(unit)
     twin.id = "twin"
     rows = []
-    for units in ({unit.id: double}, {unit.id: unit, twin.id: twin}):
+    for units in ({unit.id: double}, {unit.id: copy.deepcopy(unit), twin.id: twin}):
         state = copy.copy(sim.state)
         state.population = PopulationStore(
             sim.world.n_cells,

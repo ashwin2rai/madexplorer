@@ -288,3 +288,89 @@ def test_fission_proposals_carry_the_departing_cohorts() -> None:
         parent = sim.state.units[proposal.parent_id]
         assert (proposal.leave_f <= parent.females).all()
         assert (proposal.leave_m <= parent.males).all()
+
+
+def _store_snapshot(population: PopulationStore) -> dict[str, object]:
+    """Every component of a store's population state, copied for comparison."""
+    table = population.table
+    assert table is not None
+    used = range(population._next_slot)
+    arrays = {name: array.copy() for name, array in table.columns.items()}
+    for name in ("females", "males", "n_ages", "population", "knowledge"):
+        arrays[name] = getattr(table, name).copy()
+    arrays["technology_mask"] = table.technology_mask.copy()
+    arrays["species_code"] = table.species_code.copy()
+    return {
+        "units": [(uid, id(u), dict(u.__dict__)) for uid, u in population.units.items()],
+        "slots": population.units.slots().tolist(),
+        "free": list(population._free),
+        "next_slot": population._next_slot,
+        "arrays": arrays,
+        "technologies": list(table.technologies),
+        "beliefs": [[a.tolist() for a in population.beliefs.entries(s)] for s in used],
+        "active_beliefs": population.beliefs.active,
+    }
+
+
+def _assert_same_snapshot(a: dict[str, object], b: dict[str, object]) -> None:
+    assert a.keys() == b.keys()
+    for key in a:
+        if key == "arrays":
+            left, right = a[key], b[key]
+            assert isinstance(left, dict) and isinstance(right, dict)
+            assert left.keys() == right.keys()
+            for name in left:
+                assert np.array_equal(left[name], right[name], equal_nan=True), name
+        else:
+            assert a[key] == b[key], key
+
+
+def test_a_unit_bound_to_one_store_cannot_be_inserted_into_another() -> None:
+    sim = synthetic_simulator(Scenario.from_yaml(SCENARIO), 6, farming=True)
+    sim.step()
+    store_a = sim.state.population
+    store_b = PopulationStore(
+        sim.world.n_cells,
+        technology_table=sim.compiled.technologies,
+        species_index=sim.compiled.species_index,
+    )
+    ids = list(store_a.units)
+    resident = store_a.units.pop(ids[0])  # detached, then owned by B
+    store_b.units[resident.id] = resident
+    uid = ids[1]
+    unit = store_a.units[uid]
+    binding = (unit.__dict__["_table"], unit.__dict__["_belief_store"], unit.__dict__["_slot"])
+    before_a, before_b = _store_snapshot(store_a), _store_snapshot(store_b)
+    attempts = (
+        lambda: store_b.units.__setitem__(uid, unit),
+        lambda: store_b.units.__setitem__(resident.id, unit),  # would replace B's unit
+        lambda: store_b.units.update({"fresh": copy.deepcopy(resident), uid: unit}),
+        lambda: store_b.units.setdefault(uid, unit),
+        lambda: create_unit(store_b, unit),
+    )
+    for attempt in attempts:
+        with pytest.raises(ValueError, match="already bound to another PopulationStore"):
+            attempt()
+        _assert_same_snapshot(_store_snapshot(store_a), before_a)
+        _assert_same_snapshot(_store_snapshot(store_b), before_b)
+        assert store_a.units[uid] is unit and uid not in store_b.units
+        assert binding == (
+            unit.__dict__["_table"],
+            unit.__dict__["_belief_store"],
+            unit.__dict__["_slot"],
+        )
+        assert store_b.units[resident.id] is resident
+    _assert_rows_consistent(sim)
+    sim.step()  # store A is still a valid simulation state
+
+    # The explicit transfer: remove from A, then add to B.
+    expected = unit_state(store_a.units[uid])
+    moved = store_a.units.pop(uid)
+    store_b.units[uid] = moved
+    assert moved.__dict__["_table"] is store_b.table and uid not in store_a.units
+    _same_unit(moved, store_b.units[uid])
+    for key, value in unit_state(moved).items():
+        assert _same(value, expected[key]), key
+    assert store_b.table is not None
+    assert store_b.table.check_population(store_b.units.slots()).all()
+    _assert_rows_consistent(sim)

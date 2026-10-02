@@ -47,7 +47,9 @@ of that hash.
 
 - **One owner of population state.** `PopulationStore` (`population/store.py`) owns the
   unit registry (identities, processing order), the `UnitTable`, the belief store and slot
-  allocation. `SimulationState.units/table/belief_store` are read-only views. MVP 3's
+  allocation. `SimulationState.units/table/belief_store` are read-only views. A unit
+  belongs to at most one store: inserting a unit bound to another store raises before
+  anything changes; ownership moves only by explicit removal then insertion. MVP 3's
   `StrataTable` joins this owner; it must not become an independently mutable sibling.
 - **One declaration per unit field.** `population/fields.py` declares each field's storage
   and merge/split rule. Table columns, row descriptors, `FIELD_RULES` and the
@@ -96,6 +98,17 @@ of that hash.
 - **Technologies are Boolean with hard prerequisites** — a coarse MVP 2 hypothesis
   (objective §8.1). `plant_cultivation` is an affordance (crop capability > 0), not a model
   of domestication.
+- **Known demographic simplification.** Populations that stay adequately fed grow close to
+  the life-table ceiling while unoccupied territory remains. The frozen reference runs grow
+  ~0.9–1.1%/yr over 600 years against ~1.24%/yr for the unconstrained life table: fertility
+  stays near its maximum, mortality near baseline, starvation mortality is negligible, and
+  expansion keeps local crowding low. Extra work effort and mobility carry little direct
+  demographic cost. Farming is not the main cause (growth is already ~1%/yr before
+  agricultural dependence). Not an implementation defect (2026-10-02 audit,
+  `scripts/probes/demography_audit.py`). Later social, epidemiological, economic and
+  territorial mechanisms may change food access, workload, exposure, mobility costs,
+  conflict, fertility and mortality — **through explicit causal pathways, never as a brake
+  added to force population toward a desired number.**
 - `move_hazard` is recorded each year but read by no mechanism since the expected-tenure
   experiment was removed; it is kept because the exactness oracle hashes it.
 
@@ -149,41 +162,7 @@ demographic cohorts      [U, S, sex, age]
 These are questions, not bugs or blockers. Answer them with experiments and versioned model
 changes, not by tuning inside a refactor.
 
-1. **Sustained growth.** Why does the frozen model sustain ~0.9–1.1% annualized net growth
-   over ~600 years in the reference seeds despite its ecological and demographic feedbacks?
-   *Diagnostic audit (2026-10-02, `scripts/probes/demography_audit.py`, seeds 0–3 ×
-   600 y; reproduces the manifest's reference runs exactly).* Observed growth is
-   0.91–1.05%/yr; the life table alone (TFR 6, forager Siler mortality, full fertility,
-   baseline hazards) gives a Lotka rate of **1.24%/yr**. The model runs close to that
-   ceiling because the brakes rarely engage:
-   - **Fertility stays at its maximum.** After year 100, births are 0.95–1.04× those
-     expected at full fertility in every 50-year period: the fertility multiplier is 1
-     whenever intake meets need, and the population-weighted food ratio stays at 1.12–1.19
-     with a mean energy deficit ≤ 0.003 (harvest-to-need ≈ 1 + the 0.2 surplus target).
-   - **Mortality stays near baseline.** After year 100, deaths are 0.93–1.11× those of
-     baseline hazards alone (CDR 28–35‰ against CBR 39–47‰); crowding accounts for ~3% of
-     deaths early, rising to 7–8% by year 600. Starvation mortality is negligible.
-   - **Expansion prevents crowding.** Occupied cells grow almost in proportion to
-     population (seed 0: 3 → 734 of ~1,200 land cells); people per occupied cell stay at
-     ~20–28 for ~450 years and rise to 30–38 only in the last century, as the island fills.
-     Wild plant stocks stay near capacity (≈0.85–1.0); game falls to ≈0.3 by year 600.
-   - **Agriculture is not the cause** of sustained growth: pre-agricultural growth (years
-     50–200) is already ~1.0–1.4%/yr. Cultivation (invented years 157–237; 25% of harvest by
-     250–391; 42–50% at 600) raises density where land is filling and delays the brake.
-     Late signs of intensification: farm hours per capita rise (~450 → ~620 h/yr) as the
-     crop return per farm hour falls (~900 → ~650 kcal/h), and growth slows (seed 0:
-     0.76%/yr in years 551–600).
-   - **Interruptions** are only early small-population stochastic drawdowns (≤17% before
-     year 50); no later crises.
-
-   No invariant or accounting defect was found: births and deaths match the life table's
-   expectations under the model's rules. The open scientific question is therefore the
-   absence of a density-dependent brake while intake meets need: shortage is absorbed by
-   more labor and by moving rather than by lower fertility or higher mortality, and labor
-   effort, density-dependent disease (beyond the crowding placeholder) and birth spacing
-   under workload carry no demographic cost. Candidate future diagnostics (not added): a
-   cause-attributed expected-mortality breakdown and per-capita foraging hours in metrics.
-2. **Agriculture representation.** Is the zero-crop-capability → `plant_cultivation`
+1. **Agriculture representation.** Is the zero-crop-capability → `plant_cultivation`
    affordance sufficient long term, or should a later milestone model local domesticability
    and biological domestication as continuous ecological/cultural processes
    (objective §8.2)?

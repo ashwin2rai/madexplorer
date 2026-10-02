@@ -14,7 +14,9 @@ consistent with every other:
 [MVP 3: a strata table for genuinely distributional state joins these, under the same
 owner.]
 
-Inserting a unit into ``units`` binds it to a slot: its beliefs move into the belief store
+A unit belongs to at most one store: inserting a unit still bound to another store raises
+(remove it there first; ownership never moves implicitly). Inserting a unit into ``units``
+binds it to a slot: its beliefs move into the belief store
 and, with a table, its table fields (``population.fields``) into its table row. Removing it
 copies that state back onto the object and frees the slot, which is reset before reuse;
 :meth:`UnitRegistry.discard` frees it without copying (a unit leaving the simulation).
@@ -72,11 +74,25 @@ class PopulationStore:
         self.beliefs.claim(slot, species_code)
         return slot
 
-    def _bind(self, unit: PopulationUnit) -> None:
+    def check_insertable(self, unit: PopulationUnit) -> None:
+        """Raise unless ``unit`` is detached or already bound to this store's rows.
+
+        A unit belongs to at most one store: to move it, remove it from its store first.
+        """
         state = unit.__dict__
-        if state.get("_belief_store") is self.beliefs and state.get("_table") is self.table:
+        store = state.get("_belief_store")
+        if store is not None and (
+            store is not self.beliefs or state.get("_table") is not self.table
+        ):
+            raise ValueError(
+                f"unit {unit.id} is already bound to another PopulationStore; remove it from "
+                "that store before inserting it here"
+            )
+
+    def _bind(self, unit: PopulationUnit) -> None:
+        self.check_insertable(unit)
+        if unit.__dict__.get("_belief_store") is not None:
             return  # already ours (built in place, or restored by deepcopy with this store)
-        detach_unit(unit)  # from any other store
         code = self.species_index.get(unit.species_id, 0)
         attach_unit(unit, self._allocate(), self.beliefs, self.table, code)
 
@@ -141,6 +157,7 @@ class UnitRegistry(dict[str, PopulationUnit]):
         return unit
 
     def __setitem__(self, unit_id: str, unit: PopulationUnit) -> None:
+        self.owner.check_insertable(unit)  # before anything is mutated
         previous = self.get(unit_id)
         if previous is not None and previous is not unit:
             self.owner._unbind(previous)
@@ -180,8 +197,11 @@ class UnitRegistry(dict[str, PopulationUnit]):
         super().clear()
 
     def update(self, *args: Any, **kwargs: PopulationUnit) -> None:
-        """Insert units one by one (so each gets a slot)."""
-        for unit_id, unit in dict(*args, **kwargs).items():
+        """Insert units one by one (so each gets a slot), after checking that all can be."""
+        units = dict(*args, **kwargs)
+        for unit in units.values():
+            self.owner.check_insertable(unit)
+        for unit_id, unit in units.items():
             self[unit_id] = unit
 
     def setdefault(self, unit_id: str, unit: PopulationUnit) -> PopulationUnit:
