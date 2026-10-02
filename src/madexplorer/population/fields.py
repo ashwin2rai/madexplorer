@@ -31,6 +31,7 @@ class Storage(Enum):
     KNOWLEDGE = "knowledge"  # unit-table domain matrix
     TECHNOLOGIES = "technologies"  # unit-table set column plus compiled bitmask
     BELIEFS = "beliefs"  # belief-store row
+    STRATA = "strata"  # strata-table row: [U,S] state with its own schema (population.strata)
     OBJECT = "object"  # on the unit object (irregular: ids, maps, histories, ties)
 
 
@@ -167,6 +168,13 @@ UNIT_FIELDS: tuple[UnitField, ...] = (
         Storage.OBJECT,
         merge="additive union, rewired network",
         split="stay with the parent (daughter unconnected)",
+    ),
+    UnitField(
+        "strata",
+        Storage.STRATA,
+        merge="target's strata (MVP 3 Stage 1: both units hold one neutral stratum; "
+        "differentiated fusion inheritance is Stage 2)",
+        split="copy of the parent's strata as new components (fresh stratum ids)",
     ),
 )
 

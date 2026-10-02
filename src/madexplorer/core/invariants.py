@@ -51,6 +51,9 @@ def check_state_units(state: "SimulationState", year: int) -> None:
     units = state.units
     if table is None:
         check_units(units.values(), state.world.n_cells, year)
+        for unit in units.values():
+            if not unit.strata.is_valid():
+                raise InvariantViolation(f"year {year}: invalid strata in {unit.id}")
         return
     slots = units.slots()
     if slots.size == 0:
@@ -71,6 +74,13 @@ def check_state_units(state: "SimulationState", year: int) -> None:
     if invalid.any():
         k = int(np.argmax(invalid))
         raise InvariantViolation(f"year {year}: {order[k]} on invalid cell {int(cell[k])}")
+    strata = state.population.strata
+    assert strata is not None
+    bad_strata = ~strata.check(slots)
+    if bad_strata.any():
+        raise InvariantViolation(
+            f"year {year}: invalid strata in {order[int(np.argmax(bad_strata))]}"
+        )
     stale = ~table.check_population(slots)
     if stale.any():
         raise InvariantViolation(

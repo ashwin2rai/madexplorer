@@ -38,7 +38,7 @@ SCENARIO = ROOT / "scenarios" / "mvp2_neolithic.yaml"
 
 def test_external_fields_complete_the_table_fields() -> None:
     names = {f.name for f in fields(PopulationUnit)}
-    assert set(EXTERNAL_FIELDS) == names - set(TABLE_FIELDS) - {"beliefs"}
+    assert set(EXTERNAL_FIELDS) == names - set(TABLE_FIELDS) - {"beliefs", "strata"}
 
 
 def _assert_same_units(a: Simulator, b: Simulator) -> None:
@@ -192,8 +192,17 @@ def test_removed_unit_keeps_only_external_state() -> None:
         _ = source.food_ratio
 
 
+def _rebound_state(unit: PopulationUnit) -> dict[str, object]:
+    """unit_state without stratum ids: binding to a store assigns fresh (per-store) ids."""
+    state = unit_state(unit)
+    strata = state.pop("strata")
+    assert isinstance(strata, tuple)
+    state["strata_values"] = strata[0]
+    return state
+
+
 def _same_unit(a: PopulationUnit, b: PopulationUnit) -> None:
-    sa, sb = unit_state(a), unit_state(b)
+    sa, sb = _rebound_state(a), _rebound_state(b)
     for key, value in sa.items():
         assert _same(value, sb[key]), key
 
@@ -364,12 +373,12 @@ def test_a_unit_bound_to_one_store_cannot_be_inserted_into_another() -> None:
     sim.step()  # store A is still a valid simulation state
 
     # The explicit transfer: remove from A, then add to B.
-    expected = unit_state(store_a.units[uid])
+    expected = _rebound_state(store_a.units[uid])
     moved = store_a.units.pop(uid)
     store_b.units[uid] = moved
     assert moved.__dict__["_table"] is store_b.table and uid not in store_a.units
     _same_unit(moved, store_b.units[uid])
-    for key, value in unit_state(moved).items():
+    for key, value in _rebound_state(moved).items():
         assert _same(value, expected[key]), key
     assert store_b.table is not None
     assert store_b.table.check_population(store_b.units.slots()).all()

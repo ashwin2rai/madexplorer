@@ -24,6 +24,7 @@ import numpy as np
 
 from madexplorer.core.types import IntArray
 from madexplorer.population.composition import (
+    STRATA_FUSION_STAGE,
     MergeMode,
     _weighted,
     absorb,
@@ -89,6 +90,9 @@ def split_unit(
     d = population.claim_slot(int(table.species_code[p]))  # may grow the table
     table.copy_row(p, d)
     store.copy_row(p, d)
+    strata = population.strata
+    assert strata is not None
+    strata.copy_row(p, d, population.new_stratum_ids(int(strata.n_strata[p])))
     columns = table.columns
     columns["founded_year"][d] = year
     groups = columns["groups"]
@@ -107,6 +111,7 @@ def split_unit(
         d,
         store,
         table,
+        strata,
         id=daughter_id,
         species_id=parent.species_id,
         parent_id=parent.id,
@@ -137,8 +142,12 @@ def merge_units(
     target, source = units[target_id], units[source_id]
     if target.species_id != source.species_id or target.cell != source.cell:
         raise ValueError("only co-located units of one species can merge")
-    rewire_ties(units, source_id, target_id)
     t, s = belief_slot(target), belief_slot(source)
+    strata = population.strata
+    assert strata is not None
+    if not (strata.is_neutral(t) and strata.is_neutral(s)):
+        raise NotImplementedError(STRATA_FUSION_STAGE)
+    rewire_ties(units, source_id, target_id)
     counts, columns = table.population, table.columns
     n_t, n_s = int(counts[t]), int(counts[s])
     reserve = columns["reserve_kcal_per_capita"]

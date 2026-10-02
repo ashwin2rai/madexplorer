@@ -35,6 +35,13 @@ class MergeMode(Enum):
     AGGREGATION = "aggregation"  # computational coarsening; both groups persist inside the unit
 
 
+# Fusion keeps the target's strata, which is exact only while both units are undifferentiated.
+STRATA_FUSION_STAGE = (
+    "fusion of differentiated strata (fusion inheritance) arrives in MVP 3 Stage 2; "
+    "Stage 1 units hold one neutral stratum"
+)
+
+
 def _weighted(a: float, n_a: int, b: float, n_b: int) -> float:
     total = n_a + n_b
     return (a * n_a + b * n_b) / total if total else a
@@ -53,6 +60,8 @@ def merge_state(
     """
     if target.species_id != source.species_id or target.cell != source.cell:
         raise ValueError("only co-located units of one species can merge")
+    if not (target.strata.is_neutral() and source.strata.is_neutral()):
+        raise NotImplementedError(STRATA_FUSION_STAGE)
     n_t, n_s = target.population, source.population
     total_reserve = target.total_reserve_kcal + source.total_reserve_kcal
     for name in INTENSIVE_FIELDS:
@@ -125,6 +134,8 @@ def absorb(
     familiarity: FamiliarityRule,
 ) -> None:
     """Merge ``source_id`` into ``target_id``, rewire the network, and remove the source."""
+    if not (units[target_id].strata.is_neutral() and units[source_id].strata.is_neutral()):
+        raise NotImplementedError(STRATA_FUSION_STAGE)  # before anything changes
     rewire_ties(units, source_id, target_id)
     merge_state(units[target_id], units[source_id], mode, year, familiarity)
     del units[source_id]
@@ -168,6 +179,7 @@ def split_off(
         crop_yield_kcal_per_ha=parent.crop_yield_kcal_per_ha,
         residence_years=parent.residence_years,
         move_hazard=parent.move_hazard,
+        strata=parent.strata.unassigned_copy(),  # new components; ids assigned on insertion
     )
     daughter.harvest_history.extend(parent.harvest_history)
     for name in INTENSIVE_FIELDS:

@@ -9,15 +9,16 @@ consistent with every other:
   numeric unit state (``None`` in the object-authoritative reference engine, which keeps
   that state on the unit objects for differential tests);
 - ``beliefs``: the belief store (dense or sparse backend; storage only);
-- storage-slot allocation, shared by the table and the belief store.
-
-[MVP 3: a strata table for genuinely distributional state joins these, under the same
-owner.]
+- ``strata``: the :class:`~madexplorer.population.strata.StrataTable` of socioeconomic
+  strata (MVP 3), present exactly when ``table`` is (the reference engine keeps each unit's
+  strata on the object), and the counter of opaque stratum ids;
+- storage-slot allocation, shared by the tables and the belief store.
 
 A unit belongs to at most one store: inserting a unit still bound to another store raises
 (remove it there first; ownership never moves implicitly). Inserting a unit into ``units``
-binds it to a slot: its beliefs move into the belief store
-and, with a table, its table fields (``population.fields``) into its table row. Removing it
+binds it to a slot: its beliefs move into the belief store and, with a table, its table
+fields (``population.fields``) and strata into its table rows; its strata get fresh ids from
+this store (ids are per-store observational handles). Removing it
 copies that state back onto the object and frees the slot, which is reset before reuse;
 :meth:`UnitRegistry.discard` frees it without copying (a unit leaving the simulation).
 Reads are plain dict operations. Slots never define iteration order;
@@ -32,6 +33,7 @@ import numpy as np
 
 from madexplorer.core.types import IntArray
 from madexplorer.population.beliefs import BeliefStore, make_belief_store
+from madexplorer.population.strata import StrataTable
 from madexplorer.population.table import UnitTable
 from madexplorer.population.unit import PopulationUnit, attach_unit, belief_slot, detach_unit
 
@@ -53,6 +55,8 @@ class PopulationStore:
     ) -> None:
         self.beliefs: BeliefStore = make_belief_store(belief_backend, n_cells)
         self.table: UnitTable | None = UnitTable(technology_table) if table else None
+        self.strata: StrataTable | None = StrataTable() if table else None
+        self._next_stratum_id = 0
         self.species_index = dict(species_index or {})
         self._free: list[int] = []
         self._next_slot = 0
@@ -65,12 +69,20 @@ class PopulationStore:
         self._next_slot += 1
         return slot
 
+    def new_stratum_ids(self, n: int) -> IntArray:
+        """``n`` unused opaque stratum ids (never the unit id allocator; no randomness)."""
+        ids = np.arange(self._next_stratum_id, self._next_stratum_id + n, dtype=np.int64)
+        self._next_stratum_id += n
+        return ids
+
     def claim_slot(self, species_code: int = 0) -> int:
         """A free slot with addressable table and belief rows, for a unit built in place
         (``population.lifecycle``); the unit is then inserted already bound to it."""
         slot = self._allocate()
         if self.table is not None:
+            assert self.strata is not None
             self.table.ensure(slot, 0, 0)
+            self.strata.ensure(slot)
         self.beliefs.claim(slot, species_code)
         return slot
 
@@ -94,7 +106,8 @@ class PopulationStore:
         if unit.__dict__.get("_belief_store") is not None:
             return  # already ours (built in place, or restored by deepcopy with this store)
         code = self.species_index.get(unit.species_id, 0)
-        attach_unit(unit, self._allocate(), self.beliefs, self.table, code)
+        unit.strata = unit.strata.with_ids(self.new_stratum_ids(len(unit.strata)))
+        attach_unit(unit, self._allocate(), self.beliefs, self.table, code, self.strata)
 
     def _unbind(self, unit: PopulationUnit) -> None:
         slot = detach_unit(unit)
@@ -108,9 +121,12 @@ class PopulationStore:
             return
         slot: int = state["_slot"]
         if self.table is not None:
+            assert self.strata is not None
             self.table.reset(slot)
+            self.strata.reset(slot)
         self.beliefs.release(slot)
         state["_table"], state["_belief_store"], state["_slot"] = None, None, -1
+        state.pop("_strata", None)
         self._free.append(slot)
 
 

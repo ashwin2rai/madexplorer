@@ -71,6 +71,10 @@ def unit_state(unit: PopulationUnit) -> dict[str, object]:
         familiarity=(dict(unit.familiarity._value), dict(unit.familiarity._year)),
         history=list(unit.harvest_history),
         ties=dict(unit.trade_ties),
+        strata=(
+            {name: values.tolist() for name, values in unit.strata.columns.items()},
+            unit.strata.stratum_id.tolist(),
+        ),
     )
     return state
 

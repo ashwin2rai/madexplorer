@@ -17,10 +17,12 @@ import numpy.typing as npt
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.population.familiarity import FamiliarityMap
 from madexplorer.population.fields import OBJECT_FIELDS, TABLE_FIELDS, UNIT_FIELDS, Storage
+from madexplorer.population.strata import StrataBlock, neutral_strata
 
 if TYPE_CHECKING:
     from madexplorer.core.state import SimulationState, StepContext
     from madexplorer.population.beliefs import BeliefStore
+    from madexplorer.population.strata import StrataTable
     from madexplorer.population.table import UnitTable
 
 HARVEST_MEMORY_YEARS = 10
@@ -308,6 +310,8 @@ class PopulationUnit:
         default_factory=lambda: deque(maxlen=HARVEST_MEMORY_YEARS)
     )  # per-capita harvest, most recent last
     trade_ties: dict[str, float] = field(default_factory=dict)  # partner id -> tie strength
+    # Socioeconomic strata (MVP 3; population.strata). Stage 1: one neutral stratum, passive.
+    strata: StrataBlock = field(default_factory=neutral_strata)
 
     @property
     def population(self) -> int:
@@ -469,6 +473,32 @@ class _Technologies:
             table.set_technologies(state["_slot"], value)
 
 
+class _Strata:
+    """Descriptor for ``unit.strata``: a copy of the unit's strata-table row while registered
+    with a table (assignment writes the row), else a plain block."""
+
+    def __get__(self, instance: object, owner: type | None = None) -> StrataBlock:
+        if instance is None:
+            raise AttributeError("strata")
+        state = instance.__dict__
+        strata = state.get("_strata")
+        if strata is None:
+            try:
+                value: StrataBlock = state["strata"]
+            except KeyError:
+                raise _removed(instance, "strata") from None
+            return value
+        return strata.unload(state["_slot"])  # type: ignore[no-any-return]
+
+    def __set__(self, instance: object, value: StrataBlock) -> None:
+        state = instance.__dict__
+        strata = state.get("_strata")
+        if strata is None:
+            state["strata"] = value
+        else:
+            strata.load(state["_slot"], value)
+
+
 def _install_storage_descriptors() -> None:
     """Point every non-object field at its storage (``population.fields``) while registered."""
     casts = {Storage.FLOAT: float, Storage.INT: int, Storage.BOOL: bool}
@@ -484,6 +514,8 @@ def _install_storage_descriptors() -> None:
             descriptor = _Technologies()
         elif spec.storage is Storage.BELIEFS:
             descriptor = _Beliefs()
+        elif spec.storage is Storage.STRATA:
+            descriptor = _Strata()
         else:
             continue  # Storage.OBJECT: a plain attribute
         setattr(PopulationUnit, spec.name, descriptor)
@@ -503,7 +535,7 @@ def _removed(unit: object, name: str) -> AttributeError:
 
 
 def bound_unit(
-    slot: int, store: "BeliefStore", table: "UnitTable", **external: Any
+    slot: int, store: "BeliefStore", table: "UnitTable", strata: "StrataTable", **external: Any
 ) -> PopulationUnit:
     """A unit object over rows already filled in ``slot`` (``population.lifecycle``).
 
@@ -513,6 +545,7 @@ def bound_unit(
     state = unit.__dict__
     state.update(external)
     state["_table"], state["_belief_store"], state["_slot"] = table, store, slot
+    state["_strata"] = strata
     return unit
 
 
@@ -533,13 +566,18 @@ def attach_unit(
     store: "BeliefStore",
     table: "UnitTable | None",
     species_code: int,
+    strata: "StrataTable | None" = None,
 ) -> None:
-    """Move a detached unit's beliefs (and, with a table, its table fields) into ``slot``.
+    """Move a detached unit's beliefs (and, with a table, its table fields and its strata,
+    whose table must then be given) into ``slot``.
 
     Afterwards the object holds no copy of that state: its descriptors read the stores.
     """
     state = unit.__dict__
     if table is not None:
+        assert strata is not None
+        strata.load(slot, state.pop("strata"))
+        state["_strata"] = strata
         values = {name: getattr(unit, name) for name in TABLE_FIELDS}
         table.load(slot, values, species_code)
         for name in TABLE_FIELDS:
@@ -564,6 +602,9 @@ def detach_unit(unit: PopulationUnit) -> int:
     slot: int = state["_slot"]
     table = state.get("_table")
     if table is not None:
+        strata = state.pop("_strata")
+        state["strata"] = strata.unload(slot)
+        strata.reset(slot)
         values = table.unload(slot)
         table.reset(slot)
         state["_table"] = None
