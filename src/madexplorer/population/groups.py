@@ -18,6 +18,7 @@ from madexplorer.core.types import IntArray
 from madexplorer.population.composition import MergeMode
 from madexplorer.population.familiarity import familiarity_rule
 from madexplorer.population.lifecycle import merge_units, remove_unit, split_unit
+from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.profile import SocialBehavior
 
 
@@ -101,32 +102,38 @@ def split_cohorts(
     return females - leave_f, males - leave_m, leave_f, leave_m
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, eq=False)
 class Fission:
-    """Split a daughter group off a parent (the daughter starts in the same cell)."""
+    """Split the drawn departing cohorts off a parent (the daughter starts in the same cell).
+
+    The stochastic decision, including who leaves, is made in evaluation; applying it is
+    deterministic.
+    """
 
     parent_id: str
-    fraction: float
+    leave_f: IntArray
+    leave_m: IntArray
     hazard: float
     components: dict[str, float]
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Create the daughter unit with conditional cohorts and shares of food and fields.
-
-        A multi-group unit buds off exactly one of its social groups.
-        """
+        """Create the daughter unit with the departing cohorts and shares of food and fields
+        (nothing happens if nobody, or everybody, was drawn to leave)."""
         ctx.invalidate_spatial()
         parent = state.units[self.parent_id]
-        rng = ctx.rng.stream(Streams.FISSION)
         source_population = parent.population
-        fraction = 1.0 / parent.groups if parent.groups > 1 else self.fraction
-        _, _, leave_f, leave_m = split_cohorts(parent.females, parent.males, fraction, rng)
-        moved = int(leave_f.sum() + leave_m.sum())
+        moved = int(self.leave_f.sum() + self.leave_m.sum())
         if moved == 0 or moved == source_population:
             return
         rule = familiarity_rule(ctx.species(parent.species_id), ctx.mechanisms)
         daughter = split_unit(
-            state.population, parent.id, leave_f, leave_m, ctx.ids.next("u"), state.year, rule
+            state.population,
+            parent.id,
+            self.leave_f,
+            self.leave_m,
+            ctx.ids.next("u"),
+            state.year,
+            rule,
         )
         ctx.ledger.fissions += 1
         ctx.events.emit(
@@ -216,9 +223,15 @@ class FissionSubsystem:
     name = "fission"
 
     def evaluate(self, state: SimulationState, ctx: StepContext) -> Sequence[Fission]:
-        """Evaluate each group's fission hazard."""
+        """Evaluate each group's fission hazard, then draw who leaves each splitting group.
+
+        The fission stream is consumed in two passes: every group's hazard draw (and, if it
+        splits, its departing fraction) in unit order, then the departing cohorts of the
+        splitting groups in the same order. A multi-group unit buds off exactly one of its
+        social groups (fraction ``1 / groups``).
+        """
         rng = ctx.rng.stream(Streams.FISSION)
-        proposals: list[Fission] = []
+        splitting: list[tuple[PopulationUnit, float, float, dict[str, float]]] = []
         cols = ctx.columns(state)
         population = cols.population().tolist()
         food = cols.get("food_ratio").tolist()
@@ -230,7 +243,12 @@ class FissionSubsystem:
             hazard, components = fission_hazard(n, food_ratio, social, n_groups)
             if rng.random() < hazard:
                 fraction = rng.uniform(social.fission_fraction_min, social.fission_fraction_max)
-                proposals.append(Fission(unit.id, float(fraction), hazard, components))
+                share = 1.0 / n_groups if n_groups > 1 else float(fraction)
+                splitting.append((unit, share, hazard, components))
+        proposals: list[Fission] = []
+        for unit, share, hazard, components in splitting:
+            _, _, leave_f, leave_m = split_cohorts(unit.females, unit.males, share, rng)
+            proposals.append(Fission(unit.id, leave_f, leave_m, hazard, components))
         return proposals
 
 

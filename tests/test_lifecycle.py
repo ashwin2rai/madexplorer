@@ -16,11 +16,13 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from madexplorer.config.loader import Scenario
+from madexplorer.core.rng import Streams
 from madexplorer.core.simulation import Simulator
 from madexplorer.experiments.benchmark import synthetic_simulator
 from madexplorer.population.composition import MergeMode
 from madexplorer.population.familiarity import familiarity_rule
 from madexplorer.population.fields import TABLE_FIELDS
+from madexplorer.population.groups import Fission, FissionSubsystem
 from madexplorer.population.lifecycle import create_unit, merge_units, remove_unit, split_unit
 from madexplorer.population.store import PopulationStore
 from madexplorer.population.unit import (
@@ -28,7 +30,7 @@ from madexplorer.population.unit import (
     PopulationUnit,
     belief_slot,
 )
-from tests.conftest import ROOT
+from tests.conftest import ROOT, step_context
 from tests.test_unit_table import _same, assert_same_simulation, unit_state
 
 SCENARIO = ROOT / "scenarios" / "mvp2_neolithic.yaml"
@@ -255,3 +257,34 @@ def test_population_views_cannot_be_rebound() -> None:
         sim.state.units = {}  # type: ignore[misc, assignment]
     with pytest.raises(AttributeError):
         sim.state.table = None  # type: ignore[misc]
+
+
+def test_fission_apply_is_deterministic_and_draws_nothing() -> None:
+    sim = synthetic_simulator(Scenario.from_yaml(SCENARIO), 4, group_size=60)
+    ctx = step_context(sim)
+    uid = next(iter(sim.state.units))
+    parent = sim.state.units[uid]
+    leave_f, leave_m = parent.females // 2, parent.males // 2
+    before_f, before_m = parent.females, parent.males
+    stream = ctx.rng.stream(Streams.FISSION)
+    drawn = copy.deepcopy(stream.bit_generator.state)
+    Fission(uid, leave_f, leave_m, 0.5, {}).apply(sim.state, ctx)
+    assert stream.bit_generator.state == drawn
+    daughter = list(sim.state.units.values())[-1]
+    assert daughter.parent_id == uid
+    assert (daughter.females == leave_f).all() and (daughter.males == leave_m).all()
+    assert (parent.females == before_f - leave_f).all()
+    assert (parent.males == before_m - leave_m).all()
+
+
+def test_fission_proposals_carry_the_departing_cohorts() -> None:
+    data = Scenario.from_yaml(SCENARIO).with_settings(
+        {"species.human.social.fission_baseline_logit": 50.0}  # every group splits
+    )
+    sim = synthetic_simulator(data, 5, group_size=40)
+    proposals = FissionSubsystem().evaluate(sim.state, step_context(sim))
+    assert len(proposals) == 5
+    for proposal in proposals:
+        parent = sim.state.units[proposal.parent_id]
+        assert (proposal.leave_f <= parent.females).all()
+        assert (proposal.leave_m <= parent.males).all()
