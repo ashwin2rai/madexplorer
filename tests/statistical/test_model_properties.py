@@ -120,7 +120,7 @@ def test_technologies_appear_within_broad_stochastic_ranges() -> None:
 AGGREGATION_POPULATION_XFAIL = pytest.mark.xfail(
     strict=True,
     reason=(
-        "Accepted MVP 2 limitation (objective/status.md, P6): computational aggregation is not "
+        "Accepted limitation (objective/status.md): computational aggregation is not "
         "scientifically neutral and is disabled for canonical/reference runs. With "
         "max_units_per_cell=8, final population is ~2.6x the reference on every seed here "
         "(after P3), and even rare merges shift trajectories (mvp2_pressure, 2 seeds: +9%). "
@@ -141,9 +141,9 @@ AGGREGATION_POPULATION_XFAIL = pytest.mark.xfail(
 def test_aggregation_error_stays_within_tolerance(measure: str, tolerance: float) -> None:
     """Coarsening at 8 units per cell versus the aggregation-free reference.
 
-    Eight units per cell is the setting validated as an approximation of the reference;
-    three is known to bias outcomes (objective/status.md, resolution-invariance experiment).
-    The tolerance is on the paired mean difference (log ratio for population, years for
+    Eight units per cell was once expected to approximate the reference; the population
+    check fails (strict xfail), so no coarsening setting is treated as neutral. The
+    tolerance is on the paired mean difference (log ratio for population, years for
     milestones).
     """
     reference = _ensemble(("mechanisms.aggregation", False))

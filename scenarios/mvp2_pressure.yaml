@@ -50,7 +50,7 @@ resolution:
   max_units_per_cell: 3
   max_knowledge_distance: 1.0
 
-# Reference calibration mode, as in mvp2_neolithic: no computational aggregation.
+# Canonical reference mode, as in mvp2_neolithic: no computational aggregation.
 mechanisms:
   aggregation: false
 

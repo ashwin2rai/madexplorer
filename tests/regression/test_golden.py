@@ -22,8 +22,20 @@ from tests.conftest import ROOT, mvp2_scenario_dict, replay_key, small_scenario_
 GOLDEN = Path(__file__).parent / "golden"
 
 
+# The small cases were recorded when mechanisms.aggregation defaulted to on; they pin it so
+# the fixtures keep replaying the same configuration.
+PINNED_AGGREGATION = {"aggregation": True}
+
+
+def _small_foragers() -> Scenario:
+    data = small_scenario_dict(n_years=120, seed=2)
+    data["mechanisms"] = PINNED_AGGREGATION
+    return Scenario.from_dict(data, base_dir=ROOT)
+
+
 def _farming_small() -> Scenario:
     data = mvp2_scenario_dict(n_years=150, seed=4)
+    data["mechanisms"] = PINNED_AGGREGATION
     data["initial_populations"] = [
         {
             "species": "human",
@@ -46,9 +58,7 @@ CASES = {
     "mvp2_neolithic_250y_seed1": lambda: Scenario.from_yaml(
         ROOT / "scenarios" / "mvp2_neolithic.yaml"
     ).with_overrides(n_years=250, seed=1),
-    "small_foragers_120y_seed2": lambda: Scenario.from_dict(
-        small_scenario_dict(n_years=120, seed=2), base_dir=ROOT
-    ),
+    "small_foragers_120y_seed2": _small_foragers,
     "small_farmers_150y_seed4": _farming_small,
 }
 

@@ -6,6 +6,10 @@ merged into one multi-group unit. People, food, fields, and reserves are
 conserved exactly; knowledge is population-weighted, and the knowledge distance
 at merge time is recorded as the approximation error. Fission later buds
 single groups back off, so resolution adapts in both directions.
+
+Experimental and off by default (``mechanisms.aggregation``): a merged unit makes one
+decision for all its groups, so coarsening changes migration, innovation and population
+dynamics. It is not a neutral approximation and is disabled in canonical scenarios.
 """
 
 from collections.abc import Sequence

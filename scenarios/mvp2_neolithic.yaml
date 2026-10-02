@@ -1,4 +1,4 @@
-# MVP 2: agriculture, storage, technology, innovation, diffusion, trade, aggregation.
+# MVP 2: agriculture, storage, technology, innovation, diffusion, trade.
 # Two forager bands with no cultivation knowledge colonize a 400 x 400 km world.
 # Nothing here says where or whether farming or sedentism appear.
 name: mvp2_neolithic
@@ -35,10 +35,12 @@ resolution:
   max_units_per_cell: 3
   max_knowledge_distance: 1.0
 
-# Reference calibration mode: no computational aggregation. Coarsening to 3 units per cell
-# measurably changes outcomes (population -11%, migration -7%, inventions +24% over 600
-# years; see objective/status.md), so calibration and baselines run without it. Setting
-# `aggregation: true` with `max_units_per_cell: 8` matches this reference within noise.
+# Canonical reference mode: no computational aggregation (also the default; kept explicit
+# because the frozen baselines depend on it). Coarsening is experimental and not
+# scientifically neutral: at 3 units per cell it changed population (-11%), migration (-7%)
+# and inventions (+24%) over 600 years, and no setting is known to reproduce this reference
+# (the coarsening statistical check is a strict xfail). `resolution:` only matters with
+# aggregation on.
 mechanisms:
   aggregation: false
 

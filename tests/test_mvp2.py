@@ -79,8 +79,9 @@ def test_no_cultivation_without_technology_even_when_enabled() -> None:
 def test_aggregation_bounds_units_per_cell() -> None:
     data = mvp2_scenario_dict(n_years=150)
     data["resolution"] = {"max_units_per_cell": 1, "max_knowledge_distance": 100.0}
-    data["mechanisms"] = {"migration": False}
+    data["mechanisms"] = {"migration": False, "aggregation": True}
     sim = Simulator(Scenario.from_dict(data, base_dir=ROOT))
-    sim.run()
+    result = sim.run()
+    assert any(e.kind == "resolution_merge" for e in result.events)
     cells = [u.cell for u in sim.state.units.values()]
     assert len(cells) == len(set(cells))

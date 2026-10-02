@@ -1,10 +1,9 @@
 """The :class:`PopulationUnit`, the core simulation actor (spec §6.1).
 
-A unit is one or more co-residing social groups of one species (``groups``).
-Its demographic state is an exact age-by-sex cohort vector, so every
-individual is represented while bookkeeping stays vectorized. Co-located
-similar groups are coarsened into one unit (MVP 2); distributional
-super-agents with wealth and health distributions arrive in MVP 3.
+A unit is one or more co-residing social groups of one species (``groups``; several only
+under experimental coarsening). Its demographic state is an exact age-by-sex cohort vector,
+so every individual is represented while bookkeeping stays vectorized. Within-unit
+socioeconomic strata arrive in MVP 3.
 """
 
 import math

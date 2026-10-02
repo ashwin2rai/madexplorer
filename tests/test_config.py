@@ -48,3 +48,10 @@ def test_overrides_preserve_species_and_knowledge_system() -> None:
     assert copy.knowledge == scenario.knowledge is not None
     assert copy.species == scenario.species
     assert copy.config.simulation.seed == 5 and copy.config.simulation.n_years == 3
+
+
+def test_aggregation_is_off_by_default() -> None:
+    """Coarsening is experimental and not scientifically neutral, so it must be opted into."""
+    from madexplorer.config.schema import MechanismsConfig
+
+    assert MechanismsConfig().aggregation is False

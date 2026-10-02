@@ -141,7 +141,10 @@ class MechanismsConfig(FrozenModel):
     knowledge_learning: bool = True
     knowledge_diffusion: bool = True
     innovation: bool = True
-    aggregation: bool = True
+    # Experimental computational coarsening of similar co-located units. Off by default: it
+    # turns several groups into one decision-maker and changes migration, innovation and
+    # population dynamics (not scientifically neutral; a strict xfail records the bias).
+    aggregation: bool = False
     # MVP 2 cleanup
     crowding_mortality: bool = True
     # MVP 2 stabilization: shrink single noisy direct observations toward the prior by
