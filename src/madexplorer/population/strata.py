@@ -507,12 +507,15 @@ class StrataTable:
         if not differentiated.any():
             return slots[changed]
         for name, stock in stocks.items():
-            reset = differentiated & (stock == 0)
-            reset &= (self.columns[name][slots] != self.columns["share"][slots]).any(axis=1)
-            rows = slots[reset]
-            if rows.size:
-                self.columns[name][rows] = self.columns["share"][rows]
-                changed |= reset
+            candidates = np.flatnonzero(differentiated & (stock == 0))
+            if candidates.size == 0:
+                continue
+            rows = slots[candidates]
+            share = self.columns["share"][rows]
+            moved = (self.columns[name][rows] != share).any(axis=1)  # only actual changes
+            if moved.any():
+                self.columns[name][rows[moved]] = share[moved]
+                changed[candidates[moved]] = True
         return slots[changed]
 
     def is_neutral(self, slot: int) -> bool:
@@ -534,10 +537,17 @@ class StrataTable:
             rows = values[slots]
             ok &= np.where(active, rows >= 0, rows == 0).all(axis=1)
             ok &= np.abs(rows.sum(axis=1) - 1.0) <= PARTITION_TOLERANCE
+        ok &= ~self.duplicate_rows(slots)  # no two components at exactly the same position
+        return ok
+
+    def duplicate_rows(self, slots: IntArray) -> BoolArray:
+        """Per slot: whether two active strata sit at exactly the same position."""
+        n = self.n_strata[slots].astype(np.int64)
+        active = np.arange(S_MAX)[None, :] < n[:, None]
         share = np.where(active, self.columns["share"][slots], 1.0)
         same = active[:, :, None] & active[:, None, :] & ~np.eye(S_MAX, dtype=bool)[None]
-        for name in CLAIMS:  # no two active components at exactly the same position
+        for name in CLAIMS:
             position = self.columns[name][slots] / share
             same &= position[:, :, None] == position[:, None, :]
-        ok &= ~same.any(axis=(1, 2))
-        return ok
+        duplicated: BoolArray = same.any(axis=(1, 2))
+        return duplicated

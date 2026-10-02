@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from madexplorer.core.spatial import SpatialIndex
     from madexplorer.core.static import StaticContext
     from madexplorer.economy.foraging import ForageAccess
+    from madexplorer.population.strata_accounting import FieldAccounts, FoodAccounts
 
 CapabilityMap = Mapping[Capability, float]
 
@@ -151,6 +152,10 @@ class StepContext:
     # Immutable capability maps per technology set, shared across steps of a run.
     capability_cache: dict[frozenset[str], CapabilityMap] = field(default_factory=dict)
     compiled: "CompiledScenario | None" = None
+    # Pending gross flows of this step for strata accounting (transient; consumed by
+    # population.strata_accounting.account_strata after the recording subsystem).
+    food_accounts: "FoodAccounts | None" = None
+    field_accounts: "FieldAccounts | None" = None
     _crop_potential: FloatArray | None = None
     _spatial: "SpatialIndex | None" = None
     _columns: "UnitColumns | None" = None

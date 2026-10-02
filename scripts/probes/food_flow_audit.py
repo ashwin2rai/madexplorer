@@ -14,8 +14,15 @@ Checks, on real runs, the properties the Stage 3B claim accounting relies on
 The apply methods are wrapped to observe their inputs; nothing is changed, so the run is
 identical to an unprobed one (compare the final population).
 
+``--heterogeneous`` instead demonstrates the Stage 3B strata accounting on deterministic
+fixtures (three units with unequal claims over existing fields and stores; no random strata):
+per year, each unit's physical fields and stores, its strata claims and relative positions,
+the pooling transfers, and the residuals of the accounting identities (claim columns sum to
+1, transfers sum to 0).
+
 Usage:
     uv run python scripts/probes/food_flow_audit.py --seed 0 --years 300
+    uv run python scripts/probes/food_flow_audit.py --heterogeneous --years 40
 """
 
 import argparse
@@ -107,12 +114,71 @@ def wrap_fields(cls: Any, label: str) -> Any:
     cls.apply = apply
 
 
+def heterogeneous(years: int) -> None:
+    """Stage 3B accounting on three deterministic heterogeneous units (observation only)."""
+    from madexplorer.experiments.benchmark import synthetic_simulator
+    from madexplorer.population.strata import StrataBlock, positions
+
+    def block(share: list[float], field: list[float], store: list[float]) -> StrataBlock:
+        columns = {"share": share, "field_claim": field, "store_claim": store}
+        return StrataBlock(
+            {k: np.array(v) for k, v in columns.items()}, np.zeros(2, dtype=np.int64)
+        )
+
+    fixtures = {
+        "unequal fields": block([0.8, 0.2], [0.5, 0.5], [0.8, 0.2]),
+        "cross-cutting": block([0.5, 0.5], [0.7, 0.3], [0.2, 0.8]),
+        "unequal stores": block([0.6, 0.4], [0.6, 0.4], [0.3, 0.7]),
+    }
+    scenario = Scenario.from_yaml("scenarios/mvp2_neolithic.yaml").with_overrides(seed=11)
+    sim = synthetic_simulator(scenario, 30, farming=True)
+    population = sim.state.population
+    population.strata_log, population.strata_flows = [], []
+    watched = {}
+    units = list(sim.state.units.values())[: len(fixtures)]
+    for unit, (label, fixture) in zip(units, fixtures.items(), strict=True):
+        unit.fields_ha, unit.stores_kcal = 4.0, 3e5
+        population.replace_strata(unit, fixture)
+        watched[unit.id] = label
+    worst_sum = worst_transfer = 0.0
+    for _ in range(years):
+        sim.step()
+        year = sim.state.year
+        for uid, label in watched.items():
+            unit = sim.state.units.get(uid)
+            if unit is None:
+                continue
+            strata = unit.strata
+            for values in strata.columns.values():
+                worst_sum = max(worst_sum, abs(float(values.sum()) - 1.0))
+            transfers = [
+                f["pool_transfer_kcal"]
+                for f in population.strata_flows
+                if f["year"] == year and f["unit_id"] == uid
+            ]
+            if transfers:
+                worst_transfer = max(worst_transfer, abs(sum(transfers)))
+            print(
+                f"{year:4d} {uid:>5} {label:15s} fields={unit.fields_ha:7.2f} "
+                f"stores={unit.stores_kcal:11.0f} share={np.round(strata.columns['share'], 3)} "
+                f"field_pos={np.round(positions(strata)[:, 0], 3)} "
+                f"store_pos={np.round(positions(strata)[:, 1], 3)} "
+                f"transfer={np.round(transfers, 0) if transfers else '-'}"
+            )
+    print(f"max |claim column sum - 1| = {worst_sum:.2e}")
+    print(f"max |sum of a unit's transfers| = {worst_transfer:.2e} kcal")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--scenario", default="scenarios/mvp2_neolithic.yaml")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--years", type=int, default=300)
+    parser.add_argument("--heterogeneous", action="store_true")
     args = parser.parse_args()
+    if args.heterogeneous:
+        heterogeneous(args.years)
+        return
     TradeRound.apply = wrap_trade(TradeRound.apply)  # type: ignore[method-assign]
     EnergyUpdates.apply = wrap_energy(EnergyUpdates.apply)  # type: ignore[method-assign]
     wrap_fields(FieldPlans, "field planning")

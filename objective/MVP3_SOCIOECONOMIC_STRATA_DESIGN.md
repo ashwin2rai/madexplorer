@@ -607,3 +607,31 @@ Caloric access, food ratio and demography stay pooled and unchanged throughout.
 - Should newly cleared land follow labor (∝ share) or, with `w`, follow existing control?
   This is deferred to the labor-differentiation stage.
 - Body reserves stay ∝ share, which is exact while access is pooled (Stage 6A will revisit).
+
+### L14. Stage 3B implementation notes (as built)
+
+- `population/strata_accounting.py`:
+  - `FoodAccounts` (per unit `K0` opening after trade, `A` stored, `X` withdrawn, `K1`
+    closing), recorded by `EnergyUpdates.apply`;
+  - `FieldAccounts` (`F0`, `F1`, in unit order), recorded by `FieldPlans.apply`;
+  - both are held transiently on `StepContext` and consumed by `account_strata`, which the
+    engine runs after every subsystem: accounting, then exact compaction, then
+    `settle_empty_claims`.
+
+  Physical code only records; nothing reads the accounts except this hook.
+- At w = 0 the §L5/§L6 formulas reduce to the following:
+  - `store_claim' = (store_claim·K0 + share·A) / Σ`; with `A = 0`, fractions are kept;
+    `K1 = 0` gives share;
+  - fed-year and trade transfers are 0;
+  - the only nonzero pooling term is `X·(share − store_claim)`.
+
+  The general `g·w·Y` harvest term arrives with Stage 3C.
+- Each rule is one function over the strata axis, shared by the object engine (1-D blocks)
+  and the table engine (padded rows). Sums over strata are sequential (`cumsum`), so padding
+  cannot change rounding. Single-stratum units are skipped (exactly 1 already).
+- Zero-sum contract: `|Σ_i pool_transfer_i| ≤ 2e-12 · X` (the partition tolerance of
+  `share` and `store_claim`).
+- Sidecar: `strata_flows` (`strata_flows.csv`): one row per stratum for unit-years with a
+  nonzero pooling transfer. Fields: `share` and `store_claim` as used, `withdrawn_kcal`,
+  `pool_transfer_kcal`, `pool_transfer_volume_kcal` (= Σ|transfer|/2). No claim-accretion
+  events (the strata rows show them); exact compactions are logged as before.

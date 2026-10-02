@@ -26,7 +26,7 @@ Reads are plain dict operations. Slots never define iteration order;
 """
 
 import copy
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -42,6 +42,7 @@ from madexplorer.population.strata import (
     StrataTable,
     claims_on_empty_stocks,
     compact_exact_strata,
+    has_exact_duplicates,
     normalize_strata,
     validate_block,
 )
@@ -73,8 +74,10 @@ class PopulationStore:
         self.table: UnitTable | None = UnitTable(technology_table) if table else None
         self.strata: StrataTable | None = StrataTable() if table else None
         self._next_stratum_id = 0
-        # Sidecar strata events (observation only; None = not recorded). Nothing reads it.
+        # Sidecar strata events and pooling flows (observation only; None = not recorded).
+        # Nothing reads them.
         self.strata_log: list[dict[str, Any]] | None = None
+        self.strata_flows: list[dict[str, Any]] | None = None
         self.species_index = dict(species_index or {})
         self._free: list[int] = []
         self._next_slot = 0
@@ -127,6 +130,18 @@ class PopulationStore:
                 if settled is not unit.strata:
                     unit.strata, records = compact_exact_strata(settled, self.new_stratum_ids)
                     self._log(year, unit.id, records)
+
+    def compact_units(self, units: "Sequence[PopulationUnit]", year: int) -> None:
+        """Exact compaction of these units' strata after an accounting update (in order)."""
+        if self.strata is not None:
+            slots = np.array([belief_slot(u) for u in units], dtype=np.int64)
+            for slot in slots[self.strata.duplicate_rows(slots)].tolist():
+                self._compact_row(slot, year)
+            return
+        for unit in units:
+            if has_exact_duplicates(unit.strata):
+                unit.strata, records = compact_exact_strata(unit.strata, self.new_stratum_ids)
+                self._log(year, unit.id, records)
 
     def _compact_row(self, slot: int, year: int) -> None:
         assert self.strata is not None

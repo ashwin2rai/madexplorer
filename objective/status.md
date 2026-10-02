@@ -6,11 +6,61 @@
 
 ## MVP 3 stage handoff
 
-**Completed stage:** Stage 3A — economic flow design and accounting audit (design:
-`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md` §L). Production behavior unchanged; Stage
-2.1 (exact compaction), Stage 2 (passive heterogeneous strata) and Stage 1 underneath.
+**Completed stage:** Stage 3B — neutral socioeconomic accounting (design §L, §L14).
+Earlier stages: 3A audit, 2.1 exact compaction, 2 passive heterogeneous strata, 1 neutral
+representation.
 
-**Stage 3A locked decisions** (§L)
+**What now exists (Stage 3B)**
+- **Gross food accounting:** transient per-step `FoodAccounts` (`K0`, `A`, `X`, `K1`) and
+  `FieldAccounts` (`F0`, `F1`), recorded by energetics and field planning and consumed by
+  `account_strata` after each subsystem.
+- **Neutral field-claim accretion** (`field_claim_accretion`): new land ∝ share; shrink keeps
+  fractions; zero → share.
+- **Neutral store-claim accretion** (`store_claim_accretion`): new stores ∝ share;
+  proportional depletion (withdrawal, spoilage, trade out, abandonment) keeps fractions;
+  zero → share.
+- **Explicit pooling transfers** (`food_pooling_transfer`, observational):
+  `X·(share − store_claim)` in deficit years; zero-sum within `2e-12·X`.
+- **Sidecar:** `strata_flows` (`strata_flows.csv`).
+- **Regression fixture:** `tests/regression/golden_strata/stage3b_seed11_30u_40y.json`
+  (re-record only with `UPDATE_STRATA_FIXTURE=1`; not a scientific baseline).
+- **Probe:** `scripts/probes/food_flow_audit.py --heterogeneous`.
+
+**Scientific feedback into the unit simulation:** none. MVP 2.1 oracles identical.
+
+**Important neutral conventions (not historical claims):**
+- new cultivated land is allocated by population share; field shrinkage preserves claim
+  fractions;
+- new stored food is attributed by population share; store depletion is proportional;
+- pooled access is proportional to share;
+- body reserves remain unit-level. Revisit only if a later mechanism introduces genuinely
+  unequal caloric access.
+
+**Observed consequences** (neolithic seed 0, 400 y, and the probe):
+- Neutral accretion dilutes fusion-born differences: new land and new stores go by share, so
+  positions drift toward 1. At year 400 the people-weighted mean |position − 1| is 0.018
+  (field) and 0.008 (store). In the probe, a field position of 2.5 falls to ≈ 1.1 within
+  ≈ 25 years as fields expand.
+- Unequal store claims meet deficit years in 126 unit-years (pooling volume ≈ 4.7e6 kcal over
+  the run).
+- Resets on empty stocks make components coincide more often: 286 exact compactions; capacity
+  coalescences fall from 36 to 12.
+- Cost: `account_strata` ≈ 7% of a 400-y run (≈ 53 µs per call, 17 calls per step), mostly
+  the generic zero-stock pass. Restricting that pass to stock-changing subsystems would halve
+  it (not done). `bench-quick` 99.7–107 ms CPU/tick (noise); no new persistent memory.
+
+**Next:** Stage 3C — crop-output claim sensitivity (only on approval). Stage 3C must
+decide and test:
+- `field_output_claim_weight` (w, design §L4), introduced as an explicit scientific
+  hypothesis;
+- `w ∈ {0, 0.25, 0.5, 1}` as controlled sensitivity cases, with the general harvest term
+  `g·w·Y·(field_claim − share)` in attribution, leftover allocation and pooling transfers;
+- persistence or dilution of fusion-born field inequality under each w;
+- still no actual consumption inequality.
+
+**Deferred question:** should body reserves become heterogeneous once actual food access does?
+
+**Stage 3A locked decisions** (§L; implemented at w = 0 in Stage 3B)
 - Food flows are not a fungible pool:
   - fed units eat from harvest and store the leftover;
   - short units eat harvest, then stores, then reserves;
@@ -40,26 +90,10 @@
 - Baseline: MVP 2.1 oracles stay frozen and identical through 3B/3C; add versioned sidecar
   fixtures only; the next full baseline comes when strata change unit outcomes.
 
-**Stage 3B implementation scope** (recommended split)
-- Stage 3B (neutral accounting, w fixed at 0):
-  - `FoodAccounts` instrumentation;
-  - land accretion;
-  - store accretion;
-  - pooling transfers in the sidecar;
-  - rules `field_claim_accretion`, `store_claim_accretion`, `food_pooling_transfer`;
-  - tests per §L12.
-
-  Note: this already changes strata state at w = 0 (new stores ∝ share instead of the
-  Stage 2 carry-forward), but not unit state.
-- Stage 3C: activate `field_output_claim_weight` sensitivity (`crop_output_attribution`,
-  a scientific hypothesis).
-
 **Still unresolved:**
 - how pooled deficits are covered (pro rata for now);
 - whether new land should ever follow control rather than labor;
 - whether body reserves should stay ∝ share once access differs (Stage 6A).
-
-**Next:** Stage 3B — first causal socioeconomic accounting mechanism (only on approval).
 
 **Stage 2.1 (exact compaction) in brief.** Within one unit, components at exactly the same position
 (`claim/share`, bit-identical) are one stratum: `compact_exact_strata` sums them (fresh id;

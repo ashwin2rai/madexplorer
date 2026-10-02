@@ -9,6 +9,7 @@ import numpy as np
 from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray
+from madexplorer.population.strata_accounting import FoodAccounts
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import Metabolism, SpeciesProfile
@@ -265,6 +266,7 @@ class EnergyUpdates:
         """Commit every row's energy state; stores spoil at the end of the year."""
         cols = self.cols
         n = cols.population()
+        opening = cols.get("stores_kcal")  # after trade: K0
         cols.set("food_ratio", self.food_ratio)
         cols.set("energy_deficit", self.deficit)
         cols.set("reserve_kcal_per_capita", self.reserve_kcal / n)
@@ -278,6 +280,14 @@ class EnergyUpdates:
         cols.set("stored_kcal", self.stored_kcal)
         cols.set("energy_debt_kcal", 0.0)
         cols.set("residence_years", cols.get("residence_years") + 1)
+        # Gross store flows for strata accounting (recorded only; nothing above reads them).
+        ctx.food_accounts = FoodAccounts(
+            cols.units,
+            opening,
+            self.stored_kcal,
+            np.maximum(opening + self.stored_kcal - self.stores_kcal, 0.0),
+            retained,
+        )
         per_capita = (cols.get("harvest_kcal") / n).tolist()
         for unit, value in zip(cols.units, per_capita, strict=True):
             unit.harvest_history.append(value)

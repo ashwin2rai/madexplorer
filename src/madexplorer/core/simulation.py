@@ -44,6 +44,7 @@ from madexplorer.population.groups import ExtinctionSubsystem, FissionSubsystem,
 from madexplorer.population.initialization import found_unit
 from madexplorer.population.lifecycle import create_unit
 from madexplorer.population.store import PopulationStore
+from madexplorer.population.strata_accounting import account_strata
 from madexplorer.resolution.coarsening import CoarseningSubsystem
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
@@ -106,6 +107,7 @@ class SimulationResult:
     # Strata sidecar (MVP 3, opt-in; outside the frozen metrics/events streams).
     strata_rows: list[dict[str, Any]] = field(default_factory=list)
     strata_events: list[dict[str, Any]] = field(default_factory=list)
+    strata_flows: list[dict[str, Any]] = field(default_factory=list)
 
     def save(self, directory: str | Path) -> Path:
         """Write outputs to ``directory`` (see :mod:`madexplorer.persistence.output`)."""
@@ -174,6 +176,7 @@ class Simulator:
         )
         if record_strata:
             self.state.population.strata_log = []
+            self.state.population.strata_flows = []
         self._found_initial_units()
 
     def _found_initial_units(self) -> None:
@@ -231,7 +234,7 @@ class Simulator:
             started = time.perf_counter() if timings is not None else 0.0
             for proposal in subsystem.evaluate(state, ctx):
                 proposal.apply(state, ctx)
-            state.population.settle_empty_claims(state.year)  # no claim on an empty stock
+            account_strata(state, ctx)  # passive strata claims; no physical effect
             if timings is not None:
                 elapsed = time.perf_counter() - started
                 timings[subsystem.name] = timings.get(subsystem.name, 0.0) + elapsed
@@ -292,4 +295,5 @@ class Simulator:
             manifest=manifest,
             strata_rows=strata_rows,
             strata_events=list(self.state.population.strata_log or []),
+            strata_flows=list(self.state.population.strata_flows or []),
         )

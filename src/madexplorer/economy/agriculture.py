@@ -20,6 +20,7 @@ from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.ecology.resources import miami_npp
 from madexplorer.population.energetics import annual_need_columns, capability_column
+from madexplorer.population.strata_accounting import FieldAccounts
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.world.climate import ClimateYear
 from madexplorer.world.grid import WorldGrid
@@ -452,6 +453,13 @@ class FieldPlans:
             "labor_debt_hours", rows, cols.get("labor_debt_hours")[rows] + self.clearing_hours
         )
         cols.set_rows("clearing_hours", rows, self.clearing_hours)
+        # Field changes for strata accounting, in unit order (recorded only).
+        order = np.argsort(rows, kind="stable")
+        ctx.field_accounts = FieldAccounts(
+            tuple(cols.units[r] for r in rows[order].tolist()),
+            np.array(before)[order],
+            self.fields_ha[order],
+        )
 
 
 class FieldPlanningSubsystem:
