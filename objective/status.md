@@ -1,10 +1,73 @@
 # Implementation Status — MVP 3 (staged)
 
-**Updated:** 2026-10-03 (Stage 3D)\
+**Updated:** 2026-10-03 (Stage 4A)\
 **Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
 **Current milestone:** MVP 3 — staged socioeconomic differentiation
 
 ## MVP 3 stage handoff
+
+**Completed:** Stage 4A — labor and resolution design (design §N; probe
+`scripts/probes/strata_capacity.py`).
+
+**Production behavior:** unchanged (design, audit and probe only).
+
+**Labor findings:**
+- **One labor pool per unit:**
+  - capacity = cohorts × age-labor curve × `foraging_hours_per_day` × 365;
+  - clearing (charged as next year's debt) takes it first, then cultivation (capped at
+    0.9 of the remainder), then foraging;
+  - storage, trade and migration use no labor;
+  - work has no energetic or demographic cost.
+- **No stratum-differentiated labor is justified by any modeled variable.** Capacity comes
+  from the shared age structure, knowledge and technology are `[U]`, and consumption is
+  pooled. Field- or store-linked labor rules would bring in household tenure without pooling,
+  authority, or private access.
+- **Candidate first quantity:** per-activity hours contributions (cultivation, clearing) as
+  a transient flow, not `StrataTable` state. ∝ share today, and it cannot create strata;
+  that is acceptable.
+
+**Resolution findings** (`S_MAX` 4 / 8 / 16 / 32, 4 seeds, two scenarios):
+- coalescences *rise* with capacity, because demand is open-ended (each fusion concatenates
+  positions);
+- representation error falls about 6× per doubling, and w's redirection of the field
+  distribution about 2.6×;
+- aggregate observables are flat;
+- persistent memory is 32·S + 1 B/row (51 MB at 50k units for 32, about 2 % of RSS);
+- runtime is +8–33 % at 16 and up to 3× at 32 (pure-Python coalescence).
+
+**Locked decisions:**
+- homogeneous populations may stay homogeneous; no invented differentiation;
+- labor is quantitative and per activity (hours); no occupations or rank;
+- labor contribution is a flow, not persistent state;
+- gate: no physical mechanism reads strata until the resolution policy is shown stable for
+  the information it uses;
+- the generalized attribution `(1 − w)·cultivation_labor_share + w·field_claim` (identical
+  today);
+- `field_output_claim_weight` default 0;
+- adaptive merging stays deferred; exact compaction only, no epsilon merge.
+
+**Next stage:** Stage 4B — Resolution hardening:
+- capacity as a run parameter (`strata.max_strata`, default 8);
+- vectorized capacity coalescence;
+- chunked duplicate check;
+- per-dimension coalescence error in the sidecar;
+- re-run the capacity sensitivity to choose a default (16 the candidate).
+
+Strata stay passive; oracles identical.
+
+**Gate before physical socioeconomic feedback:**
+- the resolution policy is shown stable for the dimensions the mechanism reads, and the
+  coalescence metric protects them (§M6 C);
+- an approved causal reason for stratum-differentiated labor or access (Stage 4D design
+  review);
+- 4C labor accounting is bit-identical first.
+
+**Deferred:** hierarchy; unequal consumption; stratified demography; approximate adaptive
+merging; work-related energetic or demographic costs.
+
+---
+
+### Stage 3D — scientific and representation review (previous handoff)
 
 **Completed:** Stage 3D — scientific and representation review (design §M; probe
 `scripts/probes/strata_review.py`).
@@ -42,7 +105,7 @@ above `S_MAX`, which is a resolution-policy question.
 - positions decay toward 1 under the neutral conventions;
 - w is a sensitivity parameter standing in for missing labor and property mechanisms.
 
-**Next scientific stage:** Stage 4 — Stratum labor contribution (design first; candidate B).
+**Next scientific stage (at 3D):** Stage 4 — Stratum labor contribution (design first; candidate B) — designed in Stage 4A.
 
 **Reason:** labor ∝ share is the assumption behind both new land ∝ share and w; labor and
 specialization is the lower-level process MVP 3 intends to represent; and resource access

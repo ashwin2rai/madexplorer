@@ -893,3 +893,234 @@ The default stays 0.0. The parameter is kept for sensitivity analysis.
   - Prerequisite: §M6 gate if the mechanism will read claims.
 
 Stage 4 adaptive merging is renumbered out of the plan until a mechanism creates the need.
+
+---
+
+## N. Stage 4A — stratum labor and resolution design (2026-10-03)
+
+Design and audit only; production behavior unchanged. Evidence: the code audit below and
+`scripts/probes/strata_capacity.py` (real runs at `S_MAX` ∈ {4, 8, 16, 32}).
+
+**Principle (locked).** A population that is homogeneous in every modeled causal variable
+may stay homogeneous indefinitely. Strata arise only when a modeled mechanism treats part of
+a population differently; fusion is such a mechanism. No random differentiation, inequality
+targets, hidden traits or class thresholds.
+
+### N1. The labor model as built
+
+```text
+cohorts [U, sex, age] × labor_capacity_by_age (onset 6, full at maturation, elders 0.3)
+  × foraging_hours_per_day (5) × 365                      = capacity C (h/y)   labor_hours_columns
+       │  minus labor_debt_hours D (last year's clearing)
+       ▼
+Farming (tick: Harvest)   available = (C − D) · max_farm_labor_share (0.9)
+                          required  = fields_ha · cultivation_hours_per_ha (600)
+                          farm_hours = required · min(1, available / required)
+                          crop Y = fields · yield · worked fraction
+       ▼
+Foraging                  labor = max(C − D − farm_hours, 0); effort = just enough to
+                          meet need·(1 + surplus) − Y (shared cell pool); forage_hours;
+                          labor_debt_hours := 0
+       ▼
+Field planning            expansion step limited by next year's (C − ΔF·clearing)·share ≥
+                          (F + ΔF)·cultivation; clearing_hours = ΔF · clearing_h_per_ha
+                          (vegetation, tools) → labor_debt_hours (charged to next year)
+```
+
+| Quantity | Units | Where | Constraint / output | Competes |
+|---|---|---|---|---|
+| capacity C | h/y | `labor_hours_columns` (agriculture) | constraint | the single pool |
+| clearing (debt D) | h | `FieldPlans.apply` → next year | output then constraint | first claim on next year's C |
+| cultivation `farm_hours` | h/y | `FarmingSubsystem` | output; capped at 0.9·(C − D) | before foraging |
+| foraging `forage_hours` | h/y | `ForagingSubsystem` | output; the remainder | last |
+| storage, trade, processing | — | not labor-costed | — | — |
+| migration | — | utility terms only; `field_replacement_cost` values abandoned fields in clearing hours | not consumed | — |
+| readers | | learning (activity shares), innovation (`clearing_burden`), metrics | | |
+
+- **One pool:** there is one labor pool per unit, drawn in a fixed order (clearing debt,
+  then cultivation, then foraging).
+- **No cost of work:** food need does not depend on work, and labor has no direct energetic
+  or demographic cost.
+- **Two agricultural activities:** cultivation (annual, per hectare of existing fields) and
+  clearing (one-time per new hectare, in field planning, charged to next year's capacity).
+- **Undifferentiated labor:** there is no sexual division of labor and no skill separate
+  from labor.
+
+### N2. Labor vocabulary
+
+- **Capacity:** work a population could supply. It is `[U]`, from the shared age structure.
+- **Allocation:** division of capacity among activities. It is `[U]` (debt → cultivation →
+  foraging).
+- **Contribution:** a stratum's part of one activity's actual hours. Not represented;
+  implicitly ∝ share.
+- **Burden:** contribution per represented person. Implicitly equal.
+
+The first socioeconomic use needs only contribution, per activity, as a per-tick flow.
+
+### N3. Is there already a causal reason for labor to differ by stratum? No.
+
+| Candidate | Why it might change labor | Verdict |
+|---|---|---|
+| `field_claim` | land controllers work their own land | needs household production (returns to own work); inconsistent with pooled consumption |
+| `field_claim` (inverse) | land controllers direct others' labor | needs an authority or obligation institution; not modeled |
+| `store_claim` | stored-food holders need to work less | needs private access to stores (Stage 6A); access is pooled |
+| fusion origin | groups keep their previous practice | practice and knowledge are `[U]`; no stratum-level practice state |
+| age, sex, health | different capacity | the age–sex structure is shared by design (§C) |
+
+- **No differentiated capacity or private return to effort:** under pooled consumption,
+  equal-share labor is the consistent rule. Any differentiated rule would bring in an
+  unmodeled institution (household tenure without pooling, authority, or private access).
+  This is a scientific finding, not a gap to fill with an assumption.
+
+### N4. Candidate first labor quantity (when one is needed)
+
+- **Measured in hours, per activity, as a transient flow:** `cultivation_hours_i` and
+  `clearing_hours_i`, with Σ_i equal to the unit's `farm_hours` / `clearing_hours`.
+  Intensive form: `relative_burden_i = hours_i / (share_i · hours_unit)`.
+- **No occupations or rank:** no "farmer", `labor_rank` or generic labor scalar.
+- **Foraging contribution is not needed** while forage is attributed by share.
+- **Flow, not state:** a per-tick flow on `StepContext` and the sidecar, not `StrataTable`.
+  Persistent practice allocation (option B) would claim that specialization persists, which
+  needs its own mechanism; that is not justified now.
+- **It cannot create strata:** with one homogeneous stratum, nothing distinguishes a subset
+  of its people. This is acceptable: differentiation still enters through fusion. A
+  mechanism-driven split would need a named event treating a stated fraction differently.
+
+### N5. Relation to `field_output_claim_weight`
+
+The right conceptual evolution is
+`crop_output_share_i = (1 − w)·cultivation_labor_share_i + w·field_claim_i`. Today
+`share_i` stands in for labor. With homogeneous labor the two are identical (same values,
+no behavior change), and w then reads as "labor versus control" as the basis of
+attribution. w is unchanged (default 0).
+
+### N6. New-land claims
+
+"New field control follows clearing-labor contribution" is the causal form of the Stage 3B
+rule (whose rationale is already "labor clears land"):
+- **Same as today under homogeneous labor:** identical results.
+- **A self-reinforcing loop if labor follows control:** if a future rule made clearing
+  labor ∝ `field_claim`, new land would follow existing control. Dilution would stop and
+  fusion memory would be frozen, which is persistence by assumption.
+- **Collective clearing** is the ∝ share case.
+
+Adopt the causal form only together with the cause of the labor contribution.
+
+### N7. Resolution gate (locked invariant)
+
+**No physical mechanism may read stratum socioeconomic state until the resolution policy
+has been shown stable enough for the information that mechanism uses.**
+
+Accounting-only flows (sidecar, attribution) may proceed under the current policy.
+Production, food access, migration and demography may not.
+
+### N8. Capacity sensitivity (real runs, 4 seeds; cells w = 0 / 1)
+
+| `S_MAX` | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|
+| neolithic: unit-years at capacity | 16 % | 9 % | 5.7 % | 3.7 % |
+| neolithic: capacity coalescences | 7.0k | 8.7k | 11.2k | 14.8k |
+| neolithic: coalescence field error (Σ) | 1.3 / 1.7 | 0.19 / 0.42 | 0.034 / 0.073 | 0.006 / 0.012 |
+| neolithic: share of unit-years where w moves the field distribution / median 1-D Wasserstein distance | 0.17 / 0.017 | 0.12 / 0.006 | 0.09 / 0.002 | 0.06 / 0.0007 |
+| pressure: unit-years at capacity | 41 % | 32 % | 26 % | 21 % |
+| pressure: capacity coalescences | 6.2k | 9.7k | 15.6k | 25.3k |
+| pressure: coalescence field error (Σ) | 2.0 / 3.7 | 0.35 / 0.89 | 0.065 / 0.21 | 0.012 / 0.045 |
+| pressure: share where w moves the field distribution / median distance | 0.45 / 0.023 | 0.43 / 0.009 | 0.35 / 0.004 | 0.31 / 0.001 |
+| run time vs 8 (neolithic / pressure) | 1.0 / 0.93 | 1 | 1.08 / 1.33 | 1.53 / 3.0 |
+| `StrataTable` bytes/row | 129 | 257 | 513 | 1025 |
+
+- **Raising capacity does not make coalescence rare.** Demand is open-ended: each fusion
+  concatenates distinct positions. Coalescences *increase* with capacity, and pressure units
+  still sit at 32 a fifth of the time.
+- **It does cut representation error:** field error falls by about 6× per doubling, and the
+  w-redirection of field representation by about 2.6×.
+- **Aggregate observables are flat across capacity:** time-mean |field − 1| is 0.0113 /
+  0.044; store dispersion is constant per w.
+- **Runtime grows:** pure-Python greedy coalescence is O(n³) per fusion, and the probe's own
+  per-year measurement scales with strata. These are upper bounds.
+
+**Memory** (`StrataTable`: 3 × f64 + i64 per slot, plus an `n_strata` i8, i.e. 32·S + 1 B/row):
+
+| `S_MAX` | 2 000 units | 50 000 units | vs ≈ 2.5 GB RSS at 50k |
+|---|---|---|---|
+| 8 | 0.5 MB | 12.9 MB | 0.5 % |
+| 16 | 1.0 MB | 25.7 MB | 1.0 % |
+| 32 | 2.1 MB | 51.3 MB | 2.1 % |
+
+- **Persistent memory is cheap.** The transient per-step duplicate check builds
+  `[slots, S, S]` boolean arrays: about 3.2 / 12.8 / 51 MB per array at 50k units (several
+  are alive at once). At 32 it should be chunked.
+
+**Assessment:**
+- **Capacity cannot replace a resolution policy,** because demand is open-ended. It is still
+  the cheapest lever on error. 16 is the candidate: field error about 6× lower, field
+  representation moved by w about 2.6× less, +1 % memory, modest runtime.
+- **The w-leak** can only be removed by a metric that protects the dimensions a mechanism
+  reads (§M6 recommendation C). Capacity only shrinks it.
+
+### N9. How to run capacity sensitivity properly
+
+- **Make capacity a run parameter,** not a global: `strata.max_strata` in the existing
+  `StrataConfig` (default 8).
+  - `StrataTable` width and `normalize_strata` / `validate_block` take it from the
+    `PopulationStore`.
+  - Fixed-width padded arrays stay; the width is a per-run constant, not compile-time, which
+    suits future GPU and client backends.
+  - `n_strata` stays int8 (≤ 127).
+- **Prerequisites before using larger capacities:**
+  - vectorize capacity coalescence (cost matrix per merge, not Python triple loops);
+  - chunk the duplicate check.
+- **Interim method:** the probe sets the module global per process, which is adequate for
+  diagnostics only.
+
+### N10. Why short-lived differentiation is not itself a defect
+
+Temporary differences after groups with different histories merge are a plausible
+phenomenon. MVP 3's selective responses (food access, migration, mortality by stratum) can
+act on transient differences. Long-lived differentiation is needed only for phenomena whose
+own mechanisms are not modeled:
+- intergenerational wealth (inheritance, property persistence);
+- persistent leverage (institutions);
+- occupational specialization (stratum-level practice or skill).
+
+Introduce persistence only with those mechanisms.
+
+### N11. Candidate Stage 4 mechanisms (ranked by simplicity and assumptions, not by inequality produced)
+
+1. **A, observational labor attribution:** fewest assumptions; makes the labor-∝-share
+   assumption explicit. Identical values today.
+2. **C, labor contribution in crop attribution:** A plus the §N5 generalization. Identical
+   values today; clearer meaning of w.
+3. **B, new-land claims from clearing contribution:** identical today. Substantive only once
+   labor contribution has a cause; risk of the §N6 loop.
+4. **D, labor burden changes physical productivity:** physical feedback, gated (§N7); not
+   recommended.
+
+None of A–C is a causal socioeconomic mechanism while labor is undifferentiated. The causal
+step needs a reason for labor to differ (§N3). The minimal candidate is a private return to
+effort, which requires some non-pooled access: a scientific decision for review, not a
+default.
+
+### N12. Recommended decomposition (one review boundary each)
+
+- **4B — Resolution hardening (representation only; strata stay passive):**
+  - capacity as a run parameter (`strata.max_strata`, default 8);
+  - vectorized capacity coalescence;
+  - chunked duplicate check;
+  - coalescence error recorded by dimension in the sidecar;
+  - re-run §N8 to choose a default (16 the candidate).
+
+  Oracles stay identical; the Stage 3B/3C fixtures stay valid at capacity 8.
+- **4C — Stratum labor accounting (accounting only):**
+  - per-activity hours contributions as transient flows (∝ share);
+  - crop attribution (§N5) and new-land claims (§N6) rewritten on contributions;
+  - bit-identical to today.
+- **4D — Decision gate (design review):**
+  - what causes labor or access to differ by stratum (private return to effort via a minimal
+    access rule, or stay pooled);
+  - a mechanism-aware resolution metric for the dimensions that mechanism reads (§N7).
+
+  No physical feedback before 4D is approved.
+
+Deferred: hierarchy and influence, unequal consumption, stratified demography,
+approximate adaptive merging (§M2), work-related energetic or demographic costs.
