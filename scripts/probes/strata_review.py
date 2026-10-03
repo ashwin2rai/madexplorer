@@ -11,8 +11,8 @@ Modes:
 ``representation``
     Frozen reference scenarios (mvp2_neolithic 600 y, mvp2_pressure 400 y with and without
     cultivation; seeds 0-3) at w = 0, 0.25, 0.5, 1 (``strata.field_output_claim_weight``):
-    active-strata distribution, units at S_MAX, exact compactions, capacity coalescences with
-    their error by dimension, nearest-neighbor position distances within units, the cost of
+    active-strata distribution, units at capacity, exact compactions, capacity coalescences
+    with their error by dimension, nearest-neighbor position distances within units, the cost of
     the accounting hook, and whether the represented field-claim distribution differs from
     w = 0 in any unit-year.
 ``nonlinear``
@@ -31,9 +31,9 @@ Modes:
     Where non-neutral strata come from: every fusion's predecessor resources per person, and
     a run with fusion disabled (homogeneous units only).
 ``capacity``
-    Stress cases above S_MAX: two 8-strata predecessors with fixed field positions, one fed
-    year of accounting at each w, then fusion and capacity coalescence; does w change which
-    components are merged and the represented field distribution?
+    Stress cases above the default capacity (8): two 8-strata predecessors with fixed field
+    positions, one fed year of accounting at each w, then fusion and capacity coalescence;
+    does w change which components are merged and the represented field distribution?
 ``fieldgap``
     In the reference runs, the per unit-year Wasserstein-1 distance between the
     field-position distributions at w = 0 and w = 1 (nonzero only through capacity
@@ -64,7 +64,7 @@ from madexplorer.core.simulation import Simulator
 from madexplorer.population import strata as strata_module
 from madexplorer.population import strata_accounting
 from madexplorer.population.strata import (
-    S_MAX,
+    DEFAULT_MAX_STRATA,
     StrataBlock,
     fuse_strata,
     normalize_strata,
@@ -101,7 +101,8 @@ BINS = (
 class Observer:
     """Wraps rules for one run; ``year`` is set by the driver before each step."""
 
-    def __init__(self) -> None:
+    def __init__(self, coalescence: bool = True) -> None:
+        self.observe_coalescence = coalescence  # recompute merge errors (slow; diagnostics)
         self.year = 0
         self.hook_seconds = 0.0
         self.coalescences: list[dict[str, float]] = []
@@ -121,7 +122,7 @@ class Observer:
             hook(state, ctx)
             self.hook_seconds += time.perf_counter() - started
 
-        def coalesce_observed(block: StrataBlock, new_ids: Any, capacity: int = S_MAX) -> Any:
+        def coalesce_observed(block: StrataBlock, new_ids: Any, capacity: int) -> Any:
             self.coalescences.extend(coalescence_errors(block, capacity))
             return coalesce(block, new_ids, capacity)
 
@@ -136,9 +137,14 @@ class Observer:
                 self.food.extend(food_records(self.year, share, field, acc, rows))
             return flows(share, field, store, w, acc, rows)
 
+        wrapped: list[tuple[Any, str, Any]] = (
+            [(strata_module, "coalesce_to_capacity", coalesce_observed)]
+            if self.observe_coalescence
+            else []
+        )
         for module, name, new in (
+            *wrapped,
             (simulation, "account_strata", timed),
-            (strata_module, "coalesce_to_capacity", coalesce_observed),
             (lifecycle, "fuse_strata", fuse_observed),
             (strata_accounting, "food_flows", flows_observed),
         ):
@@ -390,7 +396,9 @@ def representation(jobs: int) -> None:
                 + f"/{values.max()}"
             )
             rows["share of unit-years with 1 stratum"].append(f"{counts[1] / total:.3f}")
-            rows["unit-years at S_MAX"].append(f"{counts[S_MAX]} ({counts[S_MAX] / total:.4f})")
+            rows["unit-years at DEFAULT_MAX_STRATA"].append(
+                f"{counts[DEFAULT_MAX_STRATA]} ({counts[DEFAULT_MAX_STRATA] / total:.4f})"
+            )
             ev: Counter[str] = Counter()
             for run in runs:
                 ev.update(run["events"])
@@ -776,9 +784,9 @@ def capacity(cases: int = 200) -> None:
     for _ in range(cases):
         parts = []
         for _side in range(2):
-            share = rng.dirichlet(np.ones(S_MAX))
-            field = rng.dirichlet(np.ones(S_MAX))
-            store = rng.dirichlet(np.ones(S_MAX))
+            share = rng.dirichlet(np.ones(DEFAULT_MAX_STRATA))
+            field = rng.dirichlet(np.ones(DEFAULT_MAX_STRATA))
+            store = rng.dirichlet(np.ones(DEFAULT_MAX_STRATA))
             parts.append(
                 (
                     share,
@@ -814,7 +822,7 @@ def capacity(cases: int = 200) -> None:
                 )
                 block = StrataBlock(
                     {"share": share, "field_claim": field, "store_claim": new_store},
-                    np.arange(S_MAX, dtype=np.int64),
+                    np.arange(DEFAULT_MAX_STRATA, dtype=np.int64),
                 )
                 blocks.append((block, people, (fields, closing)))
             fused = fuse_strata(blocks)
@@ -822,7 +830,9 @@ def capacity(cases: int = 200) -> None:
                 exact = fused
             counter = iter(range(10**6))
             normalized, _ = normalize_strata(
-                fused, lambda n: np.array([next(counter) for _ in range(n)], dtype=np.int64)
+                fused,
+                lambda n: np.array([next(counter) for _ in range(n)], dtype=np.int64),
+                DEFAULT_MAX_STRATA,
             )
             results[weight] = normalized
             before = weighted_variance(fused.columns["share"], positions(fused)[:, 0])
@@ -837,7 +847,10 @@ def capacity(cases: int = 200) -> None:
             if weight == 1.0:
                 w1_field_wasserstein.append(wasserstein(results[0.0], results[1.0]))
         changed += differs
-    print(f"stress cases: {cases} fusions of two {S_MAX}-strata units (16 -> {S_MAX})")
+    print(
+        f"stress cases: {cases} fusions of two {DEFAULT_MAX_STRATA}-strata units "
+        f"({2 * DEFAULT_MAX_STRATA} -> {DEFAULT_MAX_STRATA})"
+    )
     print(
         f"  cases where w changes the represented field distribution: {changed} "
         f"({changed / cases:.2f})"

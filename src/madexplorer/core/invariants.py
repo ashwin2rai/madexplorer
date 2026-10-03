@@ -52,7 +52,7 @@ def check_state_units(state: "SimulationState", year: int) -> None:
     if table is None:
         check_units(units.values(), state.world.n_cells, year)
         for unit in units.values():
-            if not unit.strata.is_valid():
+            if not unit.strata.is_valid(state.population.max_strata):
                 raise InvariantViolation(f"year {year}: invalid strata in {unit.id}")
         return
     slots = units.slots()

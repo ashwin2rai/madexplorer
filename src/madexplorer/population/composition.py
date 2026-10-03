@@ -27,6 +27,7 @@ from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.fields import EXTENSIVE_FIELDS, INTENSIVE_FIELDS
 from madexplorer.population.strata import (
     CLAIMS,
+    DEFAULT_MAX_STRATA,
     UNASSIGNED,
     Coalescence,
     Compaction,
@@ -60,6 +61,7 @@ def merge_state(
     merge_year: int,
     familiarity: FamiliarityRule,
     new_stratum_ids: Callable[[int], IntArray] | None = None,
+    max_strata: int = DEFAULT_MAX_STRATA,
 ) -> list[Compaction | Coalescence]:
     """Fold ``source``'s state into ``target`` (network rewiring is :func:`absorb`'s job).
 
@@ -80,6 +82,7 @@ def merge_state(
             ]
         ),
         new_stratum_ids or _unassigned_stratum_ids,
+        max_strata,
     )
     n_t, n_s = target.population, source.population
     total_reserve = target.total_reserve_kcal + source.total_reserve_kcal
@@ -154,11 +157,12 @@ def absorb(
     year: int,
     familiarity: FamiliarityRule,
     new_stratum_ids: Callable[[int], IntArray] | None = None,
+    max_strata: int = DEFAULT_MAX_STRATA,
 ) -> list[Compaction | Coalescence]:
     """Merge ``source_id`` into ``target_id``, rewire the network, and remove the source."""
     rewire_ties(units, source_id, target_id)
     records = merge_state(
-        units[target_id], units[source_id], mode, year, familiarity, new_stratum_ids
+        units[target_id], units[source_id], mode, year, familiarity, new_stratum_ids, max_strata
     )
     del units[source_id]
     return records

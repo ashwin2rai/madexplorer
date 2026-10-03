@@ -165,7 +165,14 @@ def merge_units(
     inherited = [units[uid].strata.stratum_id.tolist() for uid in (target_id, source_id)]
     if table is None:
         records = absorb(
-            units, source_id, target_id, mode, year, familiarity, population.new_stratum_ids
+            units,
+            source_id,
+            target_id,
+            mode,
+            year,
+            familiarity,
+            population.new_stratum_ids,
+            population.max_strata,
         )
         _log_fusion(population, year, target_id, source_id, mode, inherited, records)
         return
@@ -185,6 +192,7 @@ def merge_units(
             ]
         ),
         population.new_stratum_ids,
+        population.max_strata,
     )
     rewire_ties(units, source_id, target_id)
     reserve = columns["reserve_kcal_per_capita"]
@@ -287,5 +295,10 @@ def log_normalization(
         if isinstance(record, Compaction):
             event["position"] = list(record.position)
         else:
+            # Representation-error diagnostics (observation only): combined (the chosen
+            # pair's cost) and by dimension.
             event["cost"] = record.cost
+            event["field_error"] = record.field_error
+            event["store_error"] = record.store_error
+            event["combined_error"] = record.cost
         log.append(event)

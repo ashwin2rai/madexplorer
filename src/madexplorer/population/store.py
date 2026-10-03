@@ -35,7 +35,7 @@ from madexplorer.core.types import IntArray
 from madexplorer.population.beliefs import BeliefStore, make_belief_store
 from madexplorer.population.strata import (
     CLAIMS,
-    S_MAX,
+    DEFAULT_MAX_STRATA,
     UNASSIGNED,
     Compaction,
     StrataBlock,
@@ -69,10 +69,14 @@ class PopulationStore:
         table: bool = True,
         technology_table: "TechnologyTable | None" = None,
         species_index: Mapping[str, int] | None = None,
+        max_strata: int = DEFAULT_MAX_STRATA,
     ) -> None:
         self.beliefs: BeliefStore = make_belief_store(belief_backend, n_cells)
         self.table: UnitTable | None = UnitTable(technology_table) if table else None
-        self.strata: StrataTable | None = StrataTable() if table else None
+        # Strata capacity of this run (strata.max_strata): numerical resolution, owned here
+        # and by the padded table; every normalization of this store's units uses it.
+        self.max_strata = max_strata
+        self.strata: StrataTable | None = StrataTable(max_strata) if table else None
         self._next_stratum_id = 0
         # Sidecar strata events and pooling flows (observation only; None = not recorded).
         # Nothing reads them.
@@ -101,16 +105,18 @@ class PopulationStore:
     ) -> None:
         """Give a unit of this store new strata (fixtures, probes): validated before anything
         changes, installed as new components with fresh ids and normalized (exact duplicates
-        compacted). More than ``S_MAX`` distinct positions are refused unless ``coalesce``
-        asks for capacity coalescence."""
+        compacted). More than ``max_strata`` distinct positions are refused unless
+        ``coalesce`` asks for capacity coalescence."""
         if unit.__dict__.get("_belief_store") is not self.beliefs:
             raise ValueError(f"unit {unit.id} is not in this PopulationStore")
-        validate_block(block, allow_over_capacity=True)
+        validate_block(block, self.max_strata, allow_over_capacity=True)
         distinct, _ = compact_exact_strata(block, _unassigned_ids)
-        if len(distinct) > S_MAX and not coalesce:
-            raise ValueError(f"{len(distinct)} distinct positions exceed S_MAX = {S_MAX}")
+        if len(distinct) > self.max_strata and not coalesce:
+            raise ValueError(
+                f"{len(distinct)} distinct positions exceed max_strata = {self.max_strata}"
+            )
         fresh = block.with_ids(self.new_stratum_ids(len(block)))
-        unit.strata, _ = normalize_strata(fresh, self.new_stratum_ids)
+        unit.strata, _ = normalize_strata(fresh, self.new_stratum_ids, self.max_strata)
 
     def settle_empty_claims(self, year: int) -> None:
         """Apply ``claim_zero_stock``: claims on a zero physical stock become the population

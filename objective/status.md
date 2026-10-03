@@ -1,10 +1,61 @@
 # Implementation Status — MVP 3 (staged)
 
-**Updated:** 2026-10-03 (Stage 4A)\
+**Updated:** 2026-10-03 (Stage 4B)\
 **Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
 **Current milestone:** MVP 3 — staged socioeconomic differentiation
 
 ## MVP 3 stage handoff
+
+**Completed:** Stage 4B — strata resolution hardening (design §O).
+
+**Scientific behavior:** unchanged. At capacity 8 the strata sidecar is bit-identical to
+Stage 4A in six full runs (19,422 coalescences). The Stage 3B/3C fixtures are unchanged and
+the MVP 2.1 oracles are identical.
+
+**What changed:**
+- **Configurable capacity:** `strata.max_strata` is configurable per run (1..127, default 8,
+  in `config_hash`, not in `static_key`). It is owned by `PopulationStore` and its
+  fixed-width `StrataTable`, and the module global `S_MAX` is gone.
+- **Bounded duplicate validation:** chunked, over active counts. Peak temporary on 50k rows
+  is 0.7 / 1.3 / 4.0 MB at 8 / 16 / 32 (was 21 MB at 8).
+- **Vectorized capacity coalescence:** the same rule, bit-identical to the retained scalar
+  reference (a differential oracle). Speed-up is 1.4× / 3.7× / 5.9× at 8 / 16 / 32.
+- **Per-dimension error reporting:** `field_error`, `store_error` and `combined_error` on
+  every coalescence record and sidecar event, aggregated by `scripts/probes/strata_capacity.py`.
+- **Physical isolation re-verified:** across capacities and w, physical outputs are
+  identical.
+
+**Default:** still 8, pending review.
+
+**Sensitivity** (4 seeds; neolithic / pressure; w = 0):
+
+| `max_strata` | at capacity | field error Σ | field distance vs 32 (p99) | w moves field repr. (p50) | run time vs 8 |
+|---|---|---|---|---|---|
+| 8 | 9 % / 32 % | 0.19 / 0.35 | 0.018 / 0.032 | 0.0061 / 0.0091 | — |
+| 16 | 5.7 % / 26 % | 0.034 / 0.065 | 0.006 / 0.013 | 0.0023 / 0.0038 | +3 % / +6 % |
+| 32 | 3.7 % / 21 % | 0.006 / 0.012 | — | 0.0007 / 0.0014 | +9 % / +24 % |
+
+Coalescences still rise with capacity (demand is open-ended). Error falls about 6× per
+doubling, and pooling totals at 16 are within 1e-3 to 6e-3 of 32.
+
+**Recommendation:** CHANGE TO 16 at review. That would need new versioned strata fixtures at
+16; the 3B/3C fixtures stay at 8.
+
+**Physical-feedback gate:** not cleared. Capacity reduces but does not remove the w coupling,
+and no physical mechanism is proposed whose information needs can be tested.
+
+**Next stage:** PAUSE FOR REVIEW. Stage 4C is not authorized.
+
+**Do not forget:**
+- no differentiated labor exists;
+- no reason for labor to differ has yet been modeled;
+- adaptive merging remains deferred;
+- the capacity metric remains numerical and mechanism-agnostic (equal field/store weights);
+- `field_output_claim_weight` default 0.
+
+---
+
+### Stage 4A — labor and resolution design (previous handoff)
 
 **Completed:** Stage 4A — labor and resolution design (design §N; probe
 `scripts/probes/strata_capacity.py`).
@@ -46,7 +97,7 @@
 - `field_output_claim_weight` default 0;
 - adaptive merging stays deferred; exact compaction only, no epsilon merge.
 
-**Next stage:** Stage 4B — Resolution hardening:
+**Next stage (at 4A):** Stage 4B — Resolution hardening (done):
 - capacity as a run parameter (`strata.max_strata`, default 8);
 - vectorized capacity coalescence;
 - chunked duplicate check;

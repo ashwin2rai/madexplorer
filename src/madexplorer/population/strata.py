@@ -11,8 +11,9 @@ founded unit has one neutral stratum; heterogeneity arises only by fusion inheri
 (:func:`fuse_strata`), which keeps predecessor positions as distinct components. After a
 structural change, :func:`normalize_strata` makes the representation canonical: exact
 duplicate positions become one component (:func:`compact_exact_strata`, lossless), and only
-then, above ``S_MAX``, :func:`coalesce_to_capacity` approximates (numerical resolution, not
-social dynamics). Adaptive merging below ``S_MAX`` is MVP 3 Stage 4. A claim
+then, above the run's capacity ``max_strata``, :func:`coalesce_to_capacity` approximates
+(numerical resolution, not social dynamics). Adaptive merging below capacity is deferred
+(design §M2). A claim
 on an empty physical stock is the population share (:func:`claims_on_empty_stocks`). Stratum
 ids are observational handles allocated by the owning
 :class:`~madexplorer.population.store.PopulationStore`; they never enter equations, ordering
@@ -24,8 +25,10 @@ table and object engines both apply them (``population.lifecycle``,
 
 Two storage forms:
 
-- :class:`StrataTable` (production): padded ``[capacity, S_MAX]`` columns row-aligned with
-  the unit table's slots, plus the active count per row; a free row holds no strata.
+- :class:`StrataTable` (production): padded ``[rows, max_strata]`` columns row-aligned with
+  the unit table's slots, plus the active count per row; a free row holds no strata. The
+  width ``max_strata`` is fixed per run (``strata.max_strata``; owned by the
+  :class:`~madexplorer.population.store.PopulationStore`).
 - :class:`StrataBlock` (a detached unit, and the object-authoritative reference engine):
   the same columns as 1-D arrays of the active strata.
 """
@@ -40,7 +43,11 @@ from madexplorer.core.governance import model_rule
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.population.table import GROWTH_FRACTION, MIN_CAPACITY
 
-S_MAX = 8  # numerical socioeconomic-resolution limit, not a number of classes
+# Default run capacity (strata.max_strata): a numerical socioeconomic-resolution limit, not a
+# number of classes. The active count per row is int8, so capacities stay <= MAX_STRATA_LIMIT.
+DEFAULT_MAX_STRATA = 8
+MAX_STRATA_LIMIT = 127
+DUPLICATE_CHUNK_ROWS = 1024  # rows per chunk of the pairwise exact-duplicate check
 UNASSIGNED = -1  # stratum id of a stratum not yet bound to a store
 PARTITION_TOLERANCE = 1e-12  # |sum - 1| allowed for a partition-of-unity column
 
@@ -105,9 +112,11 @@ class StrataBlock:
             float(self.columns[f.name][0]) == f.neutral for f in STRATUM_FIELDS
         )
 
-    def is_valid(self) -> bool:
-        """At least one stratum, positive shares, every column a partition of unity."""
-        if not 1 <= len(self) <= S_MAX or (self.columns["share"] <= 0).any():
+    def is_valid(self, max_strata: int | None = None) -> bool:
+        """At least one stratum (at most ``max_strata`` when given), positive shares, every
+        column a partition of unity, no exact duplicate positions."""
+        upper = max_strata if max_strata is not None else len(self)
+        if not 1 <= len(self) <= upper or (self.columns["share"] <= 0).any():
             return False
         return all(
             (values >= 0).all() and abs(float(values.sum()) - 1.0) <= PARTITION_TOLERANCE
@@ -128,8 +137,8 @@ class StrataBlock:
         "Stage 1."
     ),
     source_type="theoretical",
-    parameters=("S_MAX",),
-    expected_domain="1 <= strata per unit <= S_MAX; each column sums to 1; shares > 0",
+    parameters=("max_strata",),
+    expected_domain="1 <= strata per unit <= max_strata; each column sums to 1; shares > 0",
     known_limitations=(
         "No correlation between socioeconomic position and age or sex; no stratum-specific "
         "vital rates. Stage 1 strata are passive."
@@ -143,15 +152,18 @@ def neutral_strata() -> StrataBlock:
     )
 
 
-def validate_block(block: StrataBlock, *, allow_over_capacity: bool = False) -> None:
+def validate_block(
+    block: StrataBlock, max_strata: int, *, allow_over_capacity: bool = False
+) -> None:
     """Raise ``ValueError`` unless ``block`` is a valid set of strata.
 
-    Valid: 1..S_MAX strata (more only with ``allow_over_capacity``), finite values, positive
-    shares, nonnegative claims, every column summing to 1 within ``PARTITION_TOLERANCE``.
+    Valid: 1..max_strata strata (more only with ``allow_over_capacity``), finite values,
+    positive shares, nonnegative claims, every column summing to 1 within
+    ``PARTITION_TOLERANCE``.
     """
     n = len(block)
-    if n < 1 or (n > S_MAX and not allow_over_capacity):
-        raise ValueError(f"a unit needs 1..{S_MAX} strata, got {n}")
+    if n < 1 or (n > max_strata and not allow_over_capacity):
+        raise ValueError(f"a unit needs 1..{max_strata} strata, got {n}")
     if set(block.columns) != set(STRATUM_COLUMNS):
         raise ValueError(f"strata columns must be exactly {STRATUM_COLUMNS}")
     for name, values in block.columns.items():
@@ -216,39 +228,100 @@ def fuse_strata(parts: Sequence[tuple[StrataBlock, float, Sequence[float]]]) -> 
 
 @dataclass(frozen=True)
 class Coalescence:
-    """One capacity coalescence: two components replaced by their sum (observation only)."""
+    """One capacity coalescence: two components replaced by their sum (observation only).
+
+    Representation-error diagnostics of the merge, with ``w = s_i s_j / (s_i + s_j)``:
+    ``field_error = w * (field position gap)^2``, ``store_error = w * (store position
+    gap)^2`` and ``cost = w * (sum of both squared gaps)``, the combined error the pair was
+    chosen by (equal to ``field_error + store_error`` up to rounding). Never read by the
+    simulation.
+    """
 
     merged_ids: tuple[int, int]
     new_id: int
-    cost: float  # population-weighted squared position error introduced
+    cost: float  # combined population-weighted squared position error introduced
+    field_error: float = 0.0
+    store_error: float = 0.0
 
 
 @model_rule(
     name="strata_capacity_coalescence",
     version="1.0",
     rationale=(
-        "Numerical-resolution rule, not social dynamics: while a unit has more than S_MAX "
-        "strata, the pair whose merger adds the least population-weighted squared position "
-        "error, s_i s_j / (s_i + s_j) * |p_i - p_j|^2 with p = (field_claim, store_claim) / "
-        "share, is replaced by one component with summed share and claims (its position is the "
-        "population-weighted centroid; totals are conserved exactly) and a fresh id. Pairs are "
-        "compared in a canonical order of their state values, so neither ids nor storage "
-        "order choose the pair."
+        "Numerical-resolution rule, not social dynamics: while a unit has more than "
+        "max_strata strata, the pair whose merger adds the least population-weighted squared "
+        "position error, s_i s_j / (s_i + s_j) * |p_i - p_j|^2 with p = (field_claim, "
+        "store_claim) / share, is replaced by one component with summed share and claims (its "
+        "position is the population-weighted centroid; totals are conserved exactly) and a "
+        "fresh id. Pairs are compared in a canonical order of their state values, so neither "
+        "ids nor storage order choose the pair."
     ),
     source_type="theoretical",
-    parameters=("S_MAX",),
-    expected_domain="at most S_MAX strata; column totals unchanged",
+    parameters=("max_strata",),
+    expected_domain="at most max_strata strata; column totals unchanged",
     known_limitations=(
         "Greedy (one pair at a time); distance in the two Stage 2 positions with equal "
-        "weights. Only enforces capacity: components below S_MAX are never merged here."
+        "weights (mechanism-agnostic; design §M6, §N7). Only enforces capacity: components "
+        "below max_strata are never merged here."
     ),
 )
 def coalesce_to_capacity(
-    block: StrataBlock, new_ids: Callable[[int], IntArray], capacity: int = S_MAX
+    block: StrataBlock, new_ids: Callable[[int], IntArray], capacity: int
 ) -> tuple[StrataBlock, list[Coalescence]]:
-    """Coalesce the cheapest pairs until at most ``capacity`` (default ``S_MAX``) strata
-    remain. Lifecycle code calls :func:`normalize_strata`, which compacts exact duplicates
-    first."""
+    """Coalesce the cheapest pairs until at most ``capacity`` strata remain. Lifecycle code
+    calls :func:`normalize_strata`, which compacts exact duplicates first.
+
+    Vectorized form of :func:`coalesce_to_capacity_reference`, bit-identical to it: the
+    same canonical pair order (state values; ties keep the first pair in that order), the
+    same costs and the same sums. Squares go through ``pow`` (an exponent array: NumPy's
+    scalar-exponent path would square by multiplication), like the reference's ``x ** 2``.
+    """
+    columns = {name: list(values.tolist()) for name, values in block.columns.items()}
+    ids = block.stratum_id.tolist()
+    records: list[Coalescence] = []
+    while len(ids) > capacity:
+        share, field, store = (np.array(columns[name]) for name in STRATUM_COLUMNS)
+        order = np.lexsort((store, field, share))  # canonical: by state only (stable)
+        s = share[order]
+        a, b = np.triu_indices(len(ids), 1)  # pairs in the reference's nested-loop order
+        s_a, s_b = s[a], s[b]
+        two = np.full(a.size, 2.0)
+        gaps = [
+            np.power(values[order][a] / s_a - values[order][b] / s_b, two)
+            for values in (field, store)
+        ]
+        weight = s_a * s_b / (s_a + s_b)
+        costs = weight * (gaps[0] + gaps[1])
+        best = int(np.argmin(costs))  # first minimum, as the reference's strict "<"
+        i, j = int(order[a[best]]), int(order[b[best]])
+        (new_id,) = new_ids(1).tolist()
+        records.append(
+            Coalescence(
+                (ids[i], ids[j]),
+                new_id,
+                float(costs[best]),
+                float(weight[best] * gaps[0][best]),
+                float(weight[best] * gaps[1][best]),
+            )
+        )
+        for values in columns.values():
+            merged = values[i] + values[j]
+            del values[max(i, j)], values[min(i, j)]
+            values.append(merged)
+        del ids[max(i, j)], ids[min(i, j)]
+        ids.append(new_id)
+    coalesced = StrataBlock(
+        {name: np.array(values) for name, values in columns.items()},
+        np.array(ids, dtype=np.int64),
+    )
+    return coalesced, records
+
+
+def coalesce_to_capacity_reference(
+    block: StrataBlock, new_ids: Callable[[int], IntArray], capacity: int
+) -> tuple[StrataBlock, list[Coalescence]]:
+    """Scalar reference of :func:`coalesce_to_capacity` (the Stage 2 implementation), kept
+    as its differential oracle (tests only)."""
     columns = {name: list(values.tolist()) for name, values in block.columns.items()}
     ids = block.stratum_id.tolist()
     records: list[Coalescence] = []
@@ -267,8 +340,13 @@ def coalesce_to_capacity(
                     best = (cost, i, j)
         assert best is not None
         cost, i, j = best
+        si, sj = columns["share"][i], columns["share"][j]
+        weight = si * sj / (si + sj)
+        field_error, store_error = (
+            weight * (columns[name][i] / si - columns[name][j] / sj) ** 2 for name in CLAIMS
+        )
         (new_id,) = new_ids(1).tolist()
-        records.append(Coalescence((ids[i], ids[j]), new_id, cost))
+        records.append(Coalescence((ids[i], ids[j]), new_id, cost, field_error, store_error))
         for values in columns.values():
             merged = values[i] + values[j]
             del values[max(i, j)], values[min(i, j)]
@@ -372,14 +450,14 @@ def _compact_once(
 
 
 def normalize_strata(
-    block: StrataBlock, new_ids: Callable[[int], IntArray]
+    block: StrataBlock, new_ids: Callable[[int], IntArray], max_strata: int
 ) -> tuple[StrataBlock, list[Compaction | Coalescence]]:
     """The canonical strata of a unit after a structural change: exact compaction first
-    (lossless), then, only while more than ``S_MAX`` remain, one capacity coalescence at a
-    time, each followed by exact compaction (a merged position may equal another's)."""
+    (lossless), then, only while more than ``max_strata`` remain, one capacity coalescence
+    at a time, each followed by exact compaction (a merged position may equal another's)."""
     block, compactions = compact_exact_strata(block, new_ids)
     records: list[Compaction | Coalescence] = list(compactions)
-    while len(block) > S_MAX:
+    while len(block) > max_strata:
         block, coalesced = coalesce_to_capacity(block, new_ids, capacity=len(block) - 1)
         block, compactions = compact_exact_strata(block, new_ids)
         records += [*coalesced, *compactions]
@@ -420,19 +498,24 @@ def claims_on_empty_stocks(block: StrataBlock, stocks: Sequence[float]) -> Strat
 
 
 class StrataTable:
-    """Strata of registered units: ``[capacity, S_MAX]`` columns row-aligned with unit slots.
+    """Strata of registered units: ``[capacity, max_strata]`` columns row-aligned with unit
+    slots.
 
     Row ``r`` belongs to the unit in slot ``r``; its active strata are columns
     ``0 .. n_strata[r] - 1`` (compacted). A reset row has ``n_strata == 0``, zero columns and
-    unassigned ids, so nothing can leak into a unit that later reuses the slot.
+    unassigned ids, so nothing can leak into a unit that later reuses the slot. The width
+    ``max_strata`` is fixed for the table's life (one run).
     """
 
-    def __init__(self) -> None:
+    def __init__(self, max_strata: int = DEFAULT_MAX_STRATA) -> None:
+        if not 1 <= max_strata <= MAX_STRATA_LIMIT:
+            raise ValueError(f"max_strata must be in 1..{MAX_STRATA_LIMIT}, got {max_strata}")
+        self.max_strata = max_strata
         self.capacity = 0
         self.columns: dict[str, FloatArray] = {
-            name: np.zeros((0, S_MAX)) for name in STRATUM_COLUMNS
+            name: np.zeros((0, max_strata)) for name in STRATUM_COLUMNS
         }
-        self.stratum_id: IntArray = np.full((0, S_MAX), UNASSIGNED, dtype=np.int64)
+        self.stratum_id: IntArray = np.full((0, max_strata), UNASSIGNED, dtype=np.int64)
         self.n_strata = np.zeros(0, dtype=np.int8)
 
     def ensure(self, slot: int) -> None:
@@ -469,8 +552,8 @@ class StrataTable:
     def load(self, slot: int, block: StrataBlock) -> None:
         """Write a unit's strata (ids included) into ``slot``."""
         n = len(block)
-        if not 1 <= n <= S_MAX:
-            raise ValueError(f"a unit needs 1..{S_MAX} strata, got {n}")
+        if not 1 <= n <= self.max_strata:
+            raise ValueError(f"a unit needs 1..{self.max_strata} strata, got {n}")
         self.ensure(slot)
         self.reset(slot)
         for name in STRATUM_COLUMNS:
@@ -525,29 +608,49 @@ class StrataTable:
         )
 
     def check(self, slots: IntArray) -> BoolArray:
-        """Per slot: 1..S_MAX strata with assigned ids, positive shares, zero padding, and
-        every column a partition of unity."""
+        """Per slot: 1..max_strata strata with assigned ids, positive shares, zero padding,
+        every column a partition of unity, and no exact duplicate positions. Rows are
+        checked in chunks, so temporaries stay bounded."""
+        ok = np.empty(slots.size, dtype=bool)
+        for start in range(0, slots.size, DUPLICATE_CHUNK_ROWS):
+            chunk = slots[start : start + DUPLICATE_CHUNK_ROWS]
+            ok[start : start + chunk.size] = self._check_rows(chunk)
+        ok &= ~self.duplicate_rows(slots)  # no two components at exactly the same position
+        return ok
+
+    def _check_rows(self, slots: IntArray) -> BoolArray:
         n = self.n_strata[slots].astype(np.int64)
-        active = np.arange(S_MAX)[None, :] < n[:, None]
+        active = np.arange(self.max_strata)[None, :] < n[:, None]
         ids = self.stratum_id[slots]
-        ok: BoolArray = (n >= 1) & (n <= S_MAX)
+        ok: BoolArray = (n >= 1) & (n <= self.max_strata)
         ok &= np.where(active, ids != UNASSIGNED, ids == UNASSIGNED).all(axis=1)
         ok &= np.where(active, self.columns["share"][slots] > 0, True).all(axis=1)
         for values in self.columns.values():
             rows = values[slots]
             ok &= np.where(active, rows >= 0, rows == 0).all(axis=1)
             ok &= np.abs(rows.sum(axis=1) - 1.0) <= PARTITION_TOLERANCE
-        ok &= ~self.duplicate_rows(slots)  # no two components at exactly the same position
         return ok
 
     def duplicate_rows(self, slots: IntArray) -> BoolArray:
-        """Per slot: whether two active strata sit at exactly the same position."""
-        n = self.n_strata[slots].astype(np.int64)
-        active = np.arange(S_MAX)[None, :] < n[:, None]
-        share = np.where(active, self.columns["share"][slots], 1.0)
-        same = active[:, :, None] & active[:, None, :] & ~np.eye(S_MAX, dtype=bool)[None]
-        for name in CLAIMS:
-            position = self.columns[name][slots] / share
-            same &= position[:, :, None] == position[:, None, :]
-        duplicated: BoolArray = same.any(axis=(1, 2))
+        """Per slot: whether two active strata sit at exactly the same position.
+
+        Exact (no tolerance) pairwise comparison, only for rows with at least two strata, in
+        chunks of ``DUPLICATE_CHUNK_ROWS`` rows and only over the chunk's largest active
+        count ``k``: temporaries are ``[chunk, k, k]``, bounded independently of the number
+        of units and of ``max_strata``.
+        """
+        duplicated = np.zeros(slots.size, dtype=bool)
+        multi = np.flatnonzero(self.n_strata[slots] > 1)
+        for start in range(0, multi.size, DUPLICATE_CHUNK_ROWS):
+            where = multi[start : start + DUPLICATE_CHUNK_ROWS]
+            rows = slots[where]
+            n = self.n_strata[rows].astype(np.int64)
+            k = int(n.max())
+            active = np.arange(k)[None, :] < n[:, None]
+            share = np.where(active, self.columns["share"][rows, :k], 1.0)
+            same = active[:, :, None] & active[:, None, :] & ~np.eye(k, dtype=bool)[None]
+            for name in CLAIMS:
+                position = self.columns[name][rows, :k] / share
+                same &= position[:, :, None] == position[:, None, :]
+            duplicated[where] = same.any(axis=(1, 2))
         return duplicated

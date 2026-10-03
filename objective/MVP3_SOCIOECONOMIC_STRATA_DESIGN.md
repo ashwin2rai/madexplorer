@@ -1124,3 +1124,147 @@ default.
 
 Deferred: hierarchy and influence, unequal consumption, stratified demography,
 approximate adaptive merging (§M2), work-related energetic or demographic costs.
+
+---
+
+## O. Stage 4B — strata resolution hardening (as built, 2026-10-03)
+
+Representation engineering only; no socioeconomic semantics change. At the default capacity
+the strata sidecar is bit-identical to Stage 4A: rows, events and flows in six full runs with
+19,422 capacity coalescences; the Stage 3B/3C fixtures are unchanged; the MVP 2.1 oracles
+are identical.
+
+### O1. Capacity as a run setting
+
+- **Configuration:** `strata.max_strata` in `StrataConfig`; default 8, validated 1..127
+  (the active count is int8). It is a numerical resolution limit, not a sociological
+  parameter.
+  - It is part of `config_hash` (provenance).
+  - It is not in `static_key`, so runs differing only in capacity share one `StaticContext`.
+- **Ownership:** `PopulationStore.max_strata` owns it, and `StrataTable(max_strata)` uses it
+  as its padded width.
+  - Both engines' lifecycle paths take it from the store: `normalize_strata(block, ids,
+    max_strata)`, `coalesce_to_capacity(block, ids, capacity)`, `validate_block(block,
+    max_strata)`, `merge_state` / `absorb(..., max_strata)`.
+  - The object-engine invariant uses `StrataBlock.is_valid(max_strata)`.
+  - The module global `S_MAX` is gone; `DEFAULT_MAX_STRATA = 8` is only the default.
+- **Storage is fixed-width per run:** `[rows, max_strata]` float64 `share`, `field_claim`,
+  `store_claim`, int64 `stratum_id`, plus an int8 `n_strata` per row. That is 32·S + 1
+  bytes per row, verified: 129 / 257 / 513 / 1025 B at S = 4 / 8 / 16 / 32.
+- **Hot paths touch active counts, not the full width:** accounting slices to the rows'
+  largest active count (bit-identical, since padding is zero and sums are sequential). The
+  duplicate check works per chunk over its largest active count.
+
+| `max_strata` | 2 000 units | 50 000 units | vs ≈ 2.5 GB RSS at 50k |
+|---|---|---|---|
+| 8 | 0.5 MB | 12.9 MB | 0.5 % |
+| 16 | 1.0 MB | 25.7 MB | 1.0 % |
+| 32 | 2.1 MB | 51.3 MB | 2.1 % |
+
+(Table rows carry the unit table's growth slack.)
+
+### O2. Bounded exact-duplicate check
+
+`StrataTable.duplicate_rows` compares only rows with at least two strata, in chunks of 1024
+rows, over each chunk's largest active count `k`. Temporaries are `[1024, k, k]`, independent
+of the number of units. Semantics are unchanged: exact equality, no tolerance. `check`
+validates in chunks too. Peak temporary for `check` on 50k rows: 21 MB → 0.7 MB at width 8;
+1.3 MB at 16; 4.0 MB at 32.
+
+### O3. Vectorized capacity coalescence (same rule)
+
+- **Each greedy step:**
+  - order components canonically by state (`lexsort` on share, field claim, store claim;
+    stable);
+  - evaluate every pair's `s_i s_j/(s_i+s_j)·((Δp_field)² + (Δp_store)²)` at once over
+    `triu_indices` (the reference's nested-loop order);
+  - merge the first minimum.
+- **Bit-identical to the scalar reference,** which is kept as
+  `coalesce_to_capacity_reference`, a differential oracle used by tests:
+  - squares go through `pow` (an array exponent), because the reference's Python `x ** 2`
+    calls the platform `pow`. That is not always `x * x` (0.08 % of values differ here),
+    and NumPy's scalar-exponent path squares by multiplication;
+  - the cost sums the two squares in reference order;
+  - ties keep the first pair in canonical order.
+- **Speed:** 0.45 / 1.16 / 5.8 ms for a 2S → S fusion at S = 8 / 16 / 32, against the
+  reference's 0.61 / 4.3 / 34 ms.
+
+### O4. Representation-error diagnostics
+
+- **Per-dimension errors on every merge:** each `Coalescence` carries `field_error =
+  w·Δp_field²`, `store_error = w·Δp_store²` and `cost`, the combined error the pair was
+  chosen by (= field + store up to rounding), with `w = s_i s_j / (s_i + s_j)`.
+- **Sidecar events:** `capacity_coalescence` events add `field_error`, `store_error` and
+  `combined_error` (`cost` is kept). The frozen event stream is untouched, and nothing feeds
+  back.
+- **Probe:** `scripts/probes/strata_capacity.py` aggregates them, now through the real
+  setting.
+
+### O5. Capacity sensitivity (neolithic 600 y and pressure + cultivation 400 y, seeds 0–3)
+
+Physical outputs (frozen events, RNG states, unit physical state) are identical across every
+capacity and w. Cells: w = 0 / w = 1. "vs 32" compares with the highest tested capacity, a
+provisional reference, not truth.
+
+| neolithic | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|
+| unit-years at capacity | 16 % / 18 % | 9.1 % / 9.9 % | 5.7 % / 6.0 % | 3.7 % / 3.8 % |
+| capacity coalescences | 7.0k / 7.3k | 8.7k / 9.2k | 11.2k / 11.8k | 14.8k / 15.5k |
+| total error field | 1.32 / 1.66 | 0.19 / 0.42 | 0.034 / 0.073 | 0.006 / 0.012 |
+| total error store | 0.32 / 8.3 | 0.034 / 1.19 | 0.005 / 0.21 | 0.0008 / 0.043 |
+| per-merge field error p99 | 2.6e-3 / 3.5e-3 | 3.3e-4 / 9.4e-4 | 4.7e-5 / 1.3e-4 | 6.4e-6 / 1.6e-5 |
+| field-distribution distance vs 32, p99 | 0.043 / 0.046 | 0.018 / 0.021 | 0.006 / 0.008 | — |
+| pooling-volume relative difference vs 32 | 1e-3 / 4e-2 | 7e-5 / 1e-2 | 7e-6 / 1e-3 | — |
+| share of unit-years where w moves the field distribution | 0.156 | 0.115 | 0.084 | 0.058 |
+| that movement (1-D Wasserstein distance), p50 / p99 | 0.016 / 0.087 | 0.0061 / 0.046 | 0.0023 / 0.020 | 0.0007 / 0.010 |
+| run time (Σ 4 seeds; probe overhead included) | 84 s | 79 s | 81 s | 86 s |
+
+| pressure + cultivation | 4 | 8 | 16 | 32 |
+|---|---|---|---|---|
+| unit-years at capacity | 41 % | 32 % | 26 % | 21 % |
+| capacity coalescences | 6.2k | 9.7k | 15.6k | 25.3k |
+| total error field | 2.0 / 3.7 | 0.35 / 0.89 | 0.065 / 0.21 | 0.012 / 0.045 |
+| total error store | 0.33 / 15.7 | 0.038 / 2.6 | 0.005 / 0.55 | 0.0009 / 0.13 |
+| field-distribution distance vs 32, p99 | 0.070 / 0.089 | 0.032 / 0.042 | 0.013 / 0.019 | — |
+| pooling-volume relative difference vs 32 | 2e-3 / 0.14 | 4e-5 / 0.034 | 7e-7 / 6e-3 | — |
+| share of unit-years where w moves the field distribution | 0.445 | 0.422 | 0.350 | 0.308 |
+| that movement, p50 / p99 | 0.022 / 0.13 | 0.0091 / 0.057 | 0.0038 / 0.027 | 0.0014 / 0.012 |
+| run time | 36 s | 33 s | 35 s | 41 s |
+
+- **Coalescence frequency still rises with capacity,** because demand is open-ended (§N8).
+  Error falls about 6× per doubling.
+- **Convergence toward 32 is fast:** pooling totals differ by ≤ 1e-3 relative at 16 for
+  w = 0; for w = 1, 1e-3 (neolithic) and 6e-3 (pressure).
+- **w coupling is reduced, not removed:** its median falls about 2.5× per doubling. Only a
+  mechanism-aware metric removes it (§M6 C); none is introduced here.
+- **Cost after hardening:** run time +3 % / +9 % (neolithic) and +6 % / +24 % (pressure)
+  at 16 / 32. Stage 4A measured up to 3× with pure-Python coalescence. At 32, coalescence
+  is 14 % of a pressure run.
+- **Final-year people-weighted dispersion** is stable from 8 up (field 0.042 / 0.072; store
+  w = 1: 0.170 / 0.34). Capacity changes representation fidelity, not the aggregate picture.
+
+### O6. Recommendation for the default (decision deferred to review)
+
+**CHANGE TO 16** (not done in 4B):
+- representation error is about 6× lower and the w coupling about 2.5× lower;
+- pooling totals are within 1e-3 to 6e-3 of the 32 reference;
+- cost is +1 % memory at 50k units and +3–6 % run time;
+- it leaves headroom for one more socioeconomic dimension.
+
+32 buys another ≈ 6× in error at +9–24 % run time; there is no evidence yet that a mechanism
+needs it. Switching changes strata outputs (not physics), so it needs new versioned strata
+fixtures at 16 (the 3B/3C fixtures stay at 8).
+
+### O7. Gate status
+
+Not cleared. 4B supplies the tools (configurable capacity, error diagnostics, convergence
+measures) and shows capacity reduces but does not remove the w coupling. No physical
+mechanism is proposed yet, so stability "for the information it uses" cannot be assessed.
+The equal-weight metric stays numerical and mechanism-agnostic (§M6 C, §N7).
+
+### O8. Labor accounting
+
+Stage 4C (accounting-only labor contributions) is not authorized. With no modeled cause for
+stratum-differentiated labor (§N3), it would add flows equal to share, with no new
+information. Its value is only as a named seam for a future cause, which should be weighed
+at review against first deciding that cause (§N12, 4D).

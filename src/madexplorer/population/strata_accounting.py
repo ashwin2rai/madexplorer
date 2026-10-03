@@ -21,8 +21,9 @@ simulator; nothing here is read by any physical mechanism.
   fractions.
 
 Each rule is one function on arrays whose last axis is strata: 1-D blocks (object engine)
-and padded ``[rows, S_MAX]`` rows (table engine; padding is zero) share the arithmetic, and
-sums over strata are sequential so padding cannot change rounding. Deviations from the
+and padded ``[rows, k]`` rows (table engine; ``k`` the rows' largest active count, padding
+is zero) share the arithmetic, and sums over strata are sequential so padding cannot change
+rounding. Deviations from the
 neutral allocation are computed in difference form, so a zero correction leaves the neutral
 values bit-identical. A single-stratum unit's claims stay exactly 1 and are skipped.
 """
@@ -389,7 +390,8 @@ def _apply_food(
     strata = population.strata
     used: list[tuple[dict[str, FloatArray], FoodFlows]] = []
     if strata is not None:
-        columns = {name: strata.columns[name][slots] for name in CLAIM_COLUMNS}
+        width = int(strata.n_strata[slots].max())  # active width; the rest is zero padding
+        columns = {name: strata.columns[name][slots, :width] for name in CLAIM_COLUMNS}
         flows = food_flows(
             columns["share"],
             columns["field_claim"],
@@ -398,7 +400,7 @@ def _apply_food(
             accounts,
             rows,
         )
-        strata.columns["store_claim"][slots] = store_claims_after_year(
+        strata.columns["store_claim"][slots, :width] = store_claims_after_year(
             columns["share"],
             columns["store_claim"],
             opening,
@@ -437,8 +439,10 @@ def _apply_fields(population: "PopulationStore", accounts: FieldAccounts, year: 
     units = [accounts.units[k] for k in rows.tolist()]
     strata = population.strata
     if strata is not None:
-        share, claim = strata.columns["share"][slots], strata.columns["field_claim"][slots]
-        strata.columns["field_claim"][slots] = field_claims_after_change(
+        width = int(strata.n_strata[slots].max())  # active width; the rest is zero padding
+        share = strata.columns["share"][slots, :width]
+        claim = strata.columns["field_claim"][slots, :width]
+        strata.columns["field_claim"][slots, :width] = field_claims_after_change(
             share, claim, before, after
         )
     else:

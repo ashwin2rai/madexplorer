@@ -21,7 +21,7 @@ from madexplorer.population.composition import MergeMode
 from madexplorer.population.familiarity import familiarity_rule
 from madexplorer.population.lifecycle import merge_units, split_unit
 from madexplorer.population.strata import (
-    S_MAX,
+    DEFAULT_MAX_STRATA,
     STRATUM_COLUMNS,
     UNASSIGNED,
     Compaction,
@@ -154,14 +154,16 @@ def spread(n: int, offset: float = 0.0) -> StrataBlock:
 
 
 def test_exactly_capacity_is_not_coalesced() -> None:
-    strata, records = coalesce_to_capacity(spread(S_MAX), counter())
-    assert records == [] and len(strata) == S_MAX
+    strata, records = coalesce_to_capacity(
+        spread(DEFAULT_MAX_STRATA), counter(), DEFAULT_MAX_STRATA
+    )
+    assert records == [] and len(strata) == DEFAULT_MAX_STRATA
 
 
 def test_one_over_capacity_coalesces_once_and_conserves_totals() -> None:
-    source = spread(S_MAX + 1)
-    strata, records = coalesce_to_capacity(source, counter())
-    assert len(records) == 1 and len(strata) == S_MAX
+    source = spread(DEFAULT_MAX_STRATA + 1)
+    strata, records = coalesce_to_capacity(source, counter(), DEFAULT_MAX_STRATA)
+    assert len(records) == 1 and len(strata) == DEFAULT_MAX_STRATA
     for name in STRATUM_COLUMNS:
         assert strata.columns[name].sum() == pytest.approx(source.columns[name].sum(), abs=1e-15)
     assert records[0].new_id == 1000 and strata.stratum_id[-1] == 1000
@@ -169,19 +171,19 @@ def test_one_over_capacity_coalesces_once_and_conserves_totals() -> None:
 
 
 def test_the_closest_pair_in_position_space_is_coalesced() -> None:
-    source = spread(S_MAX + 1)
+    source = spread(DEFAULT_MAX_STRATA + 1)
     for name in ("field_claim", "store_claim"):  # stratum 7 moves next to stratum 3
         values = source.columns[name]
         values[7] = values[3] * 1.001
     for name in ("field_claim", "store_claim"):
         source.columns[name] /= source.columns[name].sum()
-    _, records = coalesce_to_capacity(source, counter())
+    _, records = coalesce_to_capacity(source, counter(), DEFAULT_MAX_STRATA)
     assert set(records[0].merged_ids) == {3, 7}
 
 
 def test_merged_component_sits_at_the_population_weighted_centroid() -> None:
-    source = spread(S_MAX + 1)
-    strata, records = coalesce_to_capacity(source, counter())
+    source = spread(DEFAULT_MAX_STRATA + 1)
+    strata, records = coalesce_to_capacity(source, counter(), DEFAULT_MAX_STRATA)
     i, j = records[0].merged_ids
     merged = positions(strata)[-1]
     w = source.columns["share"][[i, j]]
@@ -193,25 +195,25 @@ def test_cross_cutting_positions_coalesce_by_distance_not_by_one_rank_axis() -> 
     # Positions (field, store): A (2.0, 0.5) and B (0.5, 2.0) cross-cut; C (2.0, 0.6) is close
     # to A in both dimensions, though a single wealth rank (field + store) would put C next
     # to B (2.6 vs 2.5) rather than A (2.5).
-    s = 1.0 / (S_MAX + 1)
-    field = [2.0, 0.5, 2.0] + [1.0] * (S_MAX - 2)
-    store = [0.5, 2.0, 0.6] + [1.0 + 0.3 * k for k in range(S_MAX - 2)]
-    share = np.full(S_MAX + 1, s)
+    s = 1.0 / (DEFAULT_MAX_STRATA + 1)
+    field = [2.0, 0.5, 2.0] + [1.0] * (DEFAULT_MAX_STRATA - 2)
+    store = [0.5, 2.0, 0.6] + [1.0 + 0.3 * k for k in range(DEFAULT_MAX_STRATA - 2)]
+    share = np.full(DEFAULT_MAX_STRATA + 1, s)
     source = StrataBlock(
         {
             "share": share,
             "field_claim": np.array(field) * share / (np.array(field) * share).sum(),
             "store_claim": np.array(store) * share / (np.array(store) * share).sum(),
         },
-        np.arange(S_MAX + 1, dtype=np.int64),
+        np.arange(DEFAULT_MAX_STRATA + 1, dtype=np.int64),
     )
-    _, records = coalesce_to_capacity(source, counter())
+    _, records = coalesce_to_capacity(source, counter(), DEFAULT_MAX_STRATA)
     assert set(records[0].merged_ids) == {0, 2}
 
 
 def test_coalescence_is_independent_of_storage_order_and_ids() -> None:
-    source = spread(S_MAX + 3)
-    reference, _ = coalesce_to_capacity(source, counter())
+    source = spread(DEFAULT_MAX_STRATA + 3)
+    reference, _ = coalesce_to_capacity(source, counter(), DEFAULT_MAX_STRATA)
     rng = np.random.default_rng(0)
     for _ in range(5):
         order = rng.permutation(len(source))
@@ -219,13 +221,13 @@ def test_coalescence_is_independent_of_storage_order_and_ids() -> None:
             {n: v[order].copy() for n, v in source.columns.items()},
             (10**6 - source.stratum_id[order]).astype(np.int64),  # renumbered too
         )
-        result, _ = coalesce_to_capacity(shuffled, counter())
+        result, _ = coalesce_to_capacity(shuffled, counter(), DEFAULT_MAX_STRATA)
         assert state_multiset(result) == state_multiset(reference)  # exact
 
 
 def test_identical_candidates_give_a_deterministic_state_multiset() -> None:
     twins = block([0.1] * 10, [0.1] * 10, [0.1] * 10)  # every pair costs 0
-    result, records = coalesce_to_capacity(twins, counter())
+    result, records = coalesce_to_capacity(twins, counter(), DEFAULT_MAX_STRATA)
     assert len(records) == 2 and state_multiset(result) == sorted(
         [(0.1, 0.1, 0.1)] * 6 + [(0.2, 0.2, 0.2)] * 2
     )
@@ -234,8 +236,8 @@ def test_identical_candidates_give_a_deterministic_state_multiset() -> None:
 def test_fusion_beyond_capacity_coalesces_to_capacity() -> None:
     fused = fuse_strata([(spread(5), 40, [3.0, 10.0]), (spread(4, 0.5), 60, [1.0, 30.0])])
     assert len(fused) == 9
-    strata, records = coalesce_to_capacity(fused, counter())
-    assert len(strata) == S_MAX and len(records) == 1
+    strata, records = coalesce_to_capacity(fused, counter(), DEFAULT_MAX_STRATA)
+    assert len(strata) == DEFAULT_MAX_STRATA and len(records) == 1
     for name in STRATUM_COLUMNS:
         assert abs(strata.columns[name].sum() - 1.0) <= 1e-12
 
@@ -277,7 +279,7 @@ def test_fixtures_install_with_fresh_ids_on_both_engines(fixture: StrataBlock) -
         block([0.5, 0.6], [0.5, 0.5], [0.5, 0.5]),  # not normalized
         block([0.5, 0.5], [np.nan, 0.5], [0.5, 0.5]),  # NaN
         block([0.5, 0.5], [1.5, -0.5], [0.5, 0.5]),  # negative claim
-        spread(S_MAX + 1),  # over capacity without coalescence
+        spread(DEFAULT_MAX_STRATA + 1),  # over capacity without coalescence
     ],
 )
 def test_invalid_fixtures_are_refused_before_anything_changes(bad: StrataBlock) -> None:
@@ -294,8 +296,8 @@ def test_invalid_fixtures_are_refused_before_anything_changes(bad: StrataBlock) 
 def test_over_capacity_fixture_can_ask_for_coalescence() -> None:
     sim = _sims()[0]
     unit = next(iter(sim.state.units.values()))
-    sim.state.population.replace_strata(unit, spread(S_MAX + 2), coalesce=True)
-    assert len(unit.strata) == S_MAX
+    sim.state.population.replace_strata(unit, spread(DEFAULT_MAX_STRATA + 2), coalesce=True)
+    assert len(unit.strata) == DEFAULT_MAX_STRATA
 
 
 # ---------------------------------------------------------------- lifecycle on both engines
@@ -340,7 +342,7 @@ def test_fusion_beyond_capacity_agrees_between_engines() -> None:
         sim.state.population.replace_strata(units[0], spread(6))
         sim.state.population.replace_strata(units[1], spread(5, 0.3))
         merge_units(sim.state.population, units[1].id, units[0].id, MergeMode.FUSION, 1, _rule(sim))
-        assert len(units[0].strata) == S_MAX and units[0].strata.is_valid()
+        assert len(units[0].strata) == DEFAULT_MAX_STRATA and units[0].strata.is_valid()
     _same_engines(*sims)
 
 
@@ -587,15 +589,17 @@ def test_compaction_is_independent_of_storage_order_and_ids() -> None:
 
 
 def test_exact_compaction_avoids_unneeded_capacity_coalescence() -> None:
-    source = dyadic_duplicates()  # 10 components > S_MAX, but only 6 distinct positions
-    normalized, records = normalize_strata(source, counter())
+    source = (
+        dyadic_duplicates()
+    )  # 10 components > DEFAULT_MAX_STRATA, but only 6 distinct positions
+    normalized, records = normalize_strata(source, counter(), DEFAULT_MAX_STRATA)
     assert len(normalized) == 6
     assert records and all(isinstance(r, Compaction) for r in records)
     assert not has_exact_duplicates(normalized)
 
 
 def test_capacity_coalescence_still_finishes_when_compaction_is_not_enough() -> None:
-    distinct = spread(S_MAX + 2)  # 10 distinct positions
+    distinct = spread(DEFAULT_MAX_STRATA + 2)  # 10 distinct positions
     doubled = StrataBlock(  # plus two exact duplicates of the first component: 12 in all
         {
             n: np.concatenate([v[:1] / 3, v[:1] / 3, v[:1] / 3, v[1:]])
@@ -603,10 +607,10 @@ def test_capacity_coalescence_still_finishes_when_compaction_is_not_enough() -> 
         },
         np.arange(12, dtype=np.int64),
     )
-    normalized, records = normalize_strata(doubled, counter())
+    normalized, records = normalize_strata(doubled, counter(), DEFAULT_MAX_STRATA)
     kinds = [type(r).__name__ for r in records]
     assert kinds[0] == "Compaction" and kinds.count("Coalescence") == 2
-    assert len(normalized) == S_MAX and not has_exact_duplicates(normalized)
+    assert len(normalized) == DEFAULT_MAX_STRATA and not has_exact_duplicates(normalized)
     for name in STRATUM_COLUMNS:
         assert abs(normalized.columns[name].sum() - 1.0) <= 1e-12
 
@@ -621,8 +625,8 @@ def test_a_lineage_refusing_with_itself_compacts_instead_of_coalescing() -> None
         {n: v.copy() for n, v in lineage.columns.items()}, lineage.stratum_id + 100
     )
     fused = fuse_strata([(lineage, 32, [8.0, 4.0]), (copy_ids, 32, [8.0, 4.0])])
-    assert len(fused) == 12 > S_MAX
-    normalized, records = normalize_strata(fused, counter())
+    assert len(fused) == 12 > DEFAULT_MAX_STRATA
+    normalized, records = normalize_strata(fused, counter(), DEFAULT_MAX_STRATA)
     assert all(isinstance(r, Compaction) for r in records) and len(records) == 6
     # Fusion renormalizes claims by the fused totals, so values agree to the last bits.
     assert np.allclose(state_multiset(normalized), state_multiset(lineage), rtol=1e-15, atol=0)
@@ -635,7 +639,7 @@ def test_parent_and_daughter_fusion_is_normalized_on_both_engines() -> None:
         sim.state.population.strata_log = []
         parent = next(iter(sim.state.units.values()))
         parent.fields_ha, parent.stores_kcal = 0.0, 0.0  # no stock: claims fall back to shares
-        sim.state.population.replace_strata(parent, spread(S_MAX // 2 + 1))
+        sim.state.population.replace_strata(parent, spread(DEFAULT_MAX_STRATA // 2 + 1))
         daughter = split_unit(
             sim.state.population,
             parent.id,

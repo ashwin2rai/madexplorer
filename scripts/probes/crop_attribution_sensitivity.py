@@ -34,7 +34,7 @@ import madexplorer.core.simulation as simulation
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
 from madexplorer.population import strata_accounting
-from madexplorer.population.strata import S_MAX, StrataBlock, positions
+from madexplorer.population.strata import StrataBlock, positions
 
 WEIGHTS = (0.0, 0.25, 0.5, 1.0)
 SCENARIO = "scenarios/mvp2_neolithic.yaml"
@@ -120,7 +120,7 @@ def run(scenario: Scenario, years: int) -> dict[str, Any]:
         "flow_rows": len(flows),
         "events": events,
         "mean_strata": float(np.mean(n)),
-        "at_capacity": sum(k == S_MAX for k in n),
+        "at_capacity": sum(k == sim.state.population.max_strata for k in n),
         "units": len(n),
         "population": sim.state.total_population(),
     }
@@ -155,7 +155,7 @@ def canonical(seed: int, years: int) -> None:
     line("store pooling volume (kcal)", [r["store_volume"] for r in results.values()])
     line("flow rows", [r["flow_rows"] for r in results.values()], "{:>14}")
     line("final mean strata per unit", [r["mean_strata"] for r in results.values()])
-    line("final units at S_MAX", [r["at_capacity"] for r in results.values()], "{:>14}")
+    line("final units at capacity", [r["at_capacity"] for r in results.values()], "{:>14}")
     for kind in ("exact_compaction", "capacity_coalescence", "fusion_inheritance"):
         line(kind, [r["events"][kind] for r in results.values()], "{:>14}")
     line("run seconds", [r["seconds"] for r in results.values()])

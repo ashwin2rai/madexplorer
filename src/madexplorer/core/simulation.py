@@ -165,6 +165,7 @@ class Simulator:
                 table=unit_table,
                 technology_table=self.compiled.technologies,
                 species_index=self.compiled.species_index,
+                max_strata=config.strata.max_strata,
             ),
         )
         # Expiry horizons per species code: lets a sparse store reclaim expired entries.
