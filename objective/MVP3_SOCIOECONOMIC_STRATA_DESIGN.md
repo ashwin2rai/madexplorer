@@ -708,3 +708,188 @@ runs it never merged different field positions differently, so the field measure
   digested on the Stage 3B columns, and the appended columns are asserted neutral.
 - `stage3c_w0.5_seed11_30u_40y.json` covers the 0.5 sensitivity case. It is not a
   baseline.
+
+---
+
+## M. Stage 3D — scientific and representation review (2026-10-03)
+
+Diagnostic only; production behavior unchanged. Evidence:
+`scripts/probes/strata_review.py` (modes `representation`, `nonlinear`, `persistence`,
+`sources`, `capacity`, `fieldgap`), run on the frozen reference scenarios (neolithic 600 y,
+pressure 400 y with and without cultivation; seeds 0–3) at w ∈ {0, 0.25, 0.5, 1}.
+
+### M1. Representation load (corrects the seed-0 picture of §L15)
+
+| per unit-year | neolithic | pressure + cultivation | pressure, no cultivation |
+|---|---|---|---|
+| mean strata (w = 0 → 1) | 2.17 → 2.28 | 3.82 → 3.85 | 1.10 |
+| median / p90 / p99 | 1 / 6–7 / 8 | 2 / 8 / 8 | 1 / 1 / 3 |
+| at `S_MAX` | 9.1–9.9 % | 32–33 % | 0.09 % |
+| capacity coalescences | 8 664–9 200 | 9 722–9 778 | 14 |
+| merges joining field positions > 1e-9 apart | 82 % | 93 % | 0 |
+
+- **Coalescence is routine, not rare,** in long or dense farming runs. The seed-0, 400-year
+  figures (1.6 strata, 12 coalescences) were not representative.
+- **Memory does not depend on load:** `StrataTable` is padded, so it is a fixed 257 B per row.
+  The accounting hook is 8–13 % of run time. Growth is bounded by `S_MAX`, so it cannot
+  become pathological.
+- **Distance to each stratum's nearest neighbour in its unit** (neolithic, w = 0):
+  - exact duplicates 0 %;
+  - ≤ 1e-12 (floating-point dust) 20 %;
+  - ≤ 1e-6: 6 %;
+  - ≤ 1e-3: 6 %;
+  - ≤ 1e-2: 18 %;
+  - ≤ 0.1: 40 %;
+  - \> 0.1: 11 % (31 % at w = 1).
+
+  Most additional strata are small but modeled differences (1e-3 to 0.1), not dust.
+
+### M2. Adaptive merging (original Stage 4): DEFER
+
+- **It would not reduce information loss.** Coalescence is greedy and picks the cheapest
+  pair, so dust pairs are always merged before any real difference is lost. Pre-merging dust
+  below `S_MAX` would not reduce coalescence error. A larger tolerance would add loss.
+- **No memory benefit** (fixed padding), and the runtime benefit is marginal.
+- **The binding constraint is different:** distinct positions exceed `S_MAX` in a third of
+  farming-pressure unit-years. That is a resolution-policy question (`S_MAX` sensitivity, an
+  error-aware metric; §M6), not an adaptive-merge question.
+- **When to revisit:** only when a mechanism defines which differences matter behaviorally.
+
+### M3. Why the pooling response to w is nonlinear (intended mathematics)
+
+With the physical trajectory fixed (it does not depend on w), the harvest pooling volume is
+an exact function of w:
+
+```text
+V(w) = Σ_short-years  w·gY·Σ|f_i − s_i|/2                            (linear)
+     + Σ_fed-years Σ_i max(w·gY·(s_i − f_i) − L·s_i, 0)              (hinges)
+crossing at  w*_i = (L / gY) · s_i / (s_i − f_i)
+```
+
+- **The curve matches real runs.** Evaluated from the w = 0 records, it reproduces every
+  run's sidecar volume within 4e-16 (w = 0.1, 0.25, 0.5, 0.75, 1).
+- **Where it bends:** fed units keep a leftover of about 0.35–0.6 of their kept crop (median
+  L/gY), so a field-poor majority (s/(s − f) ≈ 2.7) crosses only at w* ≈ 0.75. Seed 0: 72
+  crossing stratum-years with median w* = 0.76.
+- **Volume by component** (seed 0):
+  - short-year, linear: 5.4e6 kcal at w = 1;
+  - fed-year hinges: 4e4 at w = 0.1 and 2.1e7 at w = 1.
+- **The response is concentrated, not widespread.** The 10 largest unit-years carry 95–100 %
+  of fed-year volume for w ≤ 0.7, and 46 % at w = 1. Seeds 1 and 3 have almost no crossings;
+  seed 2 crosses at w* ≈ 0 where L = 0, which makes that part linear.
+- **Continuity holds** at three crossings (w* ± 0.01):
+  - the raw leftover moves in equal linear steps through 0;
+  - the volume follows the curve;
+  - units, fusions and fissions are identical;
+  - no stratum is created.
+
+  Compaction counts vary by ±1–3 for every w step, because store positions coincide
+  differently; that is not tied to crossings.
+- **Interpretation stays neutral:** the volume is the redistribution implied by pooled
+  consumption under an attribution hypothesis, not tax, tribute or welfare.
+
+### M4. Persistence
+
+From the rules (prescribed flows, `persistence` mode):
+- **Field deviation** is multiplied by F0/F1 each year:
+  - half-life ≈ 15 y at +5 %/y and ≈ 70 y at +1 %/y;
+  - persists indefinitely with stable or shrinking fields;
+  - erased at once when fields reach 0 (migration, abandonment).
+- **Store deviation at w = 0** is multiplied by K0/(K0 + A) each fed year. At observed
+  stock-to-flow ratios it halves in 1–2 years. Withdrawals keep fractions; exhaustion resets.
+- **At w > 0,** stores track fields: with stable field inequality the store position
+  converges to a fixed point away from 1 (minority at field 2.5: store 4.0 at w = 0.5, 5.0 at
+  w = 1). Store inequality then persists exactly as long as field inequality does.
+
+In real runs (neolithic, 4 seeds):
+- **Field deviations ≥ 0.05:** median halving 11 y (p90 30). Most stratum lineages end
+  first, after a median of 8 y (compaction, coalescence, resets).
+- **Store deviations at w = 0:** median halving 2 y. At w = 1: 4 y (p90 21).
+- **Population level:** time-mean people-weighted |field position − 1| is 0.011 (neolithic)
+  and 0.044 (pressure), the same at every w. Store: 0.007 → 0.034 (neolithic) and
+  0.022 → 0.17 (pressure) from w = 0 to 1.
+
+### M5. Sources of differentiation
+
+- **Fusion is the only source.** It is the only operation that raises a unit's stratum count:
+  - fission copies the count;
+  - accounting keeps or compacts it;
+  - `replace_strata` is used only by tests.
+
+  Every other rule moves positions toward 1, or (w) maps field differences onto stores.
+- **Most fusions bring modest differences:**
+
+  | fusions with resources per person differing | > 1 % | ≥ 2× |
+  |---|---|---|
+  | fields, neolithic | 64 % | 6 % |
+  | fields, pressure | 77 % | 8 % |
+  | stores | 56–65 % | 30–32 % |
+
+- **No endogenous differentiation:** with fusion disabled, at w = 1, no unit ever has more than
+  one stratum and every deviation is exactly 0. A population that starts homogeneous does not
+  differentiate within units under the current rules.
+- **Strata therefore mostly hold memory of predecessor groups,** not self-sustaining
+  differentiation:
+  - stores forget in years;
+  - fields forget at the pace of field expansion, or at once on migration;
+  - w adds no source; it maps field memory onto store claims.
+
+### M6. Capacity coalescence and w
+
+- **Stress cases** (two 8-strata predecessors, identical field positions, one fed year at
+  each w, fused 16 → 8):
+  - w changes the represented field distribution in 96 % of cases (1-D Wasserstein distance
+    between w = 1 and w = 0: median 0.054);
+  - field variance lost to coalescence is a median 0.1 % at w = 0 and 0.3 % at w = 1.
+- **Reference runs:** where w redirects a coalescence (12 % of multi-strata unit-years in
+  neolithic, 42 % in pressure), the field distribution moves by a 1-D Wasserstein distance of
+  0.006 median (p99 0.05 at neolithic, 0.06 at pressure). Relative to the unit's own
+  people-weighted |field position − 1|, that is 11 % median, 28 % p90, 42 % p99. Aggregate
+  field dispersion is unchanged.
+- **This corrects §L15.** "Field claims identical across w" holds for the accounting rules
+  and for coalescence-free runs, not for the represented field distribution once capacity
+  coalescence occurs. No invariant is violated: totals are conserved, and field claims are
+  read only by passive accounting.
+- **Coalescence error by dimension** (neolithic, summed over runs, w = 0 → 1):
+  - field 0.19 → 0.42;
+  - store 0.03 → 1.19.
+
+  The largest single merge removes 18 % (w = 0) to 48 % (w = 1) of its unit's field-position
+  variance. Equal Euclidean weighting lets store dispersion, which w inflates, decide which
+  field differences are kept.
+- **Recommendation C:** replace the metric with mechanism-aware, error-aware resolution once
+  downstream mechanisms define which information matters. No dimension weights now. Gate:
+  before any physical mechanism reads `field_claim` or `store_claim`, re-evaluate the metric
+  and test sensitivity to `S_MAX` (the representation is not comfortably bounded under
+  farming pressure).
+
+### M7. Classification of `field_output_claim_weight`
+
+A sensitivity parameter, and an abstraction standing in for missing labor and property
+mechanisms:
+- under homogeneous labor it has no causal content of its own;
+- canonical activation would need empirical or theoretical grounding;
+- it should eventually be replaced by explicit stratum-level labor contribution and tenure
+  rules.
+
+The default stays 0.0. The parameter is kept for sensitivity analysis.
+
+### M8. Next scientific stage (recommendation; not implemented)
+
+- **A — resource access (claims change calories received):** premature. It would make
+  short-lived fusion memory physically consequential immediately, and would drag stratified
+  food ratios and demography in with it.
+- **C — decision influence:** premature. The positions it would weight are weak and
+  transient.
+- **B — a persistent-differentiation mechanism:** recommended, as **Stage 4 — Stratum labor
+  contribution (design first)**. It is the lower-level process both current conventions rest
+  on (new land ∝ share, and w, because labor ∝ share), and the process MVP 3 intends to
+  represent (occupation and specialization; objective §5.4, §7).
+  - The design must first name a causal reason labor could differ by stratum. Under pooled
+    consumption no stratum has a private return to effort, so the design must decide whether
+    that requires a minimal access rule first, or a stratum-level capacity or knowledge
+    difference.
+  - It must not be a rich-get-richer, rent, coercion or inheritance rule.
+  - Prerequisite: §M6 gate if the mechanism will read claims.
+
+Stage 4 adaptive merging is renumbered out of the plan until a mechanism creates the need.

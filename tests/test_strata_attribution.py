@@ -424,6 +424,10 @@ def test_the_weight_changes_no_physical_outcome(
 def test_field_claims_do_not_depend_on_the_weight(
     canonical_runs: dict[float, tuple[Simulator, SimulationResult]],
 ) -> None:
+    """The accounting never lets w change field claims. This run has no capacity
+    coalescence that w could redirect; in longer or denser runs it does (coalescence
+    distance is joint in field and store position), so the represented field distribution
+    can then differ across w (Stage 3D review, design §M)."""
     neutral = _field_measure(canonical_runs[0.0][1].strata_rows)
     for weight in WEIGHTS[1:]:
         _assert_same_measure(_field_measure(canonical_runs[weight][1].strata_rows), neutral)

@@ -1,10 +1,67 @@
 # Implementation Status — MVP 3 (staged)
 
-**Updated:** 2026-10-03\
+**Updated:** 2026-10-03 (Stage 3D)\
 **Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
 **Current milestone:** MVP 3 — staged socioeconomic differentiation
 
 ## MVP 3 stage handoff
+
+**Completed:** Stage 3D — scientific and representation review (design §M; probe
+`scripts/probes/strata_review.py`).
+
+**Production behavior:** unchanged (probe and documentation only; one test docstring
+caveat).
+
+**Findings:**
+- **Representation load is real:** in the frozen reference runs (4 seeds), 9–10 %
+  (neolithic) and 32–33 % (pressure with cultivation) of unit-years sit at `S_MAX`; capacity
+  coalescence is routine (≈ 9k per 4 runs) and 82–93 % of merges join distinct field
+  positions. Strata per unit-year: mean 2.2 / 3.8, median 1 / 2. Memory is fixed (padded);
+  the hook is 8–13 % of run time.
+- **Most extra strata are small modeled differences,** not dust: about 20 % have a dust twin
+  (≤ 1e-12); most sit 1e-3 to 0.1 from their nearest neighbor.
+- **The pooling nonlinearity in w is intended:** short years are linear; fed years add one
+  hinge per stratum whose pre-pool leftover crosses 0 at `w* = (L/gY)·s/(s − f)`. The curve
+  from the w = 0 records reproduces runs within 4e-16. It is continuous, nothing structural
+  changes, and it is concentrated in a few unit-years.
+- **Fusion is the only source of differentiation.** Without fusion, units never differentiate
+  (checked at w = 1). Store differences fade in about 2 y; field differences fade with field
+  expansion (median halving 11 y) or at once on migration. w only maps field memory onto
+  stores.
+- **Capacity coalescence lets w leak into field representation** (corrects §L15). Where w
+  redirects a merge (12 % / 42 % of multi-strata unit-years), the field distribution moves by
+  a median of 11 % of the unit's field dispersion (p99 42 %). Aggregate field dispersion is
+  unchanged; no invariant is violated.
+
+**Adaptive merge decision:** DEFER. Greedy coalescence already merges dust first, so it
+would not reduce loss. There is no memory gain. The binding constraint is distinct positions
+above `S_MAX`, which is a resolution-policy question.
+
+**Current interpretation of socioeconomic strata:**
+- memory of fused predecessor groups, not self-sustaining differentiation;
+- positions decay toward 1 under the neutral conventions;
+- w is a sensitivity parameter standing in for missing labor and property mechanisms.
+
+**Next scientific stage:** Stage 4 — Stratum labor contribution (design first; candidate B).
+
+**Reason:** labor ∝ share is the assumption behind both new land ∝ share and w; labor and
+specialization is the lower-level process MVP 3 intends to represent; and resource access
+(A) or influence (C) would act on transient fusion memory. The design must first name a
+causal reason for labor to differ by stratum under pooled consumption, with no
+rich-get-richer, rent or inheritance rule. Pause for review before implementing.
+
+**Do not forget:**
+- `field_output_claim_weight` default remains 0;
+- no canonical nonzero w has been selected;
+- differentiation comes only from fusion and decays (stores in years; fields with expansion
+  or migration);
+- capacity coalescence is frequent under farming pressure and its joint (field, store)
+  metric lets w alter represented field claims. Revisit it (mechanism-aware and error-aware,
+  plus `S_MAX` sensitivity) before any physical mechanism reads claims.
+
+---
+
+### Stage 3C — crop-output attribution sensitivity (previous handoff)
 
 **Completed:** Stage 3C — crop-output attribution sensitivity (design §L4–§L6, §L15).
 Earlier stages: 3B neutral accounting (below), 3A audit, 2.1 exact compaction, 2 passive
@@ -77,7 +134,7 @@ population are identical (tested); the MVP 2.1 oracles are IDENTICAL.
 - New: `tests/test_strata_attribution.py`, fixture `stage3c_w0.5_seed11_30u_40y.json`.
 - `config_hash` changes (the new `strata` section); this is metadata, not state.
 
-**Next:** PAUSE for scientific review before Stage 4.
+**Next (at 3C):** pause for scientific review — done in Stage 3D.
 
 **Do not forget:**
 - no canonical nonzero w has been selected;
