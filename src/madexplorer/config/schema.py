@@ -105,6 +105,19 @@ class ResolutionConfig(FrozenModel):
     max_knowledge_distance: float = Field(default=1.0, ge=0)
 
 
+class StrataConfig(FrozenModel):
+    """Socioeconomic strata accounting (MVP 3; objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md).
+
+    Read only by the passive strata accounting, never by a physical mechanism, and kept out
+    of the static-context key (it changes no world, ecology or agronomy).
+    """
+
+    # Fraction of crop-output attribution that follows field control rather than the
+    # population/labor baseline (rule crop_output_attribution). 0 is the neutral legacy
+    # limit; nonzero values are sensitivity hypotheses with no canonical value.
+    field_output_claim_weight: float = Field(default=0.0, ge=0, le=1)
+
+
 class SpeciesRef(FrozenModel):
     """A species used in the scenario: a profile file plus optional parameter overrides."""
 
@@ -181,6 +194,7 @@ class ScenarioConfig(FrozenModel):
     agriculture: AgricultureConfig = AgricultureConfig()
     trade: TradeConfig = TradeConfig()
     resolution: ResolutionConfig = ResolutionConfig()
+    strata: StrataConfig = StrataConfig()
     knowledge_system: str | None = None  # path to a knowledge-system file, relative to the scenario
     species: tuple[SpeciesRef, ...] = Field(min_length=1)
     initial_populations: tuple[InitialPopulation, ...] = Field(min_length=1)

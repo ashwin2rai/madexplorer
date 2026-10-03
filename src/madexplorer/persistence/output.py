@@ -9,8 +9,9 @@
     ``world.npz``          static world layers (height x width each)
     ``strata.csv``         strata sidecar, one row per stratum per year (opt-in, MVP 3)
     ``strata_events.jsonl`` strata structural events (opt-in, MVP 3)
-    ``strata_flows.csv``   strata pooling flows: strata of units whose pooled store
-                           withdrawal moved food between strata (opt-in, MVP 3)
+    ``strata_flows.csv``   strata pooling flows: strata of units whose pooling (store
+                           withdrawal or crop-output attribution) moved food between
+                           strata (opt-in, MVP 3)
 """
 
 import csv

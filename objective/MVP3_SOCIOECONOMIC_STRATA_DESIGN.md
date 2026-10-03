@@ -635,3 +635,76 @@ Caloric access, food ratio and demography stay pooled and unchanged throughout.
   nonzero pooling transfer. Fields: `share` and `store_claim` as used, `withdrawn_kcal`,
   `pool_transfer_kcal`, `pool_transfer_volume_kcal` (= Σ|transfer|/2). No claim-accretion
   events (the strata rows show them); exact compactions are logged as before.
+
+### L15. Stage 3C implementation notes (as built)
+
+**Parameter.** `strata.field_output_claim_weight` (w), in a one-field `StrataConfig` section
+of the scenario (`config/schema.py`).
+- Validated to `0 ≤ w ≤ 1`, default exactly `0.0`, no canonical nonzero value.
+- Kept out of `agriculture`, because that section feeds `static_key`: w changes no world,
+  ecology or agronomy, so runs that differ only in w share one `StaticContext`.
+- It does change `config_hash`, so it is recorded in run provenance.
+- Read only by `account_strata`.
+
+**Equations** (`population/strata_accounting.py`; per unit, strata on the last axis):
+
+```text
+g    = min(1, H / (Y + W))          (0 if Y + W = 0; H after trade, Y crop, W forage)
+d_i  = g · w · Y · (field_claim_i − share_i)          crop-control correction, Σ d = 0
+q_i  = H · share_i + d_i                               pre-pool attribution, Σ q = H
+
+short year   harvest_transfer_i = −d_i
+             store_transfer_i   = X · (share_i − store_claim_i)
+fed year     l_i = L · share_i + d_i                    (L = stored + discarded leftover)
+             harvest_transfer_i = max(−l_i, 0) − max(l_i, 0) · N / P
+                                  (N, P = Σ of the negative / positive parts; = L·max(l,0)/P − l)
+             store_transfer_i   = 0                     (X = 0 in a fed year)
+pool_transfer_i = store_transfer_i + harvest_transfer_i
+new stores   A_i = A · share_i + (A / L) · (harvest_transfer_i + d_i)   (= A · allocated_i / L)
+store claim  (store_claim_i · K0 + max(A_i, 0)) / Σ;  K1 = 0 → share
+```
+
+**How the equations are applied:**
+- Forage, trade received, reserves and store withdrawals never use field claims.
+- Field claims (§L3) do not depend on w.
+- Discarded leftover (`L > A`) is owned by the same allocation as stored food, so it adds
+  no transfer. In the current energetics A is either L (storage capability) or 0 (none);
+  partial storage is handled by the same formula and tested directly.
+- Every deviation from neutral is in difference form. With `d ≡ 0` (w = 0, Y = 0 or
+  `field_claim = share`) all corrections are exactly zero, and the Stage 3B values are
+  reproduced bit for bit.
+- No thresholds on positions; `max(·, 0)` acts at kcal scale.
+
+**Provenance:**
+
+| Rule | Version | Class |
+|---|---|---|
+| `crop_output_attribution` | 1.0 | heuristic modeling hypothesis (w) |
+| `pooled_leftover_shares` | 1.0 | heuristic accounting convention (pro rata coverage) |
+| `store_claim_accretion` | 1.1 | neutral convention; new stores follow allocated leftover |
+| `food_pooling_transfer` | 1.1 | accounting identity; harvest and store components |
+
+**Sidecar.** `strata_flows` rows keep the Stage 3B columns in order and append:
+- `crop_kcal`, `field_claim`;
+- `crop_attribution_correction_kcal` (d_i);
+- `harvest_pool_transfer_kcal`, `store_pool_transfer_kcal`.
+
+A row is written when either component is nonzero for the unit-year. In a fed year where
+every `l_i ≥ 0`, each stratum keeps its own attributed surplus and no transfer is recorded.
+
+**Grouping of strata.** Field claims are identical across w as a distribution: share by
+field position, per unit-year. The *number* of strata can differ:
+- exact compaction and capacity coalescence act on joint `(field, store)` positions;
+- once w makes store positions differ, components that would coincide at w = 0 stay
+  separate (neolithic seed 0, 400 y: 286 compactions at w = 0 vs 253–260 at w > 0;
+  coalescences 12 vs 14–16).
+
+Compaction is lossless. Coalescence is the existing numerical approximation. In the probed
+runs it never merged different field positions differently, so the field measure matches to
+≤ 7e-16. It could do so in principle, because grouping is joint by design (Stage 2).
+
+**Fixtures:**
+- `stage3b_seed11_30u_40y.json` is unchanged and authoritative at w = 0. Its flows are now
+  digested on the Stage 3B columns, and the appended columns are asserted neutral.
+- `stage3c_w0.5_seed11_30u_40y.json` covers the 0.5 sensitivity case. It is not a
+  baseline.

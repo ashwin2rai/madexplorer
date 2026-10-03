@@ -1,14 +1,93 @@
 # Implementation Status — MVP 3 (staged)
 
-**Updated:** 2026-10-02\
+**Updated:** 2026-10-03\
 **Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
 **Current milestone:** MVP 3 — staged socioeconomic differentiation
 
 ## MVP 3 stage handoff
 
-**Completed stage:** Stage 3B — neutral socioeconomic accounting (design §L, §L14).
-Earlier stages: 3A audit, 2.1 exact compaction, 2 passive heterogeneous strata, 1 neutral
-representation.
+**Completed:** Stage 3C — crop-output attribution sensitivity (design §L4–§L6, §L15).
+Earlier stages: 3B neutral accounting (below), 3A audit, 2.1 exact compaction, 2 passive
+heterogeneous strata, 1 neutral representation.
+
+**Scientific hypothesis introduced:** `field_output_claim_weight` (w,
+`strata.field_output_claim_weight`, rule `crop_output_attribution`, heuristic). It is the
+fraction of crop-output attribution that follows field control rather than the
+population/labor baseline: `d_i = g·w·Y·(field_claim_i − share_i)`. It is not an
+extraction rate, rent, tax or hierarchy coefficient.
+
+**Default:** 0.0 (the neutral legacy limit; Stage 3B bit for bit).
+
+**Physical feedback:** none. Across w, unit state, metrics, events, ecology, RNG states and
+population are identical (tested); the MVP 2.1 oracles are IDENTICAL.
+
+**What nonzero w changes:**
+- crop-output attribution (`d_i`);
+- pooling-transfer accounting: a harvest component (`−d_i` in short years; pro rata
+  coverage of negative pre-pool leftovers in fed years) beside the store component;
+- claims on newly stored food (new stores follow the allocated leftover).
+
+**What it does NOT change:**
+- field claims (identical across w as a distribution);
+- actual consumption, food ratio, reserves;
+- labor (still ∝ share — w is conditional on that simplification);
+- demography;
+- unit physical state.
+
+**Sensitivity results** (neolithic seed 0, 400 y; `scripts/probes/crop_attribution_sensitivity.py`):
+
+| | w = 0 | 0.25 | 0.5 | 1 |
+|---|---|---|---|---|
+| final field \|pos − 1\| (people-weighted) | 0.0254 | 0.0254 | 0.0254 | 0.0254 |
+| final store \|pos − 1\| | 0.0146 | 0.0241 | 0.0339 | 0.0534 |
+| final corr(field, store) | 0.11 | 0.20 | 0.27 | 0.33 |
+| crop attribution moved / crop of differentiated units | 0 | 0.41% | 0.80% | 1.59% |
+| harvest pooling volume (kcal) | 0 | 1.5e6 | 3.7e6 | 2.6e7 |
+| store pooling volume (kcal) | 4.7e6 | 5.7e6 | 6.7e6 | 8.6e6 |
+| exact compactions / capacity coalescences | 286 / 12 | 260 / 16 | 256 / 16 | 253 / 14 |
+
+- The field-position series is identical across w (max difference ≤ 1.4e-17); dilution of
+  fusion-born field inequality by new land (∝ share) is independent of w.
+- While field inequality exists, store positions respond roughly linearly in w and
+  correlate more with field positions. Controlled probe: a minority holding 2.5× its share
+  of land reaches store position 1.36/1.71/2.42 after one year at w = 0.25/0.5/1, against
+  1.0 at w = 0. Both fade as land expands (≈ 1.0 by year 40).
+- Field heterogeneity appears only after ≈ year 200 (farming), so effects are late and
+  small in the canonical run.
+- With w > 0 store positions coincide less often: fewer exact compactions and slightly more
+  strata (final mean 1.56 → 1.65 per unit).
+- Cost: the accounting hook is ≈ 0.38 s of a ≈ 4 s 400-y run at every w (no marginal cost
+  of nonzero w beyond noise). `bench-quick` 95.8 ms/tick (before: 99.7–107).
+
+**Limitations found:**
+- The strata grouping (compaction, coalescence) is joint in `(field, store)`, so w can
+  change the number of components. Field claims are unchanged as a distribution. Capacity
+  coalescence could, in principle, then merge different field positions differently (not
+  observed).
+- Energetics stores either all leftover or none, so partly discarded surplus never occurs
+  physically. The formula handles it and is tested directly.
+- In fed years with every pre-pool leftover ≥ 0 there is no transfer: each stratum keeps its
+  attributed surplus.
+
+**Validation:**
+- `make check` 664 passed; `make test-stat` 3/3.
+- Raw and logical MVP 2.1 oracles IDENTICAL; golden fixtures unchanged.
+- Stage 3B fixture unchanged at w = 0 (flows digested on the Stage 3B columns, which keep
+  their order).
+- New: `tests/test_strata_attribution.py`, fixture `stage3c_w0.5_seed11_30u_40y.json`.
+- `config_hash` changes (the new `strata` section); this is metadata, not state.
+
+**Next:** PAUSE for scientific review before Stage 4.
+
+**Do not forget:**
+- no canonical nonzero w has been selected;
+- the Stage 3B w = 0 fixture remains authoritative;
+- adaptive approximate merging remains unimplemented;
+- actual resource-access inequality remains future work.
+
+---
+
+### Stage 3B — neutral socioeconomic accounting (previous handoff)
 
 **What now exists (Stage 3B)**
 - **Gross food accounting:** transient per-step `FoodAccounts` (`K0`, `A`, `X`, `K1`) and
@@ -49,7 +128,7 @@ representation.
   the generic zero-stock pass. Restricting that pass to stock-changing subsystems would halve
   it (not done). `bench-quick` 99.7–107 ms CPU/tick (noise); no new persistent memory.
 
-**Next:** Stage 3C — crop-output claim sensitivity (only on approval). Stage 3C must
+**Next (at 3B; done in 3C):** Stage 3C — crop-output claim sensitivity. Stage 3C had to
 decide and test:
 - `field_output_claim_weight` (w, design §L4), introduced as an explicit scientific
   hypothesis;

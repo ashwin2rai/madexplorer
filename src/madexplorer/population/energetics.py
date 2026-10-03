@@ -281,12 +281,18 @@ class EnergyUpdates:
         cols.set("energy_debt_kcal", 0.0)
         cols.set("residence_years", cols.get("residence_years") + 1)
         # Gross store flows for strata accounting (recorded only; nothing above reads them).
+        harvest = cols.get("harvest_kcal")
         ctx.food_accounts = FoodAccounts(
             cols.units,
             opening,
             self.stored_kcal,
             np.maximum(opening + self.stored_kcal - self.stores_kcal, 0.0),
             retained,
+            harvest=harvest,  # after trade: H
+            crop=cols.get("farm_harvest_kcal"),  # own crop: Y
+            forage=cols.get("forage_harvest_kcal"),  # own forage: W
+            leftover=self.stored_kcal + self.spoiled_kcal,  # L (exact: one term is 0)
+            fed=harvest >= self.need_kcal,  # the fed branch of energy_balance_batch
         )
         per_capita = (cols.get("harvest_kcal") / n).tolist()
         for unit, value in zip(cols.units, per_capita, strict=True):

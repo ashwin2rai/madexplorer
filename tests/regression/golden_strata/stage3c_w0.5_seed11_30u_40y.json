@@ -1,0 +1,16 @@
+{
+ "differentiated_units": 20,
+ "events": {
+  "exact_compaction": 9,
+  "fission_copy": 39,
+  "fusion_inheritance": 19
+ },
+ "events_sha256": "649a577a6a775cb9c620812af05b1808856e5cd92820c885c8c6425e5bb2d73f",
+ "final_units": 50,
+ "flow_rows": 44,
+ "flows_sha256": "880ce03a1c0894e695e3bf1caadf67d479f6b91ecae4afbd4eba62037246ab5d",
+ "numeric_platform": "numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3",
+ "pool_transfer_volume_kcal": 5418030.557241534,
+ "strata_rows": 2236,
+ "strata_rows_sha256": "57147520d1d0be4fe7ccd9a2249b530e7efb627681d3a49459bfb141ca4080bc"
+}
