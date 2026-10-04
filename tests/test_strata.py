@@ -62,7 +62,7 @@ def test_stratum_columns_have_their_own_schema() -> None:
     unit_fields = {f.name for f in UNIT_FIELDS}
     assert not unit_fields & set(STRATUM_COLUMNS)  # not flattened into the unit fields
     (strata,) = [f for f in UNIT_FIELDS if f.storage is Storage.STRATA]
-    assert strata.name == "strata" and DEFAULT_MAX_STRATA == 8
+    assert strata.name == "strata" and DEFAULT_MAX_STRATA == 16
 
 
 def test_every_new_unit_has_one_neutral_stratum_with_a_store_id() -> None:
@@ -232,6 +232,7 @@ def test_strata_table_round_trips_and_detects_broken_partitions() -> None:
     assert table.stratum_id[3, :2].tolist() == [11, 12]
     table.reset(70)
     assert table.n_strata[70] == 0 and not table.check(np.array([70])).any()
+    over = DEFAULT_MAX_STRATA + 1
     with pytest.raises(ValueError):
-        table.load(0, StrataBlock({n: np.ones(DEFAULT_MAX_STRATA + 1) / 9 for n in STRATUM_COLUMNS},
-                                  np.arange(DEFAULT_MAX_STRATA + 1)))  # fmt: skip
+        table.load(0, StrataBlock({n: np.ones(over) / over for n in STRATUM_COLUMNS},
+                                  np.arange(over)))  # fmt: skip

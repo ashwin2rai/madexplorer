@@ -44,8 +44,9 @@ from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.population.table import GROWTH_FRACTION, MIN_CAPACITY
 
 # Default run capacity (strata.max_strata): a numerical socioeconomic-resolution limit, not a
-# number of classes. The active count per row is int8, so capacities stay <= MAX_STRATA_LIMIT.
-DEFAULT_MAX_STRATA = 8
+# number of classes (16 since Stage 4B.1; agrees with StrataConfig). The active count per row
+# is int8, so capacities stay <= MAX_STRATA_LIMIT.
+DEFAULT_MAX_STRATA = 16
 MAX_STRATA_LIMIT = 127
 DUPLICATE_CHUNK_ROWS = 1024  # rows per chunk of the pairwise exact-duplicate check
 UNASSIGNED = -1  # stratum id of a stratum not yet bound to a store

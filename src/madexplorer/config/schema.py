@@ -115,7 +115,9 @@ class StrataConfig(FrozenModel):
     # Strata capacity per unit: a numerical resolution limit (width of the padded strata
     # table), not a number of classes or any social parameter. Above it, capacity
     # coalescence approximates (rule strata_capacity_coalescence). <= 127 (int8 count).
-    max_strata: int = Field(default=8, ge=1, le=127)
+    # Default 16 (Stage 4B.1): an engineering compromise between representation error and
+    # cost, not a scientific claim; 8 stays supported, 32 is a sensitivity case.
+    max_strata: int = Field(default=16, ge=1, le=127)
     # Fraction of crop-output attribution that follows field control rather than the
     # population/labor baseline (rule crop_output_attribution). 0 is the neutral legacy
     # limit; nonzero values are sensitivity hypotheses with no canonical value.

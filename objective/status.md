@@ -1,10 +1,40 @@
 # Implementation Status — MVP 3 (staged)
 
-**Updated:** 2026-10-03 (Stage 4B)\
+**Updated:** 2026-10-04 (Stage 4B.1)\
 **Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
 **Current milestone:** MVP 3 — staged socioeconomic differentiation
 
 ## MVP 3 stage handoff
+
+**Completed:** Stage 4B.1 — default socioeconomic resolution (design §P).
+
+**Default:** `strata.max_strata = 16` (was 8). 8 stays supported; 32 is a sensitivity case.
+
+**Why** (vs 8, §O5):
+- about 6× less field representation error;
+- about 2.5× less w-induced representation coupling;
+- modest memory (+12.8 MB at 50k units, about 0.5 % of RSS);
+- modest measured run time (+3–6 %).
+
+**Still true:**
+- capacity coalescence remains necessary;
+- 16 is an engineering compromise, not scientific truth;
+- the physical-feedback gate remains closed;
+- `field_output_claim_weight` default remains 0.
+
+**Fixtures:** the Stage 3B/3C fixtures and the Stage 2–3 composition tests pin
+`max_strata = 8` and are unchanged. The MVP 2.1 oracles are identical, and physical outputs
+are unchanged.
+
+**Deferred:** labor accounting (it would equal share; design §P3); approximate adaptive
+merging; unequal resource access; hierarchy; stratified demography.
+
+**Next:** Stage 4C — First Causal Differentiation Design. DESIGN ONLY, when authorized;
+questions A–E in design §P3. Not started.
+
+---
+
+### Stage 4B — strata resolution hardening (previous handoff)
 
 **Completed:** Stage 4B — strata resolution hardening (design §O).
 

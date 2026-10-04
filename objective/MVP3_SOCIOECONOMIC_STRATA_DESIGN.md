@@ -27,7 +27,8 @@ state (objective §2.7).
    and age, and there is no `[U,S,sex,age]` (§C).
 4. **Storage:** `StrataTable` owned by `PopulationStore`, row-aligned with `UnitTable`
    slots, with padded `[capacity, S_max]` columns and its own column schema (§D).
-   `S_max = 8` is a numerical resolution limit.
+   `S_max = 8` is a numerical resolution limit (now `strata.max_strata`, default 16 since
+   Stage 4B.1, §P).
 5. **Stages 1–4 are an accounting overlay.** No `[U]` mechanism reads strata state, so the
    MVP 2.1 raw and logical oracles stay identical. The first stage in which socioeconomic
    state intentionally affects existing behavior establishes a new, versioned baseline (§E).
@@ -1115,6 +1116,8 @@ default.
   - per-activity hours contributions as transient flows (∝ share);
   - crop attribution (§N5) and new-land claims (§N6) rewritten on contributions;
   - bit-identical to today.
+
+  *Retired as the automatic next step by Stage 4B.1 (§P3).*
 - **4D — Decision gate (design review):**
   - what causes labor or access to differ by stratum (private return to effort via a minimal
     access rule, or stay pooled);
@@ -1136,7 +1139,8 @@ are identical.
 
 ### O1. Capacity as a run setting
 
-- **Configuration:** `strata.max_strata` in `StrataConfig`; default 8, validated 1..127
+- **Configuration:** `strata.max_strata` in `StrataConfig`; default 8 (16 since Stage 4B.1,
+  §P), validated 1..127
   (the active count is int8). It is a numerical resolution limit, not a sociological
   parameter.
   - It is part of `config_hash` (provenance).
@@ -1255,6 +1259,8 @@ provisional reference, not truth.
 needs it. Switching changes strata outputs (not physics), so it needs new versioned strata
 fixtures at 16 (the 3B/3C fixtures stay at 8).
 
+*Adopted in Stage 4B.1 (§P).*
+
 ### O7. Gate status
 
 Not cleared. 4B supplies the tools (configurable capacity, error diagnostics, convergence
@@ -1268,3 +1274,87 @@ Stage 4C (accounting-only labor contributions) is not authorized. With no modele
 stratum-differentiated labor (§N3), it would add flows equal to share, with no new
 information. Its value is only as a named seam for a future cause, which should be weighed
 at review against first deciding that cause (§N12, 4D).
+
+---
+
+## P. Stage 4B.1 — default socioeconomic resolution (as built, 2026-10-04)
+
+A numerical-policy change only. No mechanism, criterion or equation changes.
+
+### P1. Decision
+
+The default `strata.max_strata` is **16** (was 8), from the §O5 evidence, relative to 8:
+- field representation error is about 6× lower, and the w-induced coupling into the
+  represented field claims about 2.5× lower;
+- the field-distribution distance to the 32 run is materially smaller;
+- persistent memory at 50k units is 25.7 MB instead of 12.9 MB, about another 0.5 % of a
+  ≈ 2.5 GB run;
+- run time is about +3–6 % in the measured scenarios.
+
+32 improves representation further but costs +9–24 % run time, pressure runs still spend
+much time at capacity, and coalescence does not disappear. The resolution question remains
+open at any width.
+
+16 is an engineering compromise, not a scientific claim about the number of social
+positions. Higher capacity reduces representation approximation; it does not remove it.
+Capacity coalescence (exact compaction first, then the unchanged greedy rule) stays the
+fallback above the configured capacity.
+
+| `max_strata` | role |
+|---|---|
+| 8 | historical, or an explicitly requested lower-resolution representation |
+| 16 | current project default |
+| 32 | higher-resolution sensitivity comparison, not ground truth |
+
+`field_output_claim_weight` stays 0 by default. The project enters the next design stage at
+`max_strata = 16`, `w = 0`.
+
+### P2. Consequences
+
+- **Physical outputs:** unchanged. Strata stay non-causal, the MVP 2.1 raw and logical
+  oracles are identical, and capacity stays out of `static_key` (in `config_hash`).
+- **Default strata sidecar:** it differs from the old default-8 representation, because
+  fewer lossy merges occur. This is intended; default-8 sidecar results are not preserved
+  globally.
+- **Fixtures:** the Stage 3B/3C fixtures, and the Stage 2–3 targeted composition tests,
+  pin `max_strata = 8` explicitly and are unchanged. Default-16 coverage is ordinary tests,
+  not a new golden: real construction at width 16 (and 8 when asked), shared static
+  context across capacities, and a fusion of 8 + 8 positions that stays lossless while
+  8 + 9 coalesces exactly once.
+- **Gate (§N7, §O7):** still closed. A better default does not make any future mechanism
+  resolution-safe. Any mechanism that reads strata needs the capacity policy tested for the
+  dimensions it reads, and an approved causal reason to differ by stratum.
+
+### P3. Labor accounting deferred; next stage is design only
+
+The §N12 Stage 4C, labor accounting, is no longer the automatic next step. Every stratum
+shares the unit's age structure, knowledge, technology, pooled consumption and the other
+current labor determinants. So each stratum's labor contribution would be exactly its
+population share. Explicit runtime state for that would add machinery without adding
+modeled information. The statement "labor contribution currently follows population share"
+stays documented (§N3, §N4), and the minimum flow is added only when a causal mechanism
+needs it.
+
+**Next: Stage 4C — First Causal Differentiation Design (design only, when authorized).**
+Purpose: identify the smallest lower-level mechanism that gives people within one population
+a causal reason to experience different actions, access, obligations, opportunities or
+outcomes. Questions it must answer:
+
+- **A. Is endogenous differentiation needed yet?** Homogeneous units stay homogeneous unless
+  fusion brings in several positions. That is acceptable, and strata existing is no reason
+  for a new mechanism.
+- **B. What concrete process makes existing strata behave differently?** Candidates include
+  differential resource access, persistent control of productive assets, differentiated
+  labor obligations, specialization, or another explicit institutional mechanism. None is
+  selected.
+- **C. Can it create a new stratum?** If so, it must say which subset differs, why, how
+  large it is, what is conserved, and why a new component is necessary. No random class
+  generation.
+- **D. Which representation dimensions does it read?** The capacity and coalescence policy
+  must be tested for exactly those dimensions before implementation (the gate).
+- **E. Does it need new persistent state?** Prefer flows and existing state. Do not add
+  wealth, status, occupation or power because they might someday be useful.
+
+Stage 4B.1 does not choose among unequal food access, private stores, property
+persistence, labor obligations, specialization, decision influence, inheritance or
+redistribution. That needs its own design review.

@@ -3,8 +3,8 @@
 Configurable capacity (``strata.max_strata``) owned by the population store and its padded
 table, the bounded exact-duplicate check, the vectorized capacity coalescence (checked
 against the scalar reference it replaced) and the per-dimension representation-error
-diagnostics. No socioeconomic semantics change: at the default capacity the Stage 3B/3C
-fixtures and the MVP 2.1 oracles are unchanged.
+diagnostics. No socioeconomic semantics change: the Stage 3B/3C fixtures (pinned at capacity
+8) and the MVP 2.1 oracles are unchanged. Stage 4B.1 makes 16 the default capacity.
 """
 
 import copy
@@ -16,8 +16,11 @@ from pydantic import ValidationError
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
-from madexplorer.core.static import static_key
+from madexplorer.core.static import shared_static_context, static_key
 from madexplorer.experiments.benchmark import synthetic_simulator
+from madexplorer.population.composition import MergeMode
+from madexplorer.population.familiarity import familiarity_rule
+from madexplorer.population.lifecycle import merge_units
 from madexplorer.population.strata import (
     DEFAULT_MAX_STRATA,
     DUPLICATE_CHUNK_ROWS,
@@ -49,20 +52,69 @@ def _scenario(max_strata: int, seed: int = 4) -> Scenario:
 # ---------------------------------------------------------------- configuration
 
 
+def _width(sim: Simulator) -> int:
+    population = sim.state.population
+    assert population.strata is not None
+    assert population.strata.max_strata == population.max_strata
+    for name in STRATUM_COLUMNS:
+        assert population.strata.columns[name].shape[1] == population.max_strata
+    return population.max_strata
+
+
+def test_a_scenario_that_does_not_set_capacity_runs_at_the_default_16() -> None:
+    """Stage 4B.1 default: the canonical scenario does not set strata.max_strata, and the
+    store and its padded table are built 16 wide (an engineering compromise, not a claim
+    about the number of social classes)."""
+    scenario = Scenario.from_yaml(SCENARIO)
+    assert "max_strata" not in scenario.config.strata.model_fields_set
+    assert scenario.config.strata.max_strata == DEFAULT_MAX_STRATA == 16
+    assert _width(Simulator(scenario)) == 16
+    assert _width(synthetic_simulator(scenario, 4)) == 16
+
+
+def test_an_explicit_capacity_8_still_builds_width_8() -> None:
+    scenario = Scenario.from_yaml(SCENARIO).with_settings({"strata.max_strata": 8})
+    assert _width(Simulator(scenario)) == 8
+    assert _width(synthetic_simulator(scenario, 4)) == 8
+
+
 def test_capacity_is_a_validated_run_setting_outside_the_static_key() -> None:
     scenario = Scenario.from_yaml(SCENARIO)
-    assert scenario.config.strata.max_strata == DEFAULT_MAX_STRATA == 8
     for bad in (0, 128):
         with pytest.raises(ValidationError):
             scenario.with_settings({"strata.max_strata": bad})
-    wider = scenario.with_settings({"strata.max_strata": 16})
-    assert wider.config_hash() != scenario.config_hash()  # recorded in provenance
-    assert static_key(wider) == static_key(scenario)  # the world/static cache is shared
-    sim = Simulator(wider)
-    population = sim.state.population
-    assert population.max_strata == 16
-    assert population.strata is not None and population.strata.max_strata == 16
-    assert population.strata.columns["share"].shape[1] == 16
+    for capacity in (8, 32):
+        other = scenario.with_settings({"strata.max_strata": capacity})
+        assert other.config_hash() != scenario.config_hash()  # recorded in provenance
+        assert static_key(other) == static_key(scenario)  # the world/static cache is shared
+        # Real reuse: a run at another capacity accepts the default run's static context.
+        static = shared_static_context(scenario)
+        assert shared_static_context(other) is static
+        sim = Simulator(other, static=static)
+        assert sim.static is static and _width(sim) == capacity
+
+
+def test_default_capacity_holds_16_fused_positions_and_coalesces_only_the_17th() -> None:
+    """The resolution the default buys: two 8-position units fuse losslessly (capacity 8
+    would coalesce 8 times); one more distinct position costs exactly one coalescence."""
+    scenario = Scenario.from_yaml(SCENARIO).with_overrides(seed=5)
+    for second, merges in ((8, 0), (9, 1)):
+        sim = synthetic_simulator(scenario, 4)
+        population = sim.state.population
+        population.strata_log = []
+        target, source = list(sim.state.units.values())[:2]
+        source.cell = target.cell
+        target.fields_ha, source.fields_ha = 4.0, 6.0
+        population.replace_strata(target, spread(8))
+        population.replace_strata(source, spread(second, 0.3))
+        rule = familiarity_rule(
+            next(iter(sim.scenario.species.values())), sim.scenario.config.mechanisms
+        )
+        merge_units(population, source.id, target.id, MergeMode.FUSION, 1, rule)
+        assert len(target.strata) == min(8 + second, 16) and target.strata.is_valid(16)
+        kinds = [e["event"] for e in population.strata_log]
+        assert kinds.count("capacity_coalescence") == merges
+        assert "exact_compaction" not in kinds
 
 
 @pytest.mark.parametrize("bad", [0, 128])

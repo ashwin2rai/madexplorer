@@ -16,6 +16,10 @@ Stage 3C keeps this fixture authoritative at its neutral default
 ``strata.field_output_claim_weight = 0``: flow rows are digested on their Stage 3B columns
 (Stage 3C appends columns, a schema change only), and the appended columns are checked to be
 neutral (no harvest pooling, store component = the whole transfer).
+
+Both fixtures pin ``strata.max_strata = 8``, the capacity their semantics were recorded at:
+they are historical targeted regressions, not statements about the current default (16
+since Stage 4B.1; covered by tests/test_strata_resolution.py).
 """
 
 import hashlib
@@ -37,6 +41,7 @@ from tests.conftest import ROOT
 
 FIXTURE = Path(__file__).parent / "golden_strata" / "stage3b_seed11_30u_40y.json"
 FIXTURE_3C = Path(__file__).parent / "golden_strata" / "stage3c_w0.5_seed11_30u_40y.json"
+FIXTURE_CAPACITY = 8  # historical Stage 3B/3C capacity; explicit, never the project default
 
 
 def _block(share: list[float], field: list[float], store: list[float]) -> StrataBlock:
@@ -60,11 +65,13 @@ FIXTURES = (
 def _simulate(weight: float) -> tuple[list[dict[str, Any]], Any]:
     scenario = Scenario.from_yaml(ROOT / "scenarios" / "mvp2_neolithic.yaml")
     scenario = scenario.with_overrides(seed=11)
+    scenario = scenario.with_settings({"strata.max_strata": FIXTURE_CAPACITY})
     if weight != 0.0:
         scenario = scenario.with_settings({"strata.field_output_claim_weight": weight})
     assert scenario.config.strata.field_output_claim_weight == weight
     sim = synthetic_simulator(scenario, 30, farming=True)
     population = sim.state.population
+    assert population.strata is not None and population.strata.max_strata == FIXTURE_CAPACITY
     population.strata_log, population.strata_flows = [], []
     for unit, block in zip(list(sim.state.units.values())[:3], FIXTURES, strict=True):
         unit.fields_ha, unit.stores_kcal = 4.0, 3e5
