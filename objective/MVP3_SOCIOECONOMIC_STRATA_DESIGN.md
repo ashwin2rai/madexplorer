@@ -1358,3 +1358,187 @@ outcomes. Questions it must answer:
 Stage 4B.1 does not choose among unequal food access, private stores, property
 persistence, labor obligations, specialization, decision influence, inheritance or
 redistribution. That needs its own design review.
+
+---
+
+## Q. Stage 4C — counterfactual stored-food access (2026-10-06)
+
+**COUNTERFACTUAL / NOT YET ACTIVE.** A candidate causal mechanism evaluated read-only on
+recorded states. No simulator path calls it, it is not a registered model rule, and its
+parameter is not a scenario setting. Physical food, reserves, demography and every subsystem
+stay MVP 2.1; the MVP 2.1 oracles are identical.
+
+Question: if existing effective control over stored food influenced access during scarcity,
+how much would socioeconomic allocation differ from complete pooling, and is that robust to
+strata resolution?
+
+### Q1. Semantics
+
+- **`store_claim`** is a share of *continuing effective control over the surviving aggregate
+  stored stock*, not an exhaustible calorie account, household inventory, private granary,
+  debt, title or inheritance right. Receiving food debits nothing and changes no claim.
+  Claims change only through the existing Stage 3B/3C accretion, and reset to share when
+  the stores reach zero. Access transfers consumption rights, not control.
+- **Scope:** only the internal allocation of a unit's physical store withdrawal `X` that
+  covers an existing shortage. It does not touch trade, spoilage, abandonment, new stores,
+  harvest or crop attribution, fields, labor or reserves.
+- **Timing (locked):** post-trade harvest `H` known → pre-withdrawal `store_claim` → remaining
+  deficits `D_i` → the physical `X` (MVP 2.1) → counterfactual allocation of that fixed `X` →
+  the simulation continues unchanged → if the stores close at zero, the existing zero-stock
+  rule resets the claims afterwards. A depletion year uses the old claims.
+- **Remaining external deficit:** with need and harvest by share (shared demography, pooled
+  harvest), `D_i = max(Need·s_i − H·s_i, 0)`, computed in the identical factored form
+  `max(Need − H, 0)·s_i`, which avoids cancellation when Need ≈ H. `Need` is the energetics
+  requirement (including carried energy debt). Body reserves are excluded.
+
+### Q2. Allocator (`population/strata_access.py`, pure)
+
+```text
+q_i = s_i + a·(c_i − s_i)                         access priority, a = store_access_claim_weight ∈ [0, 1]
+X ≥ ΣD − allowance:  x_i = D_i                    stores cover everyone: claims cannot matter
+else water-filling:  R = X; repeat over strata with unmet deficit:
+                     offer_i = R·q_i / Σ q (hungry); cap at D_i − x_i; R −= capped room
+                     if Σ q (hungry) = 0: weights = remaining unmet need   (zero-priority fallback)
+```
+
+- **Neutral limits:** `a = 0` gives `q = s`; `c = s` gives `q = s` for every `a`, bit for bit.
+- **Fallback:** the neutral rule when claims give no ranking. Under proportional needs it is
+  also the `a → 1` limit, so the allocation stays continuous. Future stratified needs may
+  require revisiting it.
+- **Derived diagnostics:**
+  - `counterfactual_store_access_kcal` = `x_i`;
+  - `counterfactual_external_food_allocation_kcal` = `H·s_i + x_i`, and `_ratio` = that
+    `/ (Need·s_i)`;
+  - `counterfactual_unmet_external_need_kcal` = `D_i − x_i`;
+  - `counterfactual_store_access_transfer_kcal` = `x_i − X·c_i`. At `a = 0` this is the
+    Stage 3B transfer `X·(s_i − c_i)`;
+  - redistribution from pooling `R = ½ Σ|x_i − X·s_i|`, and `R/X`.
+
+  These are candidate socioeconomic allocation before body reserves, not consumption or
+  food ratio.
+- **Numerical contract (`REL_TOL = 1e-12`, the partition tolerance):**
+  - `0 ≤ x_i ≤ D_i` exactly;
+  - `|Σx − X| ≤ REL_TOL·X + slack`;
+  - at `a = 0`, `|x_i − X·s_i| ≤ REL_TOL·X` and the transfer equals the Stage 3B transfer to
+    `REL_TOL·X`.
+
+  `slack = REL_TOL·max(K0, Need)` absorbs the physical `X = K0 − (K0 − X)` rounding. Input
+  validation rejects bad lengths, non-finite values, shares that are not positive or do not
+  sum to 1, claims outside the simplex, negative deficits, `a ∉ [0, 1]` and `X > ΣD +
+  allowance`.
+
+### Q3. A structural finding: under MVP 2.1 the mechanism is one-shot per store cycle
+
+MVP 2.1 energetics withdraws `X = min(Need − H, K0)`. So a withdrawal either covers every
+remaining deficit (`X = ΣD`: `x = D`, claims irrelevant) or empties the stores (`X = K0 < ΣD`),
+after which the zero-stock rule erases the control relation.
+
+**Claims can matter only in a store-exhaustion year, and only once.** Repeated preferential
+access while stores stay positive is consistent with the semantics. The controlled experiment
+shows it with prescribed rationed withdrawals: claims persist, the high-control stratum is
+favored every year, and the final depletion uses the pre-depletion claim and then resets.
+It is physically unreachable without a rationing rule, i.e. a rule that withdraws less than
+the deficit while stores remain. Such a rule would decide *how much* to withdraw, which is
+out of scope here.
+
+In real runs every mechanism-active unit-year was a depletion year:
+- non-neutral claims meeting withdrawals in chains with positive closing stores: 1,973
+  events (neolithic) and 577 (pressure); `a = 1` changed none of them;
+- chains where non-neutral control persisted through ≥ 2 withdrawal years: 918 / 406, of
+  which 344 / 323 end in depletion, where the claim acts once and resets (verified in
+  2,602–2,905 multi-strata depletion events per run set, 0 failures, at both capacities and both w).
+
+Caveat: a rounding remnant of stores (≤ 1e-8 kcal) can postpone the reset by a year; those
+"dust" withdrawals (X ≤ 1e-9·Need) are excluded from the statistics.
+
+### Q4. Experiment (`scripts/probes/store_access_counterfactual.py`)
+
+**Setup:**
+- neolithic 600 y and pressure + cultivation 400 y, seeds 0–3;
+- `max_strata` 16 and 32, with physical state identical across capacities and with the
+  observer on or off;
+- `a ∈ {0, 0.25, 0.5, 1}` evaluated on the same recorded pre-withdrawal state;
+- primary `w = field_output_claim_weight = 0`; stress `w = 1`.
+
+**Unit-years by category** (capacity 32; identical across w and capacity):
+
+| | neolithic | pressure + cult |
+|---|---|---|
+| unit-years / deficit unit-years | 384,074 / 21,290 | 122,326 / 33,013 |
+| withdrawals (X > 0) | 15,844 | 7,875 |
+| covered (X = ΣD; claims irrelevant) | 14,286 (4,203 of them exactly emptied) | 4,448 (992) |
+| partial depletion (X = K0 < ΣD) | 1,061 (30k person-years) | 3,126 (89k) |
+| … with non-neutral claims, w = 0 / w = 1 | 245 / 446 | 899 / 2,020 |
+| mechanism-active (R/X > 1e-9 at a = 1), w = 0 / 1 | 242 / 443 | 890 / 2,018 |
+| dust withdrawals (excluded) | 497 | 301 |
+
+**Mechanism signal** (capacity 32, active unit-years; per unit-year p50 / p90 / p99):
+
+| | w = 0 neolithic | w = 0 pressure | w = 1 neolithic | w = 1 pressure |
+|---|---|---|---|---|
+| R total / X total, a = 0.25 / 0.5 / 1 | 0.020 / 0.036 / 0.059 | 0.021 / 0.040 / 0.073 | 0.046 / 0.085 / 0.15 | 0.063 / 0.12 / 0.22 |
+| R/X at a = 1 | 0.004 / 0.35 / 0.79 | 0.007 / 0.54 / 0.79 | 0.14 / 0.42 / 0.74 | 0.24 / 0.55 / 0.79 |
+| W1(a = 0, a = 1) of access ratio | 3e-4 / 0.018 / 0.043 | 4e-4 / 0.013 / 0.039 | 0.009 / 0.042 / 0.079 | 0.009 / 0.037 / 0.069 |
+| people below the pooled ratio (a > 0) | 0.55 / 0.78 / 0.88 | 0.55 / 0.77 / 0.88 | 0.53 / 0.74 / 0.88 | 0.54 / 0.73 / 0.86 |
+| need caps / fallback (a = 1) | 20 / 14 | 63 / 38 | 81 / 16 | 518 / 90 |
+
+- **W1 values are in units of the access ratio** (fraction of need), so a typical active
+  year moves people by about 1–4 % of need, and at most 12 %.
+- **Most people lose slightly while a small high-control minority gains.** The
+  people-weighted distribution of the access ratio over all active unit-years is almost
+  unchanged (p10 / p50 / p90 at w = 0: neolithic 0.501 / 0.932 / 0.990 → 0.501 / 0.932 /
+  0.992; pressure 0.760 / 0.940 / 0.990 → 0.758 / 0.939 / 0.993).
+- **Small at w = 0:** at depletion, store positions are near 1, because store memory fades
+  in about 2 y (§M4). Under w = 1 the signal is about 2–4× larger.
+
+**Resolution, 16 vs 32** (same year, unit and a; signal at 32 vs uncertainty):
+
+| | w = 0 neolithic | w = 0 pressure | w = 1 neolithic | w = 1 pressure |
+|---|---|---|---|---|
+| Σ R32 (a = 1), kcal | 1.8e7 | 5.6e7 | 7.2e7 | 3.3e8 |
+| Σ \|R16 − R32\| / Σ R32 | 2e-16 | 4e-9 | 2e-4 | 4e-3 |
+| \|R16 − R32\| / R32, p99 / max | 4e-10 / 1e-8 | 1e-8 / 0.39 (R32 ≈ 0.5 kcal) | 0.006 / 0.033 | 0.081 / 0.33 |
+| W1(16, 32) / W1(a = 0, 1), p90 / p99 / max | 5e-12 / 6e-5 / 6e-4 | 4e-6 / 0.022 / 0.39 | 0.002 / 0.095 / 0.14 | 0.062 / 0.21 / 0.80 |
+| unit-years where W1(16, 32) > 0.1·signal | 0 / 242 | 2 / 890 | 4 / 443 | 108 / 2,018 |
+
+- **At w = 0 the two capacities agree to rounding,** except in a handful of unit-years with
+  negligible signal.
+- **Under w = 1, resolution uncertainty is small in aggregate but not negligible in the
+  tail:** 5 % of pressure active unit-years have uncertainty above 10 % of their signal.
+- **Coalescence association:** the largest-|R16 − R32| decile has recent capacity
+  coalescence (same unit id, prior 10 y, capacity 16) 2–5× more often than the rest:
+  29 % vs 4 % and 61 % vs 19 % at w = 0; 14 % vs 3 % and 32 % vs 12 % at w = 1. Under w = 1,
+  most large differences have no recent same-id coalescence. They are inherited from older
+  coalescences or absorbed predecessors and propagated by store accretion, which the
+  §M6 w-coupling predicts.
+
+**Audits and cost:**
+- `max |ΣD − (Need − H)| / Need ≤ 2.7e-16`;
+- `max (X − ΣD) / max(K0, Need) ≤ 8.6e-17`; `X ≤ ΣD` held in every withdrawal at both
+  capacities, under both w;
+- authoritative state (events, RNG, unit physical state, strata sidecar) identical with the
+  observer on and off;
+- allocator 30 µs (a = 0) to 80–90 µs (a = 1, 16–32 strata, 5 rounds), ≈ 110 µs per
+  (state, a) with derived quantities and audits;
+- observer 0.4 s of an 85 s run set; snapshots ≤ 1.4 MB per run.
+
+### Q5. Recommendation: D (with A for resolution at w = 0)
+
+- **Resolution (gate condition for `store_claim`):** adequate for this mechanism at the
+  neutral `w = 0`. Under the `w = 1` stress the tail uncertainty (p99 21 % of signal in
+  pressure runs) argues for the §M6 mechanism-aware metric before any activation that also
+  uses `w > 0`. No metric change is made here.
+- **Mechanism:** the effect is small, concentrated and structurally **one-shot**:
+  - a few hundred to two thousand unit-years in 4 seeds;
+  - about 2–7 % of withdrawn kcal at w = 0;
+  - always in a store-exhaustion year, immediately followed by the reset of control.
+
+  The mechanism does not touch the persistent-differentiation question MVP 3 needs answered.
+  Its leverage is limited by the MVP 2.1 withdrawal rule, not by the allocator.
+- **Not activated.** Before any activation design, review should decide:
+  - whether a withdrawal (rationing) decision should exist at all; that is a separate
+    collective-choice mechanism and would make repeated access possible;
+  - whether the effect should reach biology (stratified reserves and demography are later
+    stages).
+
+Physical-feedback gate: **NOT CLEARED** (pending scientific review).

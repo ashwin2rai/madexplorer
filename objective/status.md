@@ -1,10 +1,76 @@
 # Implementation Status — MVP 3 (staged)
 
-**Updated:** 2026-10-04 (Stage 4B.1)\
+**Updated:** 2026-10-06 (Stage 4C)\
 **Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
 **Current milestone:** MVP 3 — staged socioeconomic differentiation
 
 ## MVP 3 stage handoff
+
+**Completed:** Stage 4C — counterfactual stored-food access experiment (design §Q).
+
+**Production behavior:** unchanged. The MVP 2.1 raw and logical oracles are identical, and
+the Stage 3B/3C fixtures are unchanged.
+
+**Candidate mechanism (COUNTERFACTUAL / NOT ACTIVE):** scarcity-conditioned access to
+internal store withdrawals.
+- Priority `q = s + a·(c − s)`.
+- The fixed physical withdrawal `X` is allocated by bounded weighted water-filling, capped
+  at the remaining external deficits `D_i = max(Need − H, 0)·s_i`.
+- If the hungry strata left all have zero priority, the remainder goes by remaining need.
+- If stores cover every deficit, `x = D`.
+- Pure function `population/strata_access.py`. No simulator path calls it, and it is not a
+  model rule. Probe: `scripts/probes/store_access_counterfactual.py`.
+
+**store_claim meaning:** continuing effective control over the surviving aggregate stores,
+not an exhaustible calorie account. Access debits no claim; the zero-stock reset erases
+control.
+
+**Experimental parameter:** `store_access_claim_weight` (a), passed to the allocator and
+probe only. Not a scenario setting and not active in canonical simulation; no canonical
+value.
+
+**Structural finding:** MVP 2.1 withdraws `min(Need − H, K0)`. So claims can matter only in
+a year that empties the stores, once, and the zero-stock reset follows immediately. Every
+mechanism-active unit-year in real runs was such a year. Repeated preferential access with
+positive stores needs a rationing (withdrawal-decision) rule, which does not exist.
+
+**Resolution results (16 vs 32, 4 seeds, neolithic / pressure):**
+- w = 0: agreement to rounding. Σ|R16 − R32| / ΣR32 is 2e-16 / 4e-9; per unit-year
+  W1(16, 32) > 0.1·signal in 0 / 2 unit-years.
+- w = 1 stress: Σ is 2e-4 / 4e-3; W1 ratio p99 0.10 / 0.21; 4 / 108 unit-years above 0.1.
+- Large differences cluster in units with recent capacity coalescence (w = 0), or are
+  inherited through store accretion (w = 1).
+
+**Mechanism signal (capacity 32, a = 1):**
+- 242 / 890 active unit-years at w = 0, 443 / 2,018 at w = 1, out of 384k / 122k
+  unit-years;
+- R is 5.9 % / 7.3 % of X in active years at w = 0, and 15 % / 22 % at w = 1;
+- the per unit-year access-ratio W1 shift has a median of 0.018 / 0.013 of need (max 0.05 /
+  0.06) at w = 0;
+- the aggregate people-weighted access distribution is almost unchanged.
+
+**Repeated-shortage findings:**
+- In the controlled case (prescribed rationing) control persists and the advantage repeats;
+  the final depletion uses the pre-depletion claim, then resets.
+- In real runs non-neutral control persisted through ≥ 2 withdrawals in 918 / 406 chains,
+  but `a` changed no allocation while stores stayed positive (0 of 1,973 / 577 events). It
+  acted only at the final depletion (344 / 323 chains).
+- The zero-store reset after depletion was verified in every multi-strata case at both
+  capacities.
+
+**Physical-feedback gate:** NOT CLEARED.
+
+**Reason:** recommendation D. Resolution is adequate for `store_claim` at w = 0, though not
+yet comfortable under w = 1. The effect is small, rare and structurally one-shot under the
+MVP 2.1 withdrawal rule, and it does not produce persistent differentiation. Review should
+first decide whether a withdrawal (rationing) decision should exist; that is a separate
+mechanism.
+
+**Next:** PAUSE FOR SCIENTIFIC REVIEW. Production activation is not authorized.
+
+---
+
+### Stage 4B.1 — default socioeconomic resolution (previous handoff)
 
 **Completed:** Stage 4B.1 — default socioeconomic resolution (design §P).
 
@@ -29,8 +95,8 @@ are unchanged.
 **Deferred:** labor accounting (it would equal share; design §P3); approximate adaptive
 merging; unequal resource access; hierarchy; stratified demography.
 
-**Next:** Stage 4C — First Causal Differentiation Design. DESIGN ONLY, when authorized;
-questions A–E in design §P3. Not started.
+**Next (at 4B.1):** Stage 4C — First Causal Differentiation Design (questions A–E in
+design §P3). It was carried out as the counterfactual stored-food access experiment (above).
 
 ---
 
