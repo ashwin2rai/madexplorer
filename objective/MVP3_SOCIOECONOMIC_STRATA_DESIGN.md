@@ -1542,3 +1542,187 @@ Caveat: a rounding remnant of stores (≤ 1e-8 kcal) can postpone the reset by a
     stages).
 
 Physical-feedback gate: **NOT CLEARED** (pending scientific review).
+
+---
+
+## R. Stage 4D — store release / reserve management (2026-10-06)
+
+**COUNTERFACTUAL / NOT ACTIVE.** The question is *how much* leaves storage when the
+harvest falls short (`X`). Who receives it (`x_i`, §Q) is a separate question.
+- The candidate is a unit-level, symmetric rule. It reads no claim, share or stratum id.
+- No hierarchy, authority, coercion or conditional access is modeled.
+- The authoritative rule stays MVP 2.1; the MVP 2.1 oracles are identical.
+
+### R1. The current pipeline (from code)
+
+```text
+Farming      crop Y from fields worked by pooled labor (fields sized to need·(1 + surplus_target))
+Foraging     effort targets need·(1 + surplus_target) − Y            surplus_target = 0.2 (human)
+Trade        balance = H + K − Need; donors offer food_sharing_propensity·balance (0.3), taken
+             from harvest first, then stores; recipients receive into harvest
+Energetics   fed  (H ≥ Need): body reserves topped up (cap reserve_days_max·daily·people, 60 d),
+                              then leftover stored if storage_retention > 0, else spoiled
+             short (H < Need): X = min(Need − H, K), then body reserves, then energy deficit
+             K' = (K − X + A)·r,  r = storage_retention: base 0.15, +0.35 storage_pits,
+                                  +0.30 granaries (0 if mechanisms.storage is off)
+Demography   fertility from food_ratio = H / Need (stores and reserves not counted);
+             mortality from energy_deficit (after stores and reserves; exp, convex)
+Migration    carry = 60,000 kcal per person; stores above it abandoned; utility cost of abandoning
+Innovation   "surplus" term reads stores / Need; harvest_variability need reads harvest_history
+```
+
+- **What is not modeled:** storage capacity, seasons (the step is annual), seed requirements
+  and decay of body reserves.
+
+### R2. Intent of `X = min(D, K)`: an MVP simplification, not a documented hypothesis
+
+- **When and how it was introduced:** in the first MVP 2 commit (`244289c`), extending the
+  MVP 1 rule "intake plus reserves". The `pooled_energy_balance` rationale states an
+  *order* ("shortfalls draw on food stores, then body reserves") with no purpose,
+  `source_type = heuristic`.
+- **No stated purpose:** its only listed limitation is equal sharing. Tests check the
+  arithmetic, not a storage policy.
+- **What the objective says:** storage, spoilage, portability and transferability are listed
+  as mechanisms to develop (§7), and the ecology has no seasons (§3.3).
+- **Conclusion:** the repository does not establish reserve management as intended; the rule
+  is the minimal one. It is still not arbitrary under the current physics (R4).
+
+### R3. Information available at the release decision
+
+| Signal | What it is | Known when | Kind | New foresight if used? |
+|---|---|---|---|---|
+| `Need` (incl. energy debt) | this year's requirement | at energetics | causal | no; "next year ≈ this year" is a persistence assumption |
+| `H` after trade, `K` after trade | this year's food | at energetics | causal | no |
+| `storage_retention` r | the unit's storage technique | always | causal (capability) | no |
+| body reserves | lossless, capped at 60 days of need | always | causal | no |
+| `harvest_history` (10 y per capita) and its CV | recent production | always | causal state (innovation need) | no, but turning it into an expectation is a new behavioral hypothesis |
+| `surplus_target` (0.2) | production target for foraging effort and field area | always | parameter | not a stock target (R5) |
+| `planning_horizon_years` (10) | amortizes clearing over expected tenure | field planning | parameter | no production or need forecast exists |
+| next year's field area | set by field planning, after energetics | after the decision | causal | a crop forecast would be new |
+| beliefs, `food_log_prior` | spatial food beliefs for migration | always | causal | not temporal |
+
+Nothing in the model forecasts next year's harvest, need or shortage.
+
+### R4. The structural finding: under current physics the greedy release is optimal in kcal
+
+- **Accounting:** in a shortage year with reserves `B ≥ D − X`, food left at the year's end
+  is `r·(K − X) + B − (D − X)`. Its slope in `X` is `1 − r > 0`. With insufficient
+  reserves, a smaller `X` adds current energy deficit one for one.
+- **Result:** `X = min(D, K)` both maximizes the food left (stores plus reserves) and
+  minimizes current starvation, for any `r < 1`.
+- **Fed years don't help:** they refill body reserves *before* storing. A reserve drawn down
+  by withholding is restored from surplus that would otherwise have been stored, so the
+  loss `(1 − r)` recurs.
+- **Body reserves:** fertility reads `H/Need` only, so drawing reserves has no demographic
+  cost unless they run out. Holding stores while bodies draw down is therefore coherent
+  physically, but strictly dominated.
+- **What a reserve rule would need:** a motive the model lacks. Examples:
+  - an expected *worse* future deficit, with convex mortality and a forecast;
+  - a use of stores that reserves cannot serve (seed, a season's lean period, portability);
+  - a cost of low body reserves.
+- **Trade conflict:** trade counts every store above current need as giftable surplus. A
+  protected reserve would conflict with it.
+
+### R5. Candidates
+
+| Candidate | Verdict |
+|---|---|
+| C0 `X = min(D, K)` | baseline (MVP 2.1) |
+| C1 a target already in the model | **rejected**: no stock target or capacity exists. `surplus_target` is a production margin and already the mechanism that fills stores, so reusing it as a stock target reinterprets it and double-counts |
+| C2 future-need buffer `X = min(D, max(K − R, 0))`, `R = b·Need` | the smallest rule expressible from decision-time information. Studied counterfactually with an experimental `b` (no canonical value; `b = 0` is C0). Not defensible as a default (R4) |
+| C3 adaptive risk buffer from `harvest_history` | **rejected for now**: needs a new expectation hypothesis, and C2 already loses |
+| optimize X over future realized states | **rejected**: omniscient |
+
+Code: `population/store_release.py` (pure; unused by the simulator). Probe:
+`scripts/probes/store_release_counterfactual.py`.
+
+### R6. One-step counterfactual (neolithic 600 y and pressure + cultivation 400 y, seeds 0–3)
+
+- **Method:** policy inputs are decision-time values only. Later authoritative years are read
+  afterwards, for evaluation only.
+- **Validation:** `min(D, K)` reproduces the recorded `X` to 8.6e-17 relative, and the
+  observer leaves authoritative state identical.
+
+| Prevalence | neolithic | pressure + cult |
+|---|---|---|
+| unit-years / shortage unit-years (D > 1e-9·Need) | 384,074 / 20,333 | 122,326 / 32,098 |
+| stores cover D / stores exhausted short of D / no stores | 14,285 / 1,247 / 4,801 | 4,447 / 3,343 / 24,308 |
+| D / Need p50 / p90 | 0.061 / 0.19 | 0.090 / 0.32 |
+| K / Need (K > 0) p50 / p90 | 0.086 / 0.41 | 0.040 / 0.093 |
+| retention at shortages with stores (r = 0.15 / 0.5 / 0.8) | 100 / 10,411 / 5,021 | 499 / 7,291 / 0 |
+| body reserves at the cap / reserves ÷ D p50 | 78 % / 2.6 | 24 % / 0 |
+| shortage chains (length 1 / 2 / 3 / ≥ 4) | 11,370 / 1,762 / 510 / 538 | 6,490 / 1,932 / 957 / 2,260 |
+| gap to the next shortage p10 / p50 / p90 | 1 / 2 / 25 y | 1 / 1 / 6 y |
+| next shortage within 10 y: retained food surviving to it, p50 / p90 | 41 % / 80 % | 25 % / 50 % |
+
+**Sweep of `b`** (every binding unit-year is a hunger-with-retained-food event by
+construction):
+
+| b | binding unit-years | retained kcal (÷ withdrawn) | person-years | extra starvation kcal | events with energy deficit and retained stores |
+|---|---|---|---|---|---|
+| neolithic 0.05 | 9,880 | 6.0e9 (0.37) | 274,636 | 2.4e8 | 427 |
+| neolithic 0.2 | 13,232 | 1.25e10 (0.77) | 374,387 | 4.1e8 | 493 |
+| neolithic 1.0 | 15,520 | 1.62e10 (1.00) | 441,779 | 5.6e8 | 640 |
+| pressure 0.05 | 6,875 | 3.3e9 (0.69) | 193,528 | 4.5e8 | 936 |
+| pressure ≥ 0.2 | 7,785–7,790 | 4.8e9 (1.00) | 219,385 | 6.3e8 | 1,001 |
+
+**Where each retained kcal goes** (ranges over b):
+
+| | neolithic | pressure |
+|---|---|---|
+| paid now from body reserves | 0.96 | 0.86 |
+| paid now as extra energy deficit | 0.033–0.041 | 0.13–0.14 |
+| still stored one year later | 0.55–0.62 | 0.48–0.49 |
+| surviving to the unit's next shortage | 0.14–0.22 | 0.21–0.22 |
+| potential cover of that shortage's uncovered need (upper bound) | 0.027–0.047 | 0.17–0.19 |
+| abandoned above the carry limit on a later move | ≤ 0.011 | ≤ 0.0013 |
+
+- **Potential availability is not a benefit.** It ignores that the body reserves drawn now,
+  being lossless, would themselves have been available, and that refilling them takes
+  priority over storage.
+- **Storage capacity:** no opportunity cost, because none is modeled. The carry limit is the
+  only bound.
+- **Controlled cases** (closed toy through the real `energy_balance`; valid only because
+  nothing feeds back):
+  - every reserve target that binds adds starvation or spoilage, in every case;
+  - in the one-shortage case at r = 0.5, b = 0.1 leaves 285 kcal of stores plus reserves
+    against 310 under the current rule;
+  - a target binds with full stores only when `K − b·Need < D`.
+
+### R7. One-step vs dynamic counterfactual
+
+- **The one-step evaluation does not compound:** retained food never enters a later `K`.
+- **A shadow replay of stores alone would be misleading.** Withholding changes body reserves
+  and energy deficit, hence mortality, then population, Need, labor, fission and fusion.
+  It also changes trade balances and offers, the migration stores cost, carry abandonment
+  and the innovation surplus term (including storage technologies).
+- **Only a true branched simulation** can evaluate dynamics. It is not warranted while R4
+  gives no motive to retain.
+
+### R8. Hunger with retained food, and the possible link to hierarchy (future hypotheses only)
+
+- **No power is needed for it:** collective reserve preservation can produce hunger while
+  food is stored, with nobody holding power. It is necessary, not sufficient, for power
+  over storage.
+- **A possible later sequence; every step after the first is an untested hypothesis:**
+  collective reserve management → valuable control over intertemporal release →
+  asymmetric influence over that decision → dependency during scarcity → possibly
+  conditional access or obligations → possibly coercive capacity.
+- **Design principle:** political power should be inferred from concrete asymmetric
+  capacities over consequential decisions, not represented as a scalar. For storage, a
+  future measure might be (ability to alter the release of a scarce resource) × (people
+  dependent on it) × (cost imposed by refusal). Not implemented.
+
+### R9. Recommendation: A, keep the current rule; no further store-release work now
+
+The current rule is the minimal one, but under the current physics it is also the
+kcal-optimal one (R4). A reserve-management hypothesis becomes meaningful only after a
+mechanism gives retention a purpose, for example:
+- seasonality or a lean period;
+- seed requirements;
+- a cost of low body reserves;
+- expectation formation from `harvest_history` (C3).
+
+Then it should be tested in a true branched simulation (C). Consequence for §Q: claim-sensitive
+access stays one-shot per store cycle. The next MVP 3 review should look for differentiation
+outside storage release.

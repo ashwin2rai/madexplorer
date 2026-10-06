@@ -1,10 +1,78 @@
 # Implementation Status — MVP 3 (staged)
 
-**Updated:** 2026-10-06 (Stage 4C)\
+**Updated:** 2026-10-06 (Stage 4D)\
 **Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
 **Current milestone:** MVP 3 — staged socioeconomic differentiation
 
 ## MVP 3 stage handoff
+
+**Completed:** Stage 4D — reserve management design and counterfactual (design §R).
+
+**Production behavior:** unchanged. The MVP 2.1 raw and logical oracles are identical; the
+Stage 3B/3C fixtures and Stage 4C tests are unchanged.
+
+**Current physical rule:** `X = min(current deficit, available stores)`, then body reserves,
+then energy deficit. Stores keep a fraction `r` per year (0.15 / 0.5 / 0.8); body reserves
+are lossless and capped at 60 days.
+
+**Audit conclusion:**
+- The rule is a minimal MVP 2 simplification. It has a heuristic rationale stating only the
+  order, and no documented reserve intent.
+- Under the current physics it is kcal-optimal: food left at the year's end grows with `X`
+  at slope `1 − r > 0`, and current starvation falls with `X`.
+- There is no storage capacity, no seasons, no seed requirement and no forecast.
+- `surplus_target` is a production margin, not a stock target.
+- Trade treats all stores above need as giftable surplus.
+
+**Candidate collective reserve rule (COUNTERFACTUAL / NOT ACTIVE):**
+`X = min(D, max(K − b·Need, 0))`, a future-need buffer that assumes next year's need ≈ this
+year's. `b` is experimental, `b = 0` is MVP 2.1, and there is no canonical value. Pure
+function `population/store_release.py`; probe `scripts/probes/store_release_counterfactual.py`.
+Rejected:
+- a target "already in the model" (none exists);
+- a harvest-variability risk buffer (needs a new expectation hypothesis);
+- any optimization over realized futures.
+
+**Information used:** decision-time `Need`, post-trade `H` and `K`, and the unit's retention.
+Future authoritative years are used only to evaluate.
+
+**Counterfactual findings (4 seeds, neolithic / pressure + cultivation):**
+- shortage unit-years 20,333 / 32,098; stores exist in 15,532 / 7,790 of them;
+- `b = 0.05` binds in 9,880 / 6,875 unit-years and retains 37 % / 69 % of the kcal now
+  withdrawn; `b ≥ 0.2` retains 77–100 %;
+- each retained kcal is paid 0.96 / 0.86 from body reserves and 0.03–0.04 / 0.13–0.14 as
+  extra energy deficit;
+- 0.55–0.62 / 0.48–0.49 of it is still stored a year later.
+
+**Hunger-with-retained-food:** every binding unit-year (9.9k–15.5k / 6.9k–7.8k; 0.19–0.44
+million person-years). Of those, 427–640 / 936–1,002 unit-years have a real energy deficit
+while stores are held. The rule is collective, and this is not coercion.
+
+**Potential future value of retained reserves:** 0.14–0.22 / 0.21–0.22 of each retained
+kcal survives to the unit's next shortage. As an upper bound it could cover 0.03–0.05 /
+0.17–0.19 kcal of that shortage's uncovered need, less than the lossless body reserve spent
+to retain it. No welfare benefit is claimed.
+
+**Limitations:**
+- The evaluation is one-step and does not compound.
+- A store-only shadow replay is invalid: withholding feeds reserves, mortality, population,
+  trade, migration and innovation.
+- There is no capacity cost because no capacity is modeled; carry-limit abandonment is
+  ≤ 1 % of retained kcal.
+
+**Recommendation:** keep the current rule (outcome A). No further store-release work until a
+mechanism gives retention a purpose: seasons or a lean period, seed, a cost of low body
+reserves, or expectation formation. Then test it with a true branched simulation (C).
+Stage 4C access therefore stays one-shot per store cycle.
+
+**Hierarchy:** not implemented. No authority, coercion or conditional access. The possible
+pathway and power-as-capacity principle are recorded as future hypotheses only (design §R8).
+
+**Next:** PAUSE FOR SCIENTIFIC REVIEW.
+
+---
+
+### Stage 4C — counterfactual stored-food access (previous handoff)
 
 **Completed:** Stage 4C — counterfactual stored-food access experiment (design §Q).
 
@@ -66,7 +134,7 @@ MVP 2.1 withdrawal rule, and it does not produce persistent differentiation. Rev
 first decide whether a withdrawal (rationing) decision should exist; that is a separate
 mechanism.
 
-**Next:** PAUSE FOR SCIENTIFIC REVIEW. Production activation is not authorized.
+**Next (at 4C):** pause for scientific review; done, then Stage 4D (above).
 
 ---
 
