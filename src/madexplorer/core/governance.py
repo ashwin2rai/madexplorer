@@ -1,4 +1,4 @@
-"""Model-rule metadata registry (spec §39).
+"""Model-rule metadata registry.
 
 Every model equation is decorated with :func:`model_rule`, so the codebase can
 answer "why does this rule exist?" via ``madexplorer rules``.

@@ -53,6 +53,11 @@ UNASSIGNED = -1  # stratum id of a stratum not yet bound to a store
 PARTITION_TOLERANCE = 1e-12  # |sum - 1| allowed for a partition-of-unity column
 
 
+def unassigned_ids(n: int) -> IntArray:
+    """Ids for components created outside a store (assigned when the unit is bound)."""
+    return np.full(n, UNASSIGNED, dtype=np.int64)
+
+
 @dataclass(frozen=True)
 class StratumField:
     """One stratum column: float64, a partition of unity over a unit's strata.
@@ -98,10 +103,7 @@ class StrataBlock:
 
     def unassigned_copy(self) -> "StrataBlock":
         """The same strata as new components (fission): ids are assigned on binding."""
-        return StrataBlock(
-            {name: values.copy() for name, values in self.columns.items()},
-            np.full(len(self), UNASSIGNED, dtype=np.int64),
-        )
+        return self.with_ids(unassigned_ids(len(self)))
 
     def with_ids(self, ids: IntArray) -> "StrataBlock":
         """These strata with the given ids."""
@@ -463,6 +465,35 @@ def normalize_strata(
         block, compactions = compact_exact_strata(block, new_ids)
         records += [*coalesced, *compactions]
     return block, records
+
+
+def log_normalization(
+    log: list[dict[str, object]],
+    year: int,
+    unit_id: str,
+    records: list[Compaction | Coalescence],
+) -> None:
+    """Sidecar events of :func:`~madexplorer.population.strata.normalize_strata`."""
+    for record in records:
+        event: dict[str, object] = {
+            "year": year,
+            "event": "exact_compaction"
+            if isinstance(record, Compaction)
+            else "capacity_coalescence",
+            "unit_id": unit_id,
+            "merged_stratum_ids": list(record.merged_ids),
+            "stratum_id": record.new_id,
+        }
+        if isinstance(record, Compaction):
+            event["position"] = list(record.position)
+        else:
+            # Representation-error diagnostics (observation only): combined (the chosen
+            # pair's cost) and by dimension.
+            event["cost"] = record.cost
+            event["field_error"] = record.field_error
+            event["store_error"] = record.store_error
+            event["combined_error"] = record.cost
+        log.append(event)
 
 
 def has_exact_duplicates(block: StrataBlock) -> bool:

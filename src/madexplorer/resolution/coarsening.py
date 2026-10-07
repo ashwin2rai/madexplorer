@@ -1,4 +1,4 @@
-"""Coarsening: merge similar co-located units to bound computational cost (spec §6.2, §6.5).
+"""Coarsening: merge similar co-located units to bound computational cost.
 
 When a cell holds more units of one species than the resolution budget,
 the most similar pair (identical technologies, closest knowledge vectors) is

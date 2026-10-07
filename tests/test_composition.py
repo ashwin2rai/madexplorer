@@ -1,4 +1,4 @@
-"""Merge/split semantics and network rewiring (spec §6.4, §6.5, §38)."""
+"""Merge/split semantics and network rewiring."""
 
 from dataclasses import fields
 

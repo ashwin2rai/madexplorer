@@ -1,8 +1,8 @@
-"""Births, deaths, and aging with nutrition-dependent rates (spec §8).
+"""Births, deaths, and aging with nutrition-dependent rates.
 
 Rates are applied per age-by-sex cohort with binomial draws, so small groups
 experience strong demographic stochasticity and large ones become predictable
-(spec §6.6) without any special-casing.
+without any special-casing.
 """
 
 from collections.abc import Sequence

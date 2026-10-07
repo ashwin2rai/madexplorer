@@ -1,4 +1,4 @@
-"""Food exchange between nearby groups (spec §9.2, §11.5).
+"""Food exchange between nearby groups.
 
 MVP 2 trade is reciprocal provisioning: groups with a surplus (harvest plus
 stores above requirement) offer a share of it to groups in deficit within one

@@ -1,4 +1,4 @@
-"""Settlement health: a minimal crowding mortality hazard (spec §8.2, §8.4, §17).
+"""Settlement health: a minimal crowding mortality hazard.
 
 This is a deliberate precursor to the MVP 3 health system and a later pathogen
 model, not a disease model. Settled people living in contact with many other
@@ -22,7 +22,7 @@ The total annual hazard is ``h_baseline + h_starvation + h_crowding``.
 """
 
 import math
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 
 import numpy as np
 
@@ -136,14 +136,15 @@ def crowding_hazard_columns(
     return hazard
 
 
-def crowding_hazard_array(
-    units: Sequence[PopulationUnit],
+def crowding_hazards(
+    units: Iterable[PopulationUnit],
     species: Mapping[str, Health],
     cell_area_km2: float,
-) -> FloatArray:
-    """:func:`crowding_hazard_columns` for unit objects (in ``units`` order)."""
+) -> dict[str, float]:
+    """:func:`crowding_hazard_columns` for unit objects, keyed by unit id (tests)."""
+    units = list(units)
     species_ids = sorted(species)
-    return crowding_hazard_columns(
+    hazard = crowding_hazard_columns(
         np.array([u.population for u in units], dtype=np.float64),
         np.array([u.groups for u in units], dtype=np.int64),
         np.array([u.residence_years for u in units], dtype=np.int64),
@@ -152,14 +153,4 @@ def crowding_hazard_array(
         species,
         cell_area_km2,
     )
-
-
-def crowding_hazards(
-    units: Iterable[PopulationUnit],
-    species: Mapping[str, Health],
-    cell_area_km2: float,
-) -> dict[str, float]:
-    """:func:`crowding_hazard_array` keyed by unit id."""
-    units = list(units)
-    hazard = crowding_hazard_array(units, species, cell_area_km2)
     return dict(zip((u.id for u in units), hazard.tolist(), strict=True))

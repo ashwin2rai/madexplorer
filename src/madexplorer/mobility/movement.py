@@ -1,4 +1,4 @@
-"""Species-specific movement costs (spec §4.3).
+"""Species-specific movement costs.
 
 There is no biome penalty: slope, vegetation, and water each add separate
 friction whose magnitude depends on species locomotion.

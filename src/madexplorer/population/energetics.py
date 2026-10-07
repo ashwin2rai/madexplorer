@@ -1,4 +1,4 @@
-"""Energy balance: requirement, reserves, and nutritional deficit (spec §5.4, §8.2)."""
+"""Energy balance: requirement, reserves, and nutritional deficit."""
 
 from collections.abc import Sequence
 from dataclasses import dataclass

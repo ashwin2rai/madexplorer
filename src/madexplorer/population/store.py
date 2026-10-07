@@ -36,14 +36,15 @@ from madexplorer.population.beliefs import BeliefStore, make_belief_store
 from madexplorer.population.strata import (
     CLAIMS,
     DEFAULT_MAX_STRATA,
-    UNASSIGNED,
     Compaction,
     StrataBlock,
     StrataTable,
     claims_on_empty_stocks,
     compact_exact_strata,
     has_exact_duplicates,
+    log_normalization,
     normalize_strata,
+    unassigned_ids,
     validate_block,
 )
 from madexplorer.population.table import UnitTable
@@ -51,11 +52,6 @@ from madexplorer.population.unit import PopulationUnit, attach_unit, belief_slot
 
 if TYPE_CHECKING:
     from madexplorer.core.compiled import TechnologyTable
-
-
-def _unassigned_ids(n: int) -> IntArray:
-    """Placeholder ids for a dry run (nothing is installed with them)."""
-    return np.full(n, UNASSIGNED, dtype=np.int64)
 
 
 class PopulationStore:
@@ -110,7 +106,7 @@ class PopulationStore:
         if unit.__dict__.get("_belief_store") is not self.beliefs:
             raise ValueError(f"unit {unit.id} is not in this PopulationStore")
         validate_block(block, self.max_strata, allow_over_capacity=True)
-        distinct, _ = compact_exact_strata(block, _unassigned_ids)
+        distinct, _ = compact_exact_strata(block, unassigned_ids)  # dry run
         if len(distinct) > self.max_strata and not coalesce:
             raise ValueError(
                 f"{len(distinct)} distinct positions exceed max_strata = {self.max_strata}"
@@ -159,8 +155,6 @@ class PopulationStore:
 
     def _log(self, year: int, unit_id: str, records: "list[Compaction]") -> None:
         if self.strata_log is not None and records:
-            from madexplorer.population.lifecycle import log_normalization
-
             log_normalization(self.strata_log, year, unit_id, list(records))
 
     def claim_slot(self, species_code: int = 0) -> int:

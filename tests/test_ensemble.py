@@ -1,4 +1,4 @@
-"""Ensemble tooling and parameter overrides (spec §25)."""
+"""Ensemble tooling and parameter overrides."""
 
 import math
 from pathlib import Path

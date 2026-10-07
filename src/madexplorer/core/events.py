@@ -1,4 +1,4 @@
-"""Event log with provenance for important state changes (spec §24.3)."""
+"""Event log with provenance for important state changes."""
 
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass

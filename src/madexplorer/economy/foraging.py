@@ -1,4 +1,4 @@
-"""Foraging with diminishing returns and within-cell competition (spec §4.4, §9.1).
+"""Foraging with diminishing returns and within-cell competition.
 
 Harvest from a resource with accessible stock ``A`` and initial return rate
 ``r`` (kcal per effective labor hour) under effort ``E`` is
@@ -127,8 +127,9 @@ def _effort_fraction(
     effort, so the iterates rise monotonically to the root without overshooting and never
     visit the flat, depleted region beyond it; typically ~5 steps reach the tolerance.
     Numerical approximation of the exact root, as precise as the 40-step bisection it
-    replaces (differences <= ~2e-12 relative on recorded run inputs; objective/status.md
-    P4). Falls back to that bisection if Newton has not converged.
+    replaces (differences <= ~2e-12 relative on recorded run inputs; P4 in
+    ``git show 53c0491:objective/status.md``). Falls back to that bisection if Newton has
+    not converged.
     """
     effort = 0.0
     for _ in range(SOLVER_MAX_NEWTON):

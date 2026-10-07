@@ -1,4 +1,4 @@
-"""Wild plant and game food resources (spec §4.4, §18).
+"""Wild plant and game food resources.
 
 Productivity comes from climate via the Miami model; edible plant and game
 stocks regrow logistically toward climate-dependent capacities and are

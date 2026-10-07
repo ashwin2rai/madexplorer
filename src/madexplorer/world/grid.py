@@ -1,4 +1,4 @@
-"""Grid world state and neighborhood graph (spec §4.1).
+"""Grid world state and neighborhood graph.
 
 Cells are addressed by a flat integer id ``y * width + x``. Every per-cell
 field is a flat ``(n_cells,)`` array so subsystems never depend on grid shape;

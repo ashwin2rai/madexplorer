@@ -1,4 +1,4 @@
-"""Knowledge accumulation by practice and loss by disuse (spec §11.1, §11.6).
+"""Knowledge accumulation by practice and loss by disuse.
 
 For each domain ``d``::
 

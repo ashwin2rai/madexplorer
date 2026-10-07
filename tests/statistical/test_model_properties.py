@@ -1,4 +1,4 @@
-"""Statistical model tests: distributional properties across seeds (spec §26.2, §29.4).
+"""Statistical model tests: distributional properties across seeds.
 
 Excluded from the default run. Two tiers:
 
@@ -75,10 +75,10 @@ def _pressure_tail(seed: int, cultivation: bool) -> dict[str, float]:
 
 @pytest.mark.parametrize("seed", PRESSURE_SEEDS)
 def test_cultivation_raises_carrying_capacity_under_intensification_pressure(seed: int) -> None:
-    """P5 validation (objective/status.md): in a bounded world that foragers saturate early,
-    cultivation emerges and sustains a materially denser, less food-stressed population than
-    the same system without cultivation. Matched seeds; thresholds far below the observed
-    effect (population ~3x, density ~2x, farm share ~0.6 in years 351-400)."""
+    """P5 validation (git 53c0491:objective/status.md): in a bounded world that foragers
+    saturate early, cultivation emerges and sustains a materially denser, less food-stressed
+    population than the same system without cultivation. Matched seeds; thresholds far below
+    the observed effect (population ~3x, density ~2x, farm share ~0.6 in years 351-400)."""
     farming = _pressure_tail(seed, cultivation=True)
     foraging = _pressure_tail(seed, cultivation=False)
     assert farming["farm_share_of_harvest"] > 0.25
@@ -91,7 +91,7 @@ def test_cultivated_populations_are_less_food_stressed_on_average() -> None:
     """The denser farming population is not more food-stressed: mean energy deficit over
     the matched seeds. Pooled since MVP 2.1: per seed, the last-window deficit (~0.02-0.06)
     is too noisy for a strict comparison (MVP 2.1, 6 seeds: farming lower in 4/6, mean
-    0.029 vs 0.038; MVP 2: 6/6, 0.028 vs 0.043; objective/status.md, MVP 2.1)."""
+    0.029 vs 0.038; MVP 2: 6/6, 0.028 vs 0.043; baselines/mvp2_1/freeze_manifest.json)."""
     farming = np.mean([_pressure_tail(s, True)["mean_energy_deficit"] for s in PRESSURE_SEEDS])
     foraging = np.mean([_pressure_tail(s, False)["mean_energy_deficit"] for s in PRESSURE_SEEDS])
     assert farming <= foraging

@@ -1,4 +1,4 @@
-"""Base climate fields and stochastic interannual variation (spec §3.1, §4.2)."""
+"""Base climate fields and stochastic interannual variation."""
 
 from dataclasses import dataclass
 

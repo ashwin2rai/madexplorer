@@ -1,4 +1,4 @@
-"""Conservation and integrity checks (spec §28.8, §38)."""
+"""Conservation and integrity checks."""
 
 from collections.abc import Iterable
 from typing import TYPE_CHECKING

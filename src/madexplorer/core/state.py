@@ -1,4 +1,4 @@
-"""Explicit mutable simulation state and per-step context (spec §28.2, §28.6)."""
+"""Explicit mutable simulation state and per-step context."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field

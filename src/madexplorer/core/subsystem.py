@@ -1,4 +1,4 @@
-"""Staged evaluate/apply protocol (spec §28.4, §37).
+"""Staged evaluate/apply protocol.
 
 A subsystem evaluates the current state and returns proposals without
 mutating anything; the engine then applies the proposals. Every unit within a

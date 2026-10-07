@@ -1,4 +1,4 @@
-"""What state a population unit has: one declaration per field (spec §6.4, §38).
+"""What state a population unit has: one declaration per field.
 
 Every field of :class:`~madexplorer.population.unit.PopulationUnit` is declared once in
 :data:`UNIT_FIELDS` with

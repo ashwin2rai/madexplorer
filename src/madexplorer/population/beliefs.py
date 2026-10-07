@@ -14,7 +14,7 @@ a registry (test fixtures, a daughter before insertion) keep a detached
 :class:`~madexplorer.population.unit.BeliefMap`.
 
 The interface (``claim``/``release``/``gather``/``scatter``/``assign``/``view``) is what a later
-sparse backend must provide; see objective/status.md (PH3a).
+sparse backend must provide (PH3a in ``git show 53c0491:objective/status.md``).
 """
 
 import os
@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from madexplorer.core.types import IntArray
+from madexplorer.population.table import GROWTH_FRACTION, MIN_CAPACITY
 from madexplorer.population.unit import (
     FOOD_DTYPE,
     HOPS_DTYPE,
@@ -47,8 +48,6 @@ BYTES_PER_CELL = (
 # resized in place (numpy's realloc; for large blocks the kernel remaps pages, so old and new
 # stores never coexist); if a view of a matrix is alive numpy refuses and the store falls back
 # to copying into new arrays (a transient peak of old + new).
-GROWTH_FRACTION = 0.25
-MIN_CAPACITY = 64
 
 
 class BeliefRowView(BeliefMap):

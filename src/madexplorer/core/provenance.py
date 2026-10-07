@@ -1,4 +1,4 @@
-"""Run versioning metadata (spec §23.3)."""
+"""Run versioning metadata."""
 
 import hashlib
 import platform

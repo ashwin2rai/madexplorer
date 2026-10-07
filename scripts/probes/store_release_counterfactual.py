@@ -42,9 +42,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from store_access_counterfactual import drive, strata_digest
-from strata_capacity import physical_digest
-from strata_review import SEEDS, scenario_for
+from _common import SEEDS, drive, physical_digest, q, scenario_for, strata_digest
 
 from madexplorer.population.energetics import EnergyUpdates, energy_balance
 from madexplorer.population.store_release import (
@@ -266,14 +264,6 @@ def job(spec: tuple[str, int]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- report
-
-
-def q(values: list[float] | np.ndarray, qs: tuple[float, ...] = (0.5, 0.9, 0.99)) -> str:
-    """``p50/p90/p99/max``."""
-    values = np.asarray([v for v in values if v is not None], dtype=float)
-    if values.size == 0:
-        return "-"
-    return "/".join(f"{np.quantile(values, x):.3g}" for x in qs) + f"/max {values.max():.3g}"
 
 
 def report(results: list[dict[str, Any]]) -> None:

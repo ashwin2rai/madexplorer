@@ -1,4 +1,4 @@
-"""Directed innovation (spec §11.3, §11.4).
+"""Directed innovation.
 
 Each candidate technology (prerequisites met, not yet held) has an annual
 invention hazard that requires both *need* - a problem signal named by the

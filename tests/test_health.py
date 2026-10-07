@@ -1,4 +1,4 @@
-"""Mechanism tests for settlement crowding mortality (spec §8.4, §29.1)."""
+"""Mechanism tests for settlement crowding mortality."""
 
 import numpy as np
 import pytest

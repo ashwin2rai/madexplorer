@@ -1,4 +1,4 @@
-"""The simulation engine: builds state, runs the staged tick loop (spec §19)."""
+"""The simulation engine: builds state, runs the staged tick loop."""
 
 import logging
 import time

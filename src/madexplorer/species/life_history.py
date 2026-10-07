@@ -1,4 +1,4 @@
-"""Age-indexed life tables derived from a :class:`SpeciesProfile` (spec §5.3, §8).
+"""Age-indexed life tables derived from a :class:`SpeciesProfile`.
 
 All functions are pure. Arrays are indexed by completed age in years,
 ``0 .. max_age_years`` inclusive.

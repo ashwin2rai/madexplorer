@@ -1,4 +1,4 @@
-"""How population-unit state combines and divides (spec §6.4, §6.5, §38).
+"""How population-unit state combines and divides.
 
 Every field of :class:`PopulationUnit` has one declared rule for merging two units
 (fusion of social groups, or computational aggregation) and one for splitting a
@@ -28,11 +28,11 @@ from madexplorer.population.fields import EXTENSIVE_FIELDS, INTENSIVE_FIELDS
 from madexplorer.population.strata import (
     CLAIMS,
     DEFAULT_MAX_STRATA,
-    UNASSIGNED,
     Coalescence,
     Compaction,
     fuse_strata,
     normalize_strata,
+    unassigned_ids,
 )
 from madexplorer.population.unit import PopulationUnit
 
@@ -44,14 +44,39 @@ class MergeMode(Enum):
     AGGREGATION = "aggregation"  # computational coarsening; both groups persist inside the unit
 
 
-def _unassigned_stratum_ids(n: int) -> IntArray:
-    """Ids for components created outside a store: assigned when the unit is bound."""
-    return np.full(n, UNASSIGNED, dtype=np.int64)
-
-
 def _weighted(a: float, n_a: int, b: float, n_b: int) -> float:
     total = n_a + n_b
     return (a * n_a + b * n_b) / total if total else a
+
+
+def merged_hazard(h_t: float, n_t: int, h_s: float, n_s: int) -> float:
+    """Population-weighted ``move_hazard``; an unset (NaN) side defers to the other."""
+    if math.isnan(h_t) or math.isnan(h_s):
+        known = [h for h in (h_t, h_s) if not math.isnan(h)]
+        return known[0] if known else math.nan
+    return _weighted(h_t, n_t, h_s, n_s)
+
+
+def merge_harvest_history(
+    target: PopulationUnit, source: PopulationUnit, n_t: int, n_s: int
+) -> None:
+    """Population-weighted harvest histories, aligned on the most recent year (in place)."""
+    history = [
+        _weighted(a, n_t, b, n_s)
+        for a, b in zip(
+            reversed(target.harvest_history), reversed(source.harvest_history), strict=False
+        )
+    ]
+    target.harvest_history.clear()
+    target.harvest_history.extend(reversed(history))
+
+
+def merge_residence(target: PopulationUnit, source: PopulationUnit) -> None:
+    """Most recent residence year per cell over both units (in place)."""
+    for cell, residence_year in source.recent_residence.items():
+        target.recent_residence[cell] = max(
+            residence_year, target.recent_residence.get(cell, residence_year)
+        )
 
 
 def merge_state(
@@ -81,7 +106,7 @@ def merge_state(
                 for unit in (target, source)
             ]
         ),
-        new_stratum_ids or _unassigned_stratum_ids,
+        new_stratum_ids or unassigned_ids,
         max_strata,
     )
     n_t, n_s = target.population, source.population
@@ -90,25 +115,14 @@ def merge_state(
         setattr(target, name, _weighted(getattr(target, name), n_t, getattr(source, name), n_s))
     for name in EXTENSIVE_FIELDS:
         setattr(target, name, getattr(target, name) + getattr(source, name))
-    if math.isnan(target.move_hazard) or math.isnan(source.move_hazard):
-        known = [h for h in (target.move_hazard, source.move_hazard) if not math.isnan(h)]
-        target.move_hazard = known[0] if known else math.nan
-    else:
-        target.move_hazard = _weighted(target.move_hazard, n_t, source.move_hazard, n_s)
+    target.move_hazard = merged_hazard(target.move_hazard, n_t, source.move_hazard, n_s)
     if target.knowledge.size and n_t + n_s > 0:
         target.knowledge = (target.knowledge * n_t + source.knowledge * n_s) / (n_t + n_s)
     target.technologies = target.technologies | source.technologies
     target.ever_cultivated = target.ever_cultivated or source.ever_cultivated
     if mode is MergeMode.AGGREGATION:
         target.groups += source.groups
-    history = [
-        _weighted(a, n_t, b, n_s)
-        for a, b in zip(
-            reversed(target.harvest_history), reversed(source.harvest_history), strict=False
-        )
-    ]
-    target.harvest_history.clear()
-    target.harvest_history.extend(reversed(history))
+    merge_harvest_history(target, source, n_t, n_s)
     target.females = target.females + source.females
     target.males = target.males + source.males
     n = target.population
@@ -118,10 +132,7 @@ def merge_state(
     # MVP 2.1 (B1): the residence loop once named its variable `year`, shadowing the merge
     # year, so familiarity decayed to the source's last residence year (preserved in the
     # frozen MVP 2 reference). Familiarity is now decayed to the merge year.
-    for cell, residence_year in source.recent_residence.items():
-        target.recent_residence[cell] = max(
-            residence_year, target.recent_residence.get(cell, residence_year)
-        )
+    merge_residence(target, source)
     target.familiarity.merge(source.familiarity, n_t, n_s, merge_year, familiarity)
     target.strata = strata
     return records

@@ -1,4 +1,4 @@
-"""Residential migration from perceived, not omniscient, utility (spec §10.2, §30).
+"""Residential migration from perceived, not omniscient, utility.
 
 Each year a group compares the cell it is in with known cells reachable in one
 relocation. Utility combines expected food per head (accounting for people

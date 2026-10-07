@@ -1,4 +1,4 @@
-"""Central deterministic random-number service (spec §23.1).
+"""Central deterministic random-number service.
 
 No module may call the global ``random`` or ``numpy.random`` state. Subsystems
 receive a named :class:`numpy.random.Generator` from :class:`RngManager`.

@@ -17,7 +17,6 @@ Floating-point operations are the reference's, in the same order, on the same op
 (Python floats read from the rows), so results are bit-identical.
 """
 
-import math
 from collections import deque
 
 import numpy as np
@@ -27,6 +26,9 @@ from madexplorer.population.composition import (
     MergeMode,
     _weighted,
     absorb,
+    merge_harvest_history,
+    merge_residence,
+    merged_hazard,
     rewire_ties,
     split_off,
 )
@@ -38,6 +40,7 @@ from madexplorer.population.strata import (
     Coalescence,
     Compaction,
     fuse_strata,
+    log_normalization,
     normalize_strata,
 )
 from madexplorer.population.unit import (
@@ -204,12 +207,7 @@ def merge_units(
         column = columns[name]
         column[t] = float(column[t]) + float(column[s])
     hazards = columns["move_hazard"]
-    h_t, h_s = float(hazards[t]), float(hazards[s])
-    if math.isnan(h_t) or math.isnan(h_s):
-        known = [h for h in (h_t, h_s) if not math.isnan(h)]
-        hazards[t] = known[0] if known else math.nan
-    else:
-        hazards[t] = _weighted(h_t, n_t, h_s, n_s)
+    hazards[t] = merged_hazard(float(hazards[t]), n_t, float(hazards[s]), n_s)
     knowledge = table.knowledge
     if knowledge.shape[1] and n_t + n_s > 0:
         knowledge[t] = (knowledge[t] * n_t + knowledge[s] * n_s) / (n_t + n_s)
@@ -218,14 +216,7 @@ def merge_units(
     cultivated[t] = bool(cultivated[t]) or bool(cultivated[s])
     if mode is MergeMode.AGGREGATION:
         columns["groups"][t] += columns["groups"][s]
-    history = [
-        _weighted(a, n_t, b, n_s)
-        for a, b in zip(
-            reversed(target.harvest_history), reversed(source.harvest_history), strict=False
-        )
-    ]
-    target.harvest_history.clear()
-    target.harvest_history.extend(reversed(history))
+    merge_harvest_history(target, source, n_t, n_s)
     n = int(table.n_ages[t])
     table.set_cohorts(
         t,
@@ -236,10 +227,7 @@ def merge_units(
     reserve[t] = total_reserve / merged if merged else 0.0
     store.merge_row(s, t)
     target.report_cells = np.union1d(target.report_cells, source.report_cells)
-    for cell, residence_year in source.recent_residence.items():
-        target.recent_residence[cell] = max(
-            residence_year, target.recent_residence.get(cell, residence_year)
-        )
+    merge_residence(target, source)
     # Effective familiarity of both units at the merge year (MVP 2.1, B1 fixed).
     target.familiarity.merge(source.familiarity, n_t, n_s, year, familiarity)
     strata.load(t, fused)
@@ -273,32 +261,3 @@ def _log_fusion(
         }
     )
     log_normalization(log, year, target_id, records)
-
-
-def log_normalization(
-    log: list[dict[str, object]],
-    year: int,
-    unit_id: str,
-    records: list[Compaction | Coalescence],
-) -> None:
-    """Sidecar events of :func:`~madexplorer.population.strata.normalize_strata`."""
-    for record in records:
-        event: dict[str, object] = {
-            "year": year,
-            "event": "exact_compaction"
-            if isinstance(record, Compaction)
-            else "capacity_coalescence",
-            "unit_id": unit_id,
-            "merged_stratum_ids": list(record.merged_ids),
-            "stratum_id": record.new_id,
-        }
-        if isinstance(record, Compaction):
-            event["position"] = list(record.position)
-        else:
-            # Representation-error diagnostics (observation only): combined (the chosen
-            # pair's cost) and by dimension.
-            event["cost"] = record.cost
-            event["field_error"] = record.field_error
-            event["store_error"] = record.store_error
-            event["combined_error"] = record.cost
-        log.append(event)

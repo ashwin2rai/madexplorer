@@ -1,6 +1,6 @@
-"""Multi-seed ensembles: one summary row per run plus distribution statistics (spec §25).
+"""Multi-seed ensembles: one summary row per run plus distribution statistics.
 
-Runs are independent, so they execute in separate processes (spec §27.6). Each
+Runs are independent, so they execute in separate processes. Each
 run is reduced to a row of milestones and end-state measures; milestones that a
 run never reaches are NaN, and the aggregate reports how often each was reached.
 Comparisons between model variants should reuse the same seeds (paired design).

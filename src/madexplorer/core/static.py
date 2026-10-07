@@ -1,4 +1,4 @@
-"""Immutable scenario context computed once per world and species set (spec §27).
+"""Immutable scenario context computed once per world and species set.
 
 Everything here depends only on the static parts of a scenario (world generation,
 ecology, agriculture and species parameters), not on the run seed or horizon, so

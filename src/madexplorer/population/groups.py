@@ -1,4 +1,4 @@
-"""Group fission, fusion, and extinction (spec §6.4, §16.1, §16.2).
+"""Group fission, fusion, and extinction.
 
 Fission and fusion are hazards, not thresholds. Fission is driven by group
 size (coordination cost) and food stress; fusion by small size and lack of

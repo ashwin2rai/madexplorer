@@ -42,9 +42,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from store_access_counterfactual import strata_digest
-from strata_capacity import physical_digest
-from strata_review import SEEDS, scenario_for
+from _common import SEEDS, physical_digest, scenario_for, strata_digest, w1, weighted_quantiles
 
 import madexplorer.core.simulation as simulation
 from madexplorer.core.simulation import Simulator
@@ -186,25 +184,6 @@ def run_shadow(
 
 
 # ---------------------------------------------------------------- analysis
-
-
-def weighted_quantiles(
-    values: np.ndarray, weights: np.ndarray, qs: tuple[float, ...]
-) -> list[float]:
-    if values.size == 0:
-        return [float("nan")] * len(qs)
-    order = np.argsort(values, kind="stable")
-    v, cw = values[order], np.cumsum(weights[order])
-    cw = cw / cw[-1]
-    return [float(v[min(np.searchsorted(cw, q), v.size - 1)]) for q in qs]
-
-
-def w1(pa: np.ndarray, wa: np.ndarray, pb: np.ndarray, wb: np.ndarray) -> float:
-    """Wasserstein-1 between two weighted point measures on the line (weights sum to 1)."""
-    points = np.concatenate([pa, pb])
-    order = np.argsort(points, kind="stable")
-    cum = np.cumsum(np.concatenate([wa, -wb])[order])
-    return float((np.abs(cum[:-1]) * np.diff(points[order])).sum())
 
 
 def field_measure(

@@ -1,4 +1,4 @@
-"""Performance benchmarks: controlled unit counts and timed reference runs (spec §29.5).
+"""Performance benchmarks: controlled unit counts and timed reference runs.
 
 Two kinds of measurement:
 

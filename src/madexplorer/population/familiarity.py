@@ -1,4 +1,4 @@
-"""Practiced foraging familiarity per cell (learning by doing, spec §4.4).
+"""Practiced foraging familiarity per cell (learning by doing).
 
 Familiarity is a group's practiced competence at extracting food from one cell's ecology.
 It is not knowledge that the place exists or of what it holds: that lives in the belief

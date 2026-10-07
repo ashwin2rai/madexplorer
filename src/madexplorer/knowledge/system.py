@@ -1,4 +1,4 @@
-"""Knowledge system definition: domains, capabilities, and technologies (spec §11).
+"""Knowledge system definition: domains, capabilities, and technologies.
 
 A knowledge system is a versioned data file (e.g. ``technologies/neolithic.yaml``).
 The engine knows only a fixed set of *capabilities* - the numbers that enter
@@ -37,7 +37,7 @@ CAPABILITIES: tuple[Capability, ...] = (
 # Activities whose practice builds knowledge; shares of the unit's year, in [0, 1].
 Activity = Literal["plant_foraging", "game_foraging", "farming", "clearing", "storing"]
 
-# Problem signals that direct innovation toward a domain (spec §11.4).
+# Problem signals that direct innovation toward a domain.
 NeedSignal = Literal[
     "food_stress", "harvest_variability", "clearing_burden", "soil_depletion", "none"
 ]
@@ -68,7 +68,7 @@ class TechnologySpec(FrozenModel):
 
 
 class InnovationSpec(FrozenModel):
-    """Weights of the innovation hazard (spec §11.3)."""
+    """Weights of the innovation hazard."""
 
     baseline_logit: float
     need_weight: float
@@ -81,7 +81,7 @@ class InnovationSpec(FrozenModel):
 
 
 class DiffusionSpec(FrozenModel):
-    """Contact structure for knowledge and technology diffusion (spec §11.5)."""
+    """Contact structure for knowledge and technology diffusion."""
 
     same_cell_contact: float = Field(ge=0)
     adjacent_contact: float = Field(ge=0)

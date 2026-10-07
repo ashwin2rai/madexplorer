@@ -1,4 +1,4 @@
-"""Typed scenario configuration (spec §3, §22).
+"""Typed scenario configuration.
 
 Units are encoded in field-name suffixes: ``_km``, ``_m``, ``_c`` (Celsius),
 ``_mm`` (per year), ``_deg``, ``_years``, ``_kcal``. World, climate and ecology
@@ -75,7 +75,7 @@ class EcologyConfig(FrozenModel):
 
 
 class AgricultureConfig(FrozenModel):
-    """Crop ecology and cultivation labor requirements (spec §4.5)."""
+    """Crop ecology and cultivation labor requirements."""
 
     crop_max_yield_kcal_per_ha: float = Field(default=2.0e6, ge=0)
     crop_reference_npp_g_m2: float = Field(default=1400.0, gt=0)
@@ -92,14 +92,14 @@ class AgricultureConfig(FrozenModel):
 
 
 class TradeConfig(FrozenModel):
-    """Food exchange between nearby groups (spec §9, §11.5)."""
+    """Food exchange between nearby groups."""
 
     transport_decay_km: float = Field(default=60.0, gt=0)
     tie_persistence: float = Field(default=0.7, ge=0, le=1)
 
 
 class ResolutionConfig(FrozenModel):
-    """Adaptive resolution: coarsening of similar co-located units (spec §6.2, §6.5)."""
+    """Adaptive resolution: coarsening of similar co-located units."""
 
     max_units_per_cell: int = Field(default=3, ge=1)
     max_knowledge_distance: float = Field(default=1.0, ge=0)
@@ -145,7 +145,7 @@ class InitialPopulation(FrozenModel):
 
 
 class MechanismsConfig(FrozenModel):
-    """Switches for ablation studies (spec §25.3)."""
+    """Switches for ablation studies."""
 
     climate_variability: bool = True
     starvation_mortality: bool = True

@@ -1,4 +1,4 @@
-"""Cultivation: crop yields, clearing, soil dynamics, and field planning (spec §4.5, §18).
+"""Cultivation: crop yields, clearing, soil dynamics, and field planning.
 
 Cultivation is never switched on by a rule. Groups hold fields only when their
 technology gives a positive crop-yield capability, and they expand or shrink

@@ -1,4 +1,4 @@
-"""Local spatial beliefs: perception and social information exchange (spec §10.1, §10.3).
+"""Local spatial beliefs: perception and social information exchange.
 
 Units never see the whole map. Each year they observe cells within a
 perception radius shrunk by vegetation, with observation noise; observations
@@ -747,13 +747,7 @@ class KnowledgeSharingSubsystem:
         cognition = {sid: ctx.species(sid).cognition for sid in compiled.species_ids}
         perceived = ctx.static.perceived_cells
         pools = [
-            np.concatenate(
-                [
-                    perceived(u.species_id, c, cognition[u.species_id]),
-                    np.array(list(u.recent_residence), dtype=np.int64),
-                    u.report_cells,
-                ]
-            )
+            report_pool(u, perceived(u.species_id, c, cognition[u.species_id]))
             for u, c in zip(senders, sender_cells.tolist(), strict=True)
         ]
         sender_species = species[sender_ids]

@@ -1,4 +1,4 @@
-"""``madexplorer`` command-line interface (spec §36).
+"""``madexplorer`` command-line interface.
 
 madexplorer validate scenario.yaml
 madexplorer run scenario.yaml [--seed 42 | --seeds 1:10] [--years N] [--out DIR]

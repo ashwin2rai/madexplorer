@@ -1,4 +1,4 @@
-"""Stable identifiers independent of container ordering (spec §23.2)."""
+"""Stable identifiers independent of container ordering."""
 
 
 class IdAllocator:

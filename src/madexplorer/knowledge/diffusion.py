@@ -1,4 +1,4 @@
-"""Knowledge diffusion, technology adoption, and technology loss (spec §11.5, §11.6).
+"""Knowledge diffusion, technology adoption, and technology loss.
 
 Contacts are co-located groups, groups in adjacent cells, and trade partners.
 Knowledge flows down gradients::
@@ -110,19 +110,9 @@ class DiffusionUpdate:
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Commit gains, adoptions, and losses with provenance events."""
-        _commit_diffusion(state.units[self.unit_id], self.gain, self.adopted, self.lost, state, ctx)
-
-
-def _commit_diffusion(
-    unit: PopulationUnit,
-    gain: FloatArray,
-    adopted: tuple[tuple[str, str], ...],
-    lost: tuple[str, ...],
-    state: SimulationState,
-    ctx: StepContext,
-) -> None:
-    unit.knowledge = unit.knowledge + gain
-    _commit_technologies(unit, adopted, lost, state, ctx)
+        unit = state.units[self.unit_id]
+        unit.knowledge = unit.knowledge + self.gain
+        _commit_technologies(unit, self.adopted, self.lost, state, ctx)
 
 
 def _commit_technologies(

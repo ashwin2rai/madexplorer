@@ -1,4 +1,4 @@
-"""The :class:`PopulationUnit`, the core simulation actor (spec §6.1).
+"""The :class:`PopulationUnit`, the core simulation actor.
 
 A unit is one or more co-residing social groups of one species (``groups``; several only
 under experimental coarsening). Its demographic state is an exact age-by-sex cohort vector,
@@ -16,7 +16,7 @@ import numpy.typing as npt
 
 from madexplorer.core.types import BoolArray, FloatArray, IntArray
 from madexplorer.population.familiarity import FamiliarityMap
-from madexplorer.population.fields import OBJECT_FIELDS, TABLE_FIELDS, UNIT_FIELDS, Storage
+from madexplorer.population.fields import TABLE_FIELDS, UNIT_FIELDS, Storage
 from madexplorer.population.strata import StrataBlock, neutral_strata
 
 if TYPE_CHECKING:
@@ -524,11 +524,6 @@ def _install_storage_descriptors() -> None:
 _install_storage_descriptors()
 
 
-# Fields that always live on the unit object (everything else is in the table or the belief
-# store while the unit is registered).
-EXTERNAL_FIELDS: tuple[str, ...] = OBJECT_FIELDS
-
-
 def _removed(unit: object, name: str) -> AttributeError:
     unit_id = unit.__dict__.get("id", "?")
     return AttributeError(f"{name}: unit {unit_id} was removed and its row state discarded")
@@ -539,7 +534,7 @@ def bound_unit(
 ) -> PopulationUnit:
     """A unit object over rows already filled in ``slot`` (``population.lifecycle``).
 
-    ``external`` gives exactly the :data:`EXTERNAL_FIELDS`; no detached copy is built.
+    ``external`` gives exactly the :data:`OBJECT_FIELDS`; no detached copy is built.
     """
     unit = PopulationUnit.__new__(PopulationUnit)
     state = unit.__dict__

@@ -1,4 +1,4 @@
-"""Per-year scalar metrics and periodic spatial snapshots (spec §24, §31)."""
+"""Per-year scalar metrics and periodic spatial snapshots."""
 
 from typing import TYPE_CHECKING
 

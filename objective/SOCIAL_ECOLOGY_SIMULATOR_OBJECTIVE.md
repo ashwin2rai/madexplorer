@@ -3,9 +3,8 @@
 ## Canonical Objective and Architectural Direction
 
 **Project:** `madexplorer`\
-**Document version:** 3.0\
-**Canonicalized through:** MVP 2.1 freeze, 2026-10-01; pre-MVP 3 consolidation, 2026-10-02\
-**Current scientific milestone:** MVP 2.1 frozen; MVP 3 next\
+**Document version:** 3.1 (2026-10-07)\
+**Current scientific milestone:** MVP 2.1 frozen; MVP 3 in progress (strata passive)\
 **Current implementation:** Python 3.13+\
 **Document role:** durable project objective, scientific principles, and architectural constraints
 
@@ -13,23 +12,19 @@ This document defines what `madexplorer` is trying to become and the constraints
 future work should preserve. It is intentionally not an implementation diary, benchmark
 log, or catalog of every model equation.
 
-Historical decisions and lessons belong in `objective/status.md`. Exact frozen results,
-checksums, scenarios, and validation records belong in the milestone manifests under
-`baselines/`. Detailed equations and executable behavior belong in code, tests, scenario
-configuration, and the model-rule registry.
-
 ### Document authority
 
-When sources differ, interpret them by role rather than forcing one file to contain
-everything:
+When sources differ, interpret them by role:
 
-- this document governs durable scientific intent and architectural constraints;
-- milestone manifests and their frozen artifacts define the recorded scientific baseline;
-- scenarios, source, and tests define the executable implementation of that baseline;
-- `objective/status.md` records current lessons, caveats, and handoff state.
+- this document: durable scientific intent and architectural constraints;
+- `baselines/` manifests and frozen artifacts: the recorded scientific baseline;
+- scenarios, source, tests and the model-rule registry: the executable model;
+- `objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`: the MVP 3 contract and stage findings;
+- `objective/status.md`: current handoff, accepted limitations and working discipline.
 
-A future scientific change should update the executable model and its baseline deliberately;
-if it changes a durable project principle or roadmap assumption, update this document too.
+Documents keep current conclusions, not appended logs; git keeps the history. A scientific
+change updates the executable model and its baseline deliberately, and this document when
+it changes a durable principle.
 
 ---
 
@@ -212,64 +207,29 @@ not the project's final ontology.
 
 ## 3. Canonical Project State
 
-### 3.1 Current scientific base: MVP 2.1
+### 3.1 Scientific base: MVP 2.1
 
-MVP 1 and MVP 2 are complete. MVP 2.1 is the current scientific base for future work.
+MVP 1, MVP 2 and Performance Hardening are complete. MVP 2.1 (MVP 2 plus the B1
+merge-familiarity fix) is the frozen base, recorded in `baselines/mvp2_1/freeze_manifest.json`.
+Later refactors are validated against its golden fixtures and raw/logical exactness
+oracles, not against the manifest's original source hash.
 
-MVP 2.1 preserves the MVP 2 model while correcting the known B1 familiarity merge-year
-semantic defect. Exact identity, validation results, and frozen artifacts are recorded in:
+The frozen simulator models generated worlds (terrain, water, climate, hydrology,
+vegetation, soil, food stocks); configurable species physiology, life history, movement,
+cognition and social information; exact age/sex cohorts; energetics, fertility, mortality,
+crowding and extinction; bounded, confidence-aware beliefs; familiarity; foraging, storage,
+trade, cultivation and harvest; knowledge, diffusion, innovation and technologies; fission,
+fusion, exploration and migration; named RNG streams, event provenance, metrics and
+invariants. The reference scenarios show agriculture emerging from modeled incentives and
+raising carrying capacity under pressure: mechanism validations, not historical calibration.
 
-```text
-baselines/mvp2_1/freeze_manifest.json
-```
+### 3.2 Accepted limitations
 
-The manifest's source-tree hash identifies the *original* frozen MVP 2.1 implementation.
-Later semantics-preserving refactors change source files but not results; they are
-verified against the golden fixtures and the raw and logical exactness oracles, not against
-that hash.
-
-Performance Hardening is complete. Its chronology and measurements are historical evidence,
-not the current project objective.
-
-### 3.2 Capabilities present at the MVP 2.1 boundary
-
-The frozen simulator already models:
-
-- generated spatial worlds with land, water, climate, hydrology, vegetation, soil, and
-  ecological food stocks;
-- configurable species physiology, life history, movement, cognition, foraging, and social
-  information parameters;
-- exact age/sex demographic cohorts inside population units;
-- energetics, fertility, mortality, crowding, and extinction;
-- bounded perception and confidence-aware beliefs about places;
-- ecological familiarity that changes through use and time;
-- foraging, storage, trade, cultivation, field investment, and harvest;
-- domain knowledge, learning, diffusion, innovation, technologies, and capabilities;
-- fission, fusion, exploration, and migration;
-- deterministic named random streams, event provenance, metrics, and invariant checks.
-
-The reference scenarios demonstrate that agriculture can emerge from the modeled incentives
-and that cultivation can materially increase carrying capacity under pressure. These are
-mechanism validations, not claims of historical calibration.
-
-### 3.3 Important accepted limitations
-
-MVP 2.1 deliberately remains simple in several areas:
-
-- social and economic state is still mostly group-level;
-- migration decisions are still made by whole population units;
-- wealth inequality, occupations, within-group health distributions, elites, factions, and
-  political preferences are not yet represented;
-- ecology is intentionally simplified, including static vegetation structure, no seasonal
-  cycle, and a simple soil model;
-- trade remains simple;
-- migration utility retains a known wild-food-stock versus crop-flow simplification;
-- current coarsening changes social behavior and is not valid as a neutral approximation.
-
-These limitations define future work; they are not reasons to rewrite the frozen MVP 2.1
-model before MVP 3.
-
----
+Social state and migration are group-level (MVP 3 strata are still passive); ecology is
+simple (static vegetation structure, no seasons, simple soil); trade is simple; migration
+utility mixes wild-food stock and crop flow; naive coarsening changes behavior and is not a
+neutral approximation. These define future work; `objective/status.md` lists them with
+their evidence.
 
 ## 4. Current Computational Architecture
 
@@ -284,18 +244,15 @@ columnar/structure-of-arrays representation indexed by stable population-unit ro
 `PopulationUnit` remains useful as a domain-facing object and compatibility view, but it
 should not become the primary substrate for large numerical computation again.
 
-`PopulationStore` is the single owner of the coupled population representations: the unit
-registry (identities in processing order), the `UnitTable`, the belief store, and the
-storage slots that tie them together. `SimulationState` exposes them only as read-only
-views. A future `StrataTable` for genuinely distributional state belongs to the same
-owner:
+`PopulationStore` is the single owner of the coupled population representations;
+`SimulationState` exposes them only as read-only views:
 
 ```text
 PopulationStore
     unit registry     # identities, processing order
     UnitTable         # group-shared hot state      [U]
     BeliefStore       # sparse spatial beliefs
-    [MVP 3] StrataTable   # distributional state only  [U, S]
+    StrataTable       # distributional state only  [U, S]   (MVP 3)
 ```
 
 This separation is fundamental:
@@ -383,7 +340,7 @@ its storage and its merge/split rule; table columns, row views, the documented r
 the shared extensive/intensive compositions derive from that declaration, and a test fails
 if the dataclass and the declarations disagree.
 
-As MVP 3 introduces strata, every new state variable should make clear:
+Every strata variable likewise makes clear:
 
 - whether it is group-level or stratum-level;
 - how it is initialized;
@@ -726,6 +683,17 @@ Favor:
 - one authoritative representation of hot state;
 - comments that explain scientific intent, not syntax.
 
+Keeping the codebase lean is part of the same rule:
+
+- delete code once its replacement is validated (batched rewrites left one-unit
+  predecessors behind; phase aliases outlived their phases);
+- independent reference implementations are validation, not duplication: share plumbing
+  between a reference/fast pair, never the arithmetic it cross-checks;
+- anything hashed into an oracle or `config_hash` is provenance: removing it is a
+  provenance change, not a refactor;
+- experiment probes share one helper module and are retired, with git as the archive, once
+  their findings are recorded.
+
 ### 12.2 Separate scientific semantics from execution strategy
 
 A scientific mechanism should not be defined by whether it currently runs in Python,
@@ -784,72 +752,32 @@ Assertions and tests around these rules are part of the scientific specification
 
 ## 13. Long-Term Deployment Vision: Web and Client-Side Compute
 
-The intended end state is not only a research codebase. `madexplorer` should eventually be
-usable as an interactive web application in which users can configure scenarios, run
-simulations, inspect emergent histories, compare ensembles, and explore causal mechanisms.
+`madexplorer` should eventually be an interactive web application for configuring
+scenarios, running simulations, inspecting emergent histories and comparing ensembles, with
+substantial work executable on the client's machine (WebAssembly for CPU orchestration,
+WebGPU where appropriate). These are deployment possibilities, not current commitments.
 
-A major long-term goal is to make substantial simulation work executable on the **client's
-machine**, including use of the client's GPU where it is scientifically and technically
-appropriate. WebGPU is a plausible future execution target; WebAssembly or other browser
-runtimes may provide CPU execution and orchestration. These are deployment possibilities,
-not current implementation commitments.
+**Requirement today:** scientific semantics must remain separable from the execution
+backend, so the same model can run through validated CPU, server and client-side
+implementations without being redefined. In practice:
 
-### 13.1 Architectural requirement today
-
-The durable requirement is:
-
-> Scientific semantics must remain separable from the execution backend so that the same
-> model can eventually run through validated CPU, server, and client-side accelerated
-> implementations without redefining the science.
-
-This requirement should influence architecture now even though a browser backend is not an
-MVP 3 deliverable.
-
-### 13.2 Decisions that support future client execution
-
-Prefer designs that make future portable kernels possible:
-
-- authoritative numeric state in explicit arrays or compact typed buffers;
-- stable shapes, dtypes, masks, and indices for hot state where scientifically sensible;
+- authoritative numeric state in explicit arrays with stable shapes, dtypes and indices;
 - human-readable configuration compiled into numeric runtime views;
-- batched kernels with explicit inputs and outputs;
-- limited dependence on Python object graphs inside hot scientific computation;
+- batched kernels with explicit inputs, outputs and pre-drawn random inputs; no Python
+  object graphs inside hot scientific computation;
 - deterministic iteration and stable identifiers where ordering matters;
 - sparse representations for genuinely sparse relationships;
-- reference implementations and backend differential tests;
-- clear boundaries between simulation state, orchestration, visualization, and persistence.
+- reference implementations and backend differential tests (exact, logical, numerical or
+  statistical oracles as the mechanism allows), so accelerated kernels never become a second,
+  drifting scientific implementation;
+- clear boundaries between simulation state, orchestration, visualization and persistence.
 
-Do **not** contort irregular scientific state into GPU-shaped tensors merely to claim GPU
-compatibility. Some mechanisms are naturally sparse, graph-like, event-driven, or branchy.
-A future browser implementation may be hybrid, with regular numerical kernels accelerated
-and orchestration/irregular state handled on the CPU.
-
-### 13.3 RNG portability will eventually need an explicit contract
-
-Named NumPy RNG streams are the correct current architecture, but NumPy's implementation
-should not be assumed to be the permanent cross-runtime RNG specification.
-
-Before exact cross-backend replay becomes a requirement, define whether the project needs:
-
-- byte-for-byte identical random streams across Python/WASM/WebGPU; or
-- statistically equivalent backend-specific streams with backend-specific golden fixtures.
-
-Make that decision deliberately rather than discovering it during a port.
-
-### 13.4 Current optimizations are implementation choices, not permanent dependencies
-
-Numba is useful for the current Python engine. It is not part of the scientific model.
-Likewise, future WebGPU kernels must not become a second scientific implementation that can
-drift unnoticed.
-
-The CPU/reference path should remain capable of validating accelerated paths through exact,
-logical, numerical, or statistical oracles appropriate to the mechanism.
-
-### 13.5 Browser deployment is not a reason to weaken the model
-
-Client-side execution should be pursued by better representation, kernel design, workload
-partitioning, streaming, and adaptive resolution—not by silently reducing stochastic
-independence, removing heterogeneity, or replacing mechanisms with game-like shortcuts.
+Do not contort irregular state (sparse, graph-like, event-driven) into GPU-shaped tensors;
+a browser backend may be hybrid. Numba and NumPy's RNG are current implementation choices,
+not part of the model: before exact cross-backend replay is required, decide deliberately
+between byte-identical random streams and statistically equivalent streams with
+backend-specific fixtures. Browser deployment is never a reason to weaken the model
+(reduced stochastic independence, removed heterogeneity, game-like shortcuts).
 
 ---
 
@@ -907,7 +835,7 @@ measurements while preserving frozen semantics.
 
 The enduring result is architectural, not the historical benchmark numbers.
 
-### MVP 3 — Distributional Society — NEXT
+### MVP 3 — Distributional Society — IN PROGRESS
 
 MVP 3 should introduce the minimum within-group socioeconomic structure required for
 heterogeneous behavior.
@@ -924,8 +852,8 @@ Core goals:
 - efficient stratified demography with bounded working memory;
 - explicit split/merge semantics for all new state.
 
-MVP 3 should begin with the **strata representation and lifecycle contract**, not with a
-collection of disconnected social mechanisms.
+MVP 3 began with the strata representation and lifecycle contract, then tested candidate
+mechanisms counterfactually before any is activated; see the MVP 3 design document.
 
 ### MVP 4 — Hierarchy, Institutions, and Politics
 

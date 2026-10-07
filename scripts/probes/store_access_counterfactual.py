@@ -29,8 +29,6 @@ Usage:
 """
 
 import argparse
-import hashlib
-import json
 import pickle
 import sys
 import time
@@ -43,8 +41,16 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from strata_capacity import physical_digest
-from strata_review import SEEDS, scenario_for
+from _common import (
+    SEEDS,
+    drive,
+    physical_digest,
+    q,
+    scenario_for,
+    strata_digest,
+    w1,
+    weighted_quantiles,
+)
 
 import madexplorer.core.simulation as simulation
 from madexplorer.core.simulation import Simulator
@@ -154,54 +160,7 @@ class ShortageObserver:
             self.reset_failures += not same
 
 
-def drive(scenario: Any, observer: ShortageObserver | None) -> tuple[Simulator, float]:
-    if observer is not None:
-        observer.install()
-    try:
-        sim = Simulator(scenario, record_strata=True)
-        started = time.perf_counter()
-        for _ in range(scenario.config.simulation.n_years):
-            sim.step()
-            if not sim.state.units:
-                break
-        return sim, time.perf_counter() - started
-    finally:
-        if observer is not None:
-            observer.remove()
-
-
-def strata_digest(sim: Simulator) -> str:
-    """Strata sidecar (events, flows) and final strata of every unit."""
-    population = sim.state.population
-    h = hashlib.sha256()
-    h.update(json.dumps(population.strata_log, default=repr).encode())
-    h.update(json.dumps(population.strata_flows, default=repr).encode())
-    for unit in sim.state.units.values():
-        for name, values in unit.strata.columns.items():
-            h.update(name.encode() + np.ascontiguousarray(values).tobytes())
-    return h.hexdigest()
-
-
 # ---------------------------------------------------------------- evaluation
-
-
-def weighted_quantiles(
-    values: np.ndarray, weights: np.ndarray, qs: tuple[float, ...]
-) -> list[float]:
-    order = np.argsort(values, kind="stable")
-    v, cw = values[order], np.cumsum(weights[order])
-    cw = cw / cw[-1]
-    return [float(v[min(np.searchsorted(cw, q), v.size - 1)]) for q in qs]
-
-
-def w1(pa: np.ndarray, wa: np.ndarray, pb: np.ndarray, wb: np.ndarray) -> float:
-    """Wasserstein-1 between two weighted point measures (each weight vector sums to 1)."""
-    grid = np.unique(np.concatenate([pa, pb]))
-    if grid.size < 2:
-        return 0.0
-    fa = np.array([wa[pa <= g].sum() for g in grid[:-1]]) / wa.sum()
-    fb = np.array([wb[pb <= g].sum() for g in grid[:-1]]) / wb.sum()
-    return float((np.abs(fa - fb) * np.diff(grid)).sum())
 
 
 def evaluate(record: dict[str, Any]) -> dict[str, Any]:
@@ -450,13 +409,6 @@ def trajectory_row(v: dict[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------- report
-
-
-def q(values: list[float] | np.ndarray, qs: tuple[float, ...] = (0.5, 0.9, 0.99)) -> str:
-    values = np.asarray(values, dtype=float)
-    if values.size == 0:
-        return "-"
-    return "/".join(f"{np.quantile(values, x):.3g}" for x in qs) + f"/max {values.max():.3g}"
 
 
 def report(results: list[dict[str, Any]], label: str) -> None:

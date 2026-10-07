@@ -21,15 +21,11 @@ from madexplorer.core.simulation import Simulator
 from madexplorer.experiments.benchmark import synthetic_simulator
 from madexplorer.population.composition import MergeMode
 from madexplorer.population.familiarity import familiarity_rule
-from madexplorer.population.fields import TABLE_FIELDS
+from madexplorer.population.fields import OBJECT_FIELDS, TABLE_FIELDS
 from madexplorer.population.groups import Fission, FissionSubsystem
 from madexplorer.population.lifecycle import create_unit, merge_units, remove_unit, split_unit
 from madexplorer.population.store import PopulationStore
-from madexplorer.population.unit import (
-    EXTERNAL_FIELDS,
-    PopulationUnit,
-    belief_slot,
-)
+from madexplorer.population.unit import PopulationUnit, belief_slot
 from tests.conftest import ROOT, step_context
 from tests.test_unit_table import _same, assert_same_simulation, unit_state
 
@@ -38,7 +34,7 @@ SCENARIO = ROOT / "scenarios" / "mvp2_neolithic.yaml"
 
 def test_external_fields_complete_the_table_fields() -> None:
     names = {f.name for f in fields(PopulationUnit)}
-    assert set(EXTERNAL_FIELDS) == names - set(TABLE_FIELDS) - {"beliefs", "strata"}
+    assert set(OBJECT_FIELDS) == names - set(TABLE_FIELDS) - {"beliefs", "strata"}
 
 
 def _assert_same_units(a: Simulator, b: Simulator) -> None:

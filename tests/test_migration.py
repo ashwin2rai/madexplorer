@@ -1,4 +1,4 @@
-"""Mechanism tests for the migration choice (spec §10.2): no best-of-many-noise bias."""
+"""Mechanism tests for the migration choice: no best-of-many-noise bias."""
 
 import math
 from dataclasses import replace

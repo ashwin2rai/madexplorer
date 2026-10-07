@@ -1,4 +1,4 @@
-"""The :class:`SpeciesProfile` (spec §5).
+"""The :class:`SpeciesProfile`.
 
 Humanity is one profile loaded from ``species/human.yaml``; no species
 parameter has a default in code, so every biological or behavioral assumption
@@ -119,7 +119,7 @@ class Foraging(FrozenModel):
 
 
 class SubsistenceBehavior(FrozenModel):
-    """How groups adjust cultivation effort (a behavioral hypothesis, spec §4.5)."""
+    """How groups adjust cultivation effort (a behavioral hypothesis)."""
 
     field_adjustment_rate: float = Field(ge=0, le=1)
     return_comparison_margin: float  # farming must beat marginal foraging by this fraction
@@ -161,7 +161,7 @@ class SocialInformation(FrozenModel):
 
 
 class MigrationBehavior(FrozenModel):
-    """Weights of the perceived-utility migration model (spec §10.2)."""
+    """Weights of the perceived-utility migration model."""
 
     food_weight: float
     water_weight: float
