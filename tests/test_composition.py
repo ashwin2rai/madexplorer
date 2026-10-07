@@ -22,22 +22,18 @@ from madexplorer.population.fields import (
     UnitField,
 )
 from madexplorer.population.unit import PopulationUnit
+from tests.conftest import make_unit
 
 RULE = FamiliarityRule(baseline=0.6, time_constant_years=20.0)
 
 
 def _unit(uid: str, n_female: int, n_male: int = 0, cell: int = 0) -> PopulationUnit:
-    females = np.zeros(91, dtype=np.int64)
-    males = np.zeros(91, dtype=np.int64)
-    females[20], males[25] = n_female, n_male
-    return PopulationUnit(
-        id=uid,
-        species_id="human",
+    return make_unit(
+        uid,
+        {20: n_female},
+        {25: n_male},
         cell=cell,
-        females=females,
-        males=males,
         reserve_kcal_per_capita=100.0,
-        founded_year=0,
         knowledge=np.array([1.0, 2.0]),
         stores_kcal=50.0,
         fields_ha=3.0,

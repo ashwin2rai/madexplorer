@@ -18,7 +18,7 @@ from madexplorer.population.familiarity import (
     decayed_familiarity,
 )
 from madexplorer.population.unit import BeliefMap, Observation, PopulationUnit
-from tests.conftest import ROOT, small_scenario_dict
+from tests.conftest import ROOT, make_unit, small_scenario_dict
 
 F0, TAU, RATE = 0.6, 20.0, 0.3
 DECAY = FamiliarityRule(baseline=F0, time_constant_years=TAU)
@@ -30,19 +30,7 @@ def _practiced(value: float, year: int, cell: int = 0) -> FamiliarityMap:
 
 
 def _unit(uid: str, n: int, familiarity: FamiliarityMap) -> PopulationUnit:
-    females = np.zeros(91, dtype=np.int64)
-    males = np.zeros(91, dtype=np.int64)
-    females[20], males[25] = n - n // 2, n // 2
-    return PopulationUnit(
-        id=uid,
-        species_id="human",
-        cell=0,
-        females=females,
-        males=males,
-        reserve_kcal_per_capita=0.0,
-        founded_year=0,
-        familiarity=familiarity,
-    )
+    return make_unit(uid, {20: n - n // 2}, {25: n // 2}, familiarity=familiarity)
 
 
 def test_fresh_and_continuously_practiced_familiarity_does_not_decay() -> None:

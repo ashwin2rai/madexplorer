@@ -578,7 +578,7 @@ def test_structural_events_give_the_object_reference_beliefs() -> None:
 
     from madexplorer.population.composition import MergeMode, merge_state, split_off
     from madexplorer.population.familiarity import familiarity_rule
-    from madexplorer.population.unit import belief_slot, detach_beliefs
+    from madexplorer.population.unit import belief_slot, detach_unit
 
     sim = _warm_state(60, 5)
     state, ctx = sim.state, step_context(sim)
@@ -587,8 +587,8 @@ def test_structural_events_give_the_object_reference_beliefs() -> None:
     b.cell = a.cell  # co-locate them (merging requires one cell)
     # Reference: detached deep copies.
     ra, rb = copy.deepcopy(a), copy.deepcopy(b)
-    detach_beliefs(ra)
-    detach_beliefs(rb)
+    detach_unit(ra)
+    detach_unit(rb)
     merge_state(ra, rb, MergeMode.FUSION, state.year, rule)
     merge_state(a, b, MergeMode.FUSION, state.year, rule)
     assert _beliefs_equal(a.beliefs, ra.beliefs)

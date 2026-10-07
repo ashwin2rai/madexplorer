@@ -115,26 +115,6 @@ def demographic_step(
     return CohortOutcome(new_f, new_m, births.astype(np.int64), deaths.astype(np.int64))
 
 
-@dataclass(frozen=True)
-class DemographicUpdate:
-    """New cohort vectors for one unit (reference form of :class:`DemographicUpdates`)."""
-
-    unit_id: str
-    females: IntArray
-    males: IntArray
-    births: int
-    deaths: int
-    crowding_deaths_expected: float = 0.0
-
-    def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Replace the unit's cohorts and record flows."""
-        unit = state.units[self.unit_id]
-        unit.females, unit.males = self.females, self.males
-        ctx.ledger.births += self.births
-        ctx.ledger.deaths += self.deaths
-        ctx.ledger.crowding_deaths_expected += self.crowding_deaths_expected
-
-
 @dataclass(frozen=True, eq=False)
 class DemographicUpdates:
     """New cohorts of one species' units (rows in unit order), committed as columns."""

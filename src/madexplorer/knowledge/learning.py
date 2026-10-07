@@ -84,18 +84,6 @@ def learn(
     return updated
 
 
-@dataclass(frozen=True)
-class KnowledgeLevels:
-    """New knowledge vector of one unit."""
-
-    unit_id: str
-    knowledge: FloatArray
-
-    def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Commit the new levels."""
-        state.units[self.unit_id].knowledge = self.knowledge
-
-
 @dataclass(frozen=True, eq=False)
 class KnowledgeMatrix:
     """New knowledge vectors of many units (rows in unit order), committed as a column."""
@@ -128,15 +116,6 @@ def activity_shares_columns(cols: "UnitColumns", labor_hours: FloatArray) -> dic
         "storing": np.where(harvest > 0, storing, 0.0),
     }
     return {a: np.where(working, v, 0.0) for a, v in shares.items()}
-
-
-def activity_shares_batch(
-    units: Sequence[PopulationUnit], labor_hours: FloatArray
-) -> dict[str, FloatArray]:
-    """:func:`activity_shares_columns` for unit objects (reference and tests)."""
-    from madexplorer.core.columns import ObjectColumns
-
-    return activity_shares_columns(ObjectColumns(units, {}, None), labor_hours)
 
 
 class LearningSubsystem:

@@ -1,7 +1,7 @@
 # MVP 3 — Socioeconomic Strata: Design
 
 **Status:** Stage 0 design, approved with resolved decisions (2026-10-02). Governs MVP 3
-Stages 1–6 unless revised here.\
+Stages 1–6 unless revised here. Latest stage: 4E (§S, 2026-10-07).\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
 (`PopulationStore`, `population/fields.py`).
 
@@ -1726,3 +1726,264 @@ mechanism gives retention a purpose, for example:
 Then it should be tested in a true branched simulation (C). Consequence for §Q: claim-sensitive
 access stays one-shot per store cycle. The next MVP 3 review should look for differentiation
 outside storage release.
+
+---
+
+## S. Stage 4E — control over new cultivated capacity (2026-10-07)
+
+**`field_claim_continuity`: COUNTERFACTUAL / NOT ACTIVE.** Pure functions in
+`population/field_control.py`. No simulator path calls them, no model rule is registered,
+and there is no scenario setting. Probe: `scripts/probes/field_control_counterfactual.py`
+(`controlled`, `runs [--stress]`). Tests: `tests/test_field_control.py`. The MVP 2.1 oracles
+are identical.
+
+### S1. Primitive and concrete semantics
+
+- **Epoch-general primitive:** *effective control over durable productive capacity*. It is a
+  physical stock at `[U]` plus a distribution of control at `[U,S]`. The intensive position
+  is `control_i / share_i`: 1 is population-proportional, above 1 is above-proportional
+  control per person.
+- **Asset-specific mechanism:** how the stock is created, used, lost and produced from. For
+  fields that means clearing labor, cultivation, crop yield, arable sharing, and abandonment
+  at migration or below 0.05 ha.
+- **Cultivated land is the first specialization:** `fields_ha` plus `field_claim`.
+  `field_claim` is a stratum's share of effective control over the unit's cultivated
+  productive capacity, meaning the modeled ability to benefit from existing fields or
+  direct their use. It is **not** ownership, title, sale, inheritance, exclusion, rent,
+  authority or coercion.
+- **Epoch check:** the statements in S2–S5 hold unchanged for a herd, workshop, irrigation
+  system, machine or firm. Each speaks only of a stock, its expansion `F0 → F1`, a
+  partition of control, and the zero-stock rule.
+  - What does not transfer is how the stock grows, how it shrinks (fields keep fractions
+    under shrinkage; a herd that dies or is slaughtered might not), and what it produces.
+  - So the boundary sits at the transition's inputs `(F0, F1)` and at the loss rule. No
+    generic asset framework is built.
+- **Contrast with stores (§Q, §R):**
+  - Stored food is consumed, and control over it ends when the stock is exhausted.
+  - Cultivated land is not used up by being used. Control ends only when the stock itself
+    reaches zero.
+
+### S2. The field-claim lifecycle as built (audited from code)
+
+| Operation | Where | Rule |
+|---|---|---|
+| expansion `F1 > F0` | `FieldPlans.apply` → `FieldAccounts` → `account_strata` → `field_claims_after_change` | `a_i = c_i·F0 + s_i·(F1 − F0)`, `c_i' = a_i / Σa` (Σa = F1 mathematically; normalizing by Σa keeps one stratum exactly 1) |
+| shrinkage `0 < F1 < F0` | same | `c` unchanged (proportional loss) |
+| fields to 0 (planning below 0.05 ha, arable sharing) | same, then `settle_empty_claims` | `c = s` (`claim_zero_stock`), then exact compaction |
+| migration | `Relocation.apply` sets `fields_ha = 0` | `c = s` at the next `settle_empty_claims` |
+| fission | `lifecycle.split_unit` | fields split ∝ people moved; the daughter copies the strata, so positions are unchanged on both sides |
+| fusion | `fuse_strata` | absolute control `c_i·F` of each predecessor, renormalized by the fused total; concatenated (the only source of heterogeneity) |
+| compaction and coalescence | `normalize_strata` | exact compaction is lossless; capacity coalescence sums claims (`Σ|c − s|` can only fall) |
+| shares | — | change only at fusion and coalescence (births and deaths do not, §C) |
+
+Nothing else writes `fields_ha`: farming and soil do not, and the singular `FieldPlan`
+class was dead code (removed in the refactoring pass, see `REFACTORING.md`).
+
+### S3. Hypotheses for who controls new capacity `dF = F1 − F0`
+
+Every hypothesis is a partition `n` of the new hectares. Then `a_i = c_i·F0 + n_i·dF` and
+`c_i' = a_i/Σa` (`field_claims_after_expansion`).
+
+- **H1, population allocation (`n = s`).** The current, neutral rule. It is not "communal
+  property"; it is simply the rule when no other causal distinction is modeled.
+- **H2, clearing-contribution allocation (`n = contribution/Σ`).** **It collapses exactly to
+  H1 in the current model.**
+  - Clearing hours are one unit-level flow: `ΔF·clearing_hours_per_ha(vegetation,
+    clearing_efficiency)`, charged to next year's `labor_debt_hours`.
+  - They are drawn from the single pool `labor_hours_columns`. That pool comes from the
+    shared `[U, sex, age]` cohorts (§C), with unit-level technology (`clearing_efficiency`)
+    and knowledge.
+  - No code on that path reads strata (tested on the module source). So every stratum's
+    contribution is `s_i·clearing_hours`, and `n = s`.
+  - A difference would need a cause for stratum-differentiated labor (§N3). None is
+    invented here.
+- **H3, control continuity (`n = s + p·(c − s)`).** `p = field_claim_continuity ∈ [0, 1]`;
+  a unit without fields (`F0 = 0`) has nothing to continue, so `n = s`.
+  - `p = 0` is H1. `p = 1` gives new capacity to existing control.
+  - `p` does not say *why* control continues (continuity of use, prior investment, plot
+    extension, household management, custom, institutions or inheritance). It tests only
+    the consequences.
+
+### S4. Exact properties (proved, then tested)
+
+- **`p = 0` reproduces the current rule bit for bit.** `n = s + 0·(c − s) = s` exactly,
+  and the arithmetic is otherwise the authoritative one. This was tested on random 1-D
+  blocks and padded table rows. In real runs the `p = 0` shadow strata sidecar equals the
+  authoritative one (digest) in all 8 runs.
+- **Deviation law.** Let `δ = c − s`. One step gives
+  `δ' = λδ + (1 − λ)·pδ = ρ·δ`, where `λ = F0/F1` and **`ρ = p + (1 − p)·F0/F1 ∈ [F0/F1, 1]`**.
+  - Every stratum's deviation, the whole position distribution around 1
+    (`pos' − 1 = ρ·(pos − 1)`), `D = ½Σ|c − s|`, and the share-weighted Gini of positions
+    all scale by the same `ρ`.
+  - `p = 1` gives `ρ = 1`: claims are preserved, within rounding (5,000 random steps
+    without drift).
+- **No creation and no amplification.**
+  - `c = s` stays `s` for every `p`.
+  - `c'` lies between `c` and `s` component by component (convex envelope), stays
+    normalized and stays nonnegative.
+  - `D` never increases through the transition.
+  - The absolute hectare gap `δ·F` grows with `F` at `p = 1`. That is preservation of a
+    relative position, not concentration.
+- **Persistence.**
+  - With fixed shares, `D_T = D_0·Π ρ_t`.
+  - For small steps, `D ∝ (F/F0)^−(1−p)`. So the area growth needed to halve `D` is
+    `2^{1/(1−p)}`: 2, 2.52, 4 and 16 at `p` = 0, 0.25, 0.5 and 0.75, and never at `p = 1`.
+  - One step of factor G retains `p + (1 − p)/G ≥ G^−(1−p)` (AM-GM), so annual steps retain
+    at least this much.
+- **Gross, not net, expansion dilutes.** Shrinkage keeps fractions and regrowth is
+  allocated by `n`. A cycle of ×2, ×0.5, ×2 therefore takes `D` from 0.3 to 0.15, 0.15
+  and 0.075 at `p = 0`, but leaves it at 0.3 throughout at `p = 1`. This asymmetry is part
+  of the existing rule, not something the counterfactual adds.
+- **Zero stock.**
+  - Fields at zero reset claims to share (`claim_zero_stock`), and regrowth from zero
+    follows share for every `p`.
+  - Stale claims on an empty stock cannot be continued either (`F0 = 0 ⇒ n = s`).
+  - Old control is never resurrected.
+
+### S5. Shadow trajectories in real runs
+
+- **Method:** the probe swaps `field_claims_after_change` for the H3 transition inside the
+  passive accounting.
+  - Because strata feed no physical mechanism, every authoritative quantity is identical
+    across all `p` and both capacities, and equal to a plain run without the probe. This
+    was checked by digest of events, RNG and unit physical state in every run.
+  - Claims, compaction and coalescence then follow the counterfactual recursively, with
+    fusion inheritance unchanged.
+- **Runs:** neolithic 600 y and pressure + cultivation 400 y, seeds 0–3, `max_strata` 16
+  and 32, `p ∈ {0, 0.25, 0.5, 0.75, 1}`, `w = 0`.
+
+**Representation** (cells: neolithic / pressure, capacity 16):
+
+| p | 0 | 0.25 | 0.5 | 0.75 | 1 |
+|---|---|---|---|---|---|
+| people-weighted D (all unit-years) | 0.0140 / 0.0307 | 0.0170 / 0.0371 | 0.0211 / 0.0465 | 0.0271 / 0.0622 | 0.0364 / 0.0935 |
+| field position range p1–p99 (people in multi-strata units) | 0.66–1.37 / 0.56–1.47 | 0.60–1.49 / 0.48–1.57 | 0.43–1.60 / 0.36–1.72 | 0.22–1.79 / 0.19–2.02 | 0–2.11 / 0–2.82 |
+| multi-strata unit-years | 148k / 69.4k | 149k / 69.4k | 150k / 69.7k | 151k / 69.9k | 152k / 69.9k |
+| capacity coalescence field error Σ (16 / 32) | 0.034 / 0.006 · 0.065 / 0.012 | 0.057 / 0.010 · 0.11 / 0.021 | 0.093 / 0.018 · 0.18 / 0.037 | 0.17 / 0.032 · 0.35 / 0.079 | 0.33 / 0.065 · 0.79 / 0.18 |
+
+- **Shared across all `p`:**
+  - unit-years: 387,394 / 122,855;
+  - unit-years with non-neutral field control: 105,884 / 65,898;
+  - mean strata per unit-year: 2.7–2.8 / 6.1 (p90 9 / 16);
+  - transitions from non-neutral control to zero fields: 2,228 / 1,420.
+- **What changes with `p`:** continuity changes the *size* of differences, never *where*
+  they exist.
+- **Store deviation:** identical across `p` (0.0079 / 0.0135), because `w = 0` isolates
+  stores.
+
+**Persistence of fusion-created episodes:**
+- *Definition of an episode:* a fusion leaves `D ≥ 0.01`. It is followed until the unit
+  fuses again, disappears or the run ends (censored).
+- 4,059–4,236 / 2,876–2,958 episodes. Kaplan–Meier survival, identical at 16 and 32.
+- No episode ever grew: zero increases of `D` without a fusion, in every run.
+- The analytical law `D_t = D_0·Πρ` holds per year to ≤ 1.6e-14 relative.
+
+| p | not halved at 10 / 25 / 50 / 100 y | above 10 % at 50 / 100 y | halved by dilution: n, median years, median expansion factor | halved by zero-field reset |
+|---|---|---|---|---|
+| 0 | 0.75 / 0.38 / 0.09 / 0.01 · 0.72 / 0.29 / 0.03 / 0.01 | 0.34 / 0.07 · 0.25 / 0.07 | 1,055, 12 y, ×2.36 · 694, 11 y, ×2.33 | 590 · 351 |
+| 0.25 | 0.82 / 0.50 / 0.14 / 0.03 · 0.82 / 0.40 / 0.07 / 0 | 0.42 / 0.13 · 0.32 / 0.06 | 678, 15 y, ×3.25 · 440, 17 y, ×3.33 | 692 · 417 |
+| 0.5 | 0.88 / 0.64 / 0.27 / 0.03 · 0.87 / 0.60 / 0.16 / 0.03 | 0.43 / 0.18 · 0.37 / 0 | 261, 27 y, ×6.5 · 169, 27 y, ×6.7 | 817 · 499 |
+| 0.75 | 0.89 / 0.70 / 0.43 / 0.14 · 0.87 / 0.68 / 0.35 / 0.11 | 0.43 / 0.18 · 0.36 / 0 | 11, 65 y, ×77 · 16, 57 y, ×84 | 885 · 546 |
+| 1 | 0.89 / 0.70 / 0.43 / 0.18 · 0.87 / 0.68 / 0.37 / 0 | 0.43 / 0.18 · 0.37 / 0 | none | 902 · 554 |
+
+- **At `p = 0`, dilution follows the law.** A difference halves after a median ×2.3–2.4 of
+  cumulative gross expansion, about 11–12 years. The law's minimum is ×2; annual steps
+  overshoot it.
+- **At `p ≥ 0.75`, dilution practically stops.** Differences then end only when the fields
+  reach zero (migration, abandonment). That is the dominant end at every `p ≥ 0.5`, and
+  the only end at `p = 1`.
+- **The cap on persistence is physical, not the transition.** At `p = 1`, 43 % / 37 % of
+  episodes are still undiminished after 50 years, and the survival curve flattens.
+  Survival stays bounded by fission, fusion and migration. Pressure units migrate or fuse
+  too often for any difference to survive 100 years.
+- **Deviation 25 or more years after a unit's last fusion** carries 8 % → 13 % (neolithic)
+  and 4 % → 9 % (pressure) of the people-weighted deviation as `p` goes from 0 to 1.
+
+**Resolution, 16 vs 32 (same `p`; signal = the `p = 0 → 1` change at 32):**
+- `Σ|D16 − D32| / Σ|D(p=1) − D(p=0)|`:
+  - neolithic 1.1e-4, 1.7e-4, 3.0e-4, 5.6e-4, 8.3e-4;
+  - pressure 3.4e-4, 5.0e-4, 8.2e-4, 1.4e-3, 2.6e-3.
+
+  Small at every `p`, but growing about 8× from `p = 0` to `p = 1`.
+- **Per unit-year field-position distributions:** the share of signal-bearing unit-years
+  where W1(16, 32) exceeds 10 % of W1(p0, p1) rises with `p`:
+  - neolithic 1.9 %, 2.1 %, 3.0 %, 4.7 %, 7.8 %;
+  - pressure 1.5 %, 1.7 %, 3.7 %, 8.0 %, 19 %.
+
+  W1(16, 32) p99 is 0.0036 → 0.018 (neolithic) and 0.012 → 0.050 (pressure).
+- **Episode statistics** (survival, dilution, resets) are the same at 16 and 32.
+
+**Coalescence interaction:**
+- Coalescence occurs only at a fusion, so a later difference carries coalescence error only
+  through its origin.
+- **Continuity preserves approximation error along with history.** Coalescence field
+  error grows about 10–12× from `p = 0` to `p = 1` at both capacities: wider preserved
+  differences make coalescence merge more distinct field positions, and `p = 1` then
+  carries that error forward undiluted.
+- **Where the 16 vs 32 differences sit:** all of the 16 vs 32 difference in the long-lived
+  tail has a coalesced origin, but the tail holds only 2–6 % of the total difference.
+- **Origins of long-lived differences:**
+  - Neolithic: long-lived non-neutral unit-years have a coalesced origin about as often as
+    all non-neutral ones (0.09–0.11 vs 0.10–0.11).
+  - Pressure: they have one more often (0.34 vs 0.25). Pressure episodes start coalesced
+    in 0.40–0.49 of cases.
+- **Gate consequence:** before any mechanism reads persistent `field_claim`, the §M6
+  mechanism-aware metric is needed. This applies especially under pressure.
+
+### S6. `w = 1` propagation stress (socioeconomic only)
+
+This is the same experiment at `w = field_output_claim_weight = 1`. Crop *attribution*
+follows field control. Crop totals, food and all physical state are unchanged and
+identical.
+
+- **Field control is unaffected by `w`.** People-weighted D is the same as at `w = 0`
+  (0.0139–0.0364 / 0.0306–0.0934), and the episode statistics match.
+- **Persistent field control propagates into store control.** People-weighted store
+  deviation for `p` = 0, 0.25, 0.5, 0.75, 1:
+  - neolithic: 0.047, 0.055, 0.064, 0.074, 0.085 (×1.8);
+  - pressure: 0.124, 0.139, 0.157, 0.177, 0.197 (×1.6).
+
+  At `w = 0` it is 0.008 / 0.014 for every `p`, so `w = 1` alone multiplies store
+  deviation by 6–9×, and continuity adds 1.6–1.8× on top.
+- **Coalescence error grows further:** field error Σ at capacity 16 goes from 0.073 to
+  0.48 (neolithic) and from 0.21 to 1.26 (pressure) as `p` goes from 0 to 1.
+- **Resolution is weaker under `w = 1`:**
+  - `Σ|D16 − D32|`/signal is 2.8e-4 → 1.4e-3 (neolithic) and 1.3e-3 → 3.6e-3 (pressure).
+  - Unit-years where W1(16, 32) exceeds 10 % of the signal: 2.5 % → 9.5 % (neolithic) and
+    2.8 % → 23.5 % (pressure).
+- These stress findings are separate from the primary result. They show what *would*
+  follow if persistent control were later allowed to steer attribution; nothing of the kind
+  is active.
+
+### S7. Recommendation
+
+**Continuity deserves a later activation design, but not now and not as a bare `p`.**
+
+- **What durability does.** Under the current rule (`p = 0`), fusion-created field-control
+  differences halve after about ×2.3 of gross field expansion (about 11–12 years). That is
+  already longer-lived than store differences (about 2 years, §M4), but dilution still
+  erases them. Continuity (`p ≥ 0.75`) removes dilution as a sink. Differences then last
+  until the physical asset is lost (migration, abandonment), and 37–43 % of them are
+  undiminished after 50 years. This is the first candidate in MVP 3 that gives persistent
+  within-unit differentiation without hardcoding property, inheritance or hierarchy.
+- **What continuity does not do.** It preserves differences and never creates or amplifies
+  them (S4, confirmed in every run). Continuity alone is preservation, not runaway
+  inequality, and not hierarchy.
+- **Why it is not ready:**
+  1. **There is no causal reason for `p` today.** H2 collapses to H1 because clearing labor
+     is a single unit-level pool. A defensible `p > 0` needs a named lower-level cause that
+     makes existing controllers create or claim the new capacity: for example extension of
+     an existing plot, household-differentiated clearing labor, or decision influence over
+     clearing. Each of those is its own mechanism (§N3). `p` should then be derived from it,
+     not set.
+  2. **Continuity preserves numerical error along with history.** Coalescence field error
+     grows about 10× from `p = 0` to `p = 1`, and the 16 vs 32 tail grows about 8×. Under
+     pressure, 19 % (`w = 0`) to 24 % (`w = 1`) of signal-bearing unit-years have
+     resolution uncertainty above 10 % of the effect. The §M6 mechanism-aware metric, which
+     protects field positions, must precede any reader of persistent `field_claim`.
+- **Next step:**
+  - Keep `p = 0` (H1) and keep the gate closed.
+  - Next review: choose whether to (a) design a cause for differentiated clearing or
+    plot extension, which would make H2 differ from H1 and give `p` a basis, or (b) do the
+    §M6 resolution metric first, since both continuity and any field-reading mechanism need
+    it.

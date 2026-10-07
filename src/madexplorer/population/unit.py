@@ -555,11 +555,6 @@ def belief_slot(unit: PopulationUnit) -> int:
     return slot
 
 
-def is_registered(unit: PopulationUnit) -> bool:
-    """Whether the unit's state lives in a store (it is in a unit registry)."""
-    return unit.__dict__.get("_belief_store") is not None
-
-
 def attach_unit(
     unit: PopulationUnit,
     slot: int,
@@ -616,8 +611,3 @@ def detach_unit(unit: PopulationUnit) -> int:
     store.release(slot)
     state["_belief_store"], state["_slot"] = None, -1
     return slot
-
-
-def detach_beliefs(unit: PopulationUnit) -> int:
-    """Alias of :func:`detach_unit` (the PH3a name)."""
-    return detach_unit(unit)

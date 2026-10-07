@@ -1,8 +1,9 @@
 """Shared fixtures: a tiny deterministic world and the baseline human profile."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import numpy as np
 import pytest
 
 from madexplorer.config.loader import Scenario
@@ -13,8 +14,30 @@ if TYPE_CHECKING:
     from madexplorer.core.simulation import Simulator
     from madexplorer.core.state import StepContext
     from madexplorer.knowledge.system import KnowledgeModel
+    from madexplorer.population.unit import PopulationUnit
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def make_unit(
+    uid: str,
+    females: dict[int, int] | None = None,
+    males: dict[int, int] | None = None,
+    **fields: Any,
+) -> "PopulationUnit":
+    """A detached human unit at cell 0 (unless given) with cohorts ``{age: count}``."""
+    from madexplorer.population.unit import PopulationUnit
+
+    cohorts = []
+    for counts in (females, males):
+        column = np.zeros(91, dtype=np.int64)
+        for age, n in (counts or {}).items():
+            column[age] = n
+        cohorts.append(column)
+    defaults: dict[str, Any] = {"cell": 0, "reserve_kcal_per_capita": 0.0, "founded_year": 0}
+    return PopulationUnit(
+        id=uid, species_id="human", females=cohorts[0], males=cohorts[1], **(defaults | fields)
+    )
 
 
 @pytest.hookimpl(tryfirst=True)  # before `-m` deselection, which reads these markers

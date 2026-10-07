@@ -282,25 +282,6 @@ def crop_yield_batch(
     return crop_yield_columns(_object_columns(units, ctx), potential, ctx)
 
 
-@dataclass(frozen=True)
-class FarmHarvest:
-    """This year's crop harvest for one unit."""
-
-    unit_id: str
-    harvest_kcal: float
-    hours: float
-    yield_kcal_per_ha: float
-
-    def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Record the harvest; foraging adds wild food afterwards."""
-        unit = state.units[self.unit_id]
-        unit.farm_harvest_kcal = self.harvest_kcal
-        unit.farm_hours = self.hours
-        unit.crop_yield_kcal_per_ha = self.yield_kcal_per_ha
-        unit.clearing_hours = 0.0
-        ctx.ledger.farm_harvest_kcal += self.harvest_kcal
-
-
 @dataclass(frozen=True, eq=False)
 class FarmHarvests:
     """This year's crop harvest of many units, committed as columns."""
@@ -311,7 +292,7 @@ class FarmHarvests:
     yield_kcal_per_ha: FloatArray
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Record the harvests (as :class:`FarmHarvest` does, row by row)."""
+        """Record the harvests; foraging adds wild food afterwards."""
         cols = self.cols
         cols.set("farm_harvest_kcal", self.harvest_kcal)
         cols.set("farm_hours", self.hours)
@@ -357,52 +338,11 @@ class FarmingSubsystem:
         return [FarmHarvests(cols, harvest, hours, yield_per_ha)]
 
 
-@dataclass(frozen=True)
-class FieldPlan:
-    """Next year's field area for one unit, with the clearing labor it costs."""
-
-    unit_id: str
-    fields_ha: float
-    clearing_hours: float
-    farm_return: float
-    forage_marginal: float
-    gap: float
-    limit: str = ""  # binding limit of an expansion: target, labor, arable (diagnostic)
-
-    def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Commit the plan and record the start of cultivation."""
-        unit = state.units[self.unit_id]
-        if not unit.ever_cultivated and self.fields_ha > 0:
-            unit.ever_cultivated = True
-            ctx.events.emit(
-                state.year,
-                "cultivation_started",
-                unit_id=unit.id,
-                cell=list(state.world.coords(unit.cell)),
-                fields_ha=round(self.fields_ha, 2),
-                farm_return_kcal_per_hour=round(self.farm_return, 1),
-                forage_marginal_kcal_per_hour=round(self.forage_marginal, 1),
-                population=unit.population,
-            )
-        elif unit.fields_ha > 0 and self.fields_ha == 0 and self.gap < 0:
-            ctx.events.emit(
-                state.year,
-                "cultivation_abandoned",
-                unit_id=unit.id,
-                cell=list(state.world.coords(unit.cell)),
-                farm_return_kcal_per_hour=round(self.farm_return, 1),
-                forage_marginal_kcal_per_hour=round(self.forage_marginal, 1),
-            )
-        unit.fields_ha = self.fields_ha
-        unit.labor_debt_hours += self.clearing_hours
-        unit.clearing_hours = self.clearing_hours
-
-
 @dataclass(frozen=True, eq=False)
 class FieldPlans:
     """Next year's field areas of many units, applied in (cell, unit) order.
 
-    Equivalent to one :class:`FieldPlan` per row in that order (events included).
+    Rows are committed in that order, with the cultivation start/abandonment events.
     """
 
     cols: "UnitColumns"

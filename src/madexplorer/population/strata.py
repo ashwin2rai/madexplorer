@@ -602,12 +602,6 @@ class StrataTable:
                 changed[candidates[moved]] = True
         return slots[changed]
 
-    def is_neutral(self, slot: int) -> bool:
-        """Exactly one stratum holding the neutral values."""
-        return int(self.n_strata[slot]) == 1 and all(
-            float(self.columns[f.name][slot, 0]) == f.neutral for f in STRATUM_FIELDS
-        )
-
     def check(self, slots: IntArray) -> BoolArray:
         """Per slot: 1..max_strata strata with assigned ids, positive shares, zero padding,
         every column a partition of unity, and no exact duplicate positions. Rows are

@@ -7,20 +7,14 @@ from madexplorer.core.simulation import Simulator
 from madexplorer.population.composition import MergeMode, merge_state
 from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.unit import PopulationUnit
-from tests.conftest import ROOT, mvp2_scenario_dict
+from tests.conftest import ROOT, make_unit, mvp2_scenario_dict
 
 
 def _unit(uid: str, n: int, groups: int = 1) -> PopulationUnit:
-    females = np.zeros(91, dtype=np.int64)
-    females[20] = n
-    return PopulationUnit(
-        id=uid,
-        species_id="human",
-        cell=0,
-        females=females,
-        males=np.zeros(91, dtype=np.int64),
+    return make_unit(
+        uid,
+        {20: n},
         reserve_kcal_per_capita=100.0,
-        founded_year=0,
         groups=groups,
         knowledge=np.array([1.0, 2.0]),
         stores_kcal=50.0,

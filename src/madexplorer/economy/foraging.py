@@ -226,8 +226,8 @@ def single_unit_harvest(
 class CellHarvests:
     """Foraging outcomes of every (cell, species) group, packed; applied in group order.
 
-    Equivalent to one :class:`CellHarvest` per group, applied in that order: stocks per
-    group, then each member's columns; the ledger total is accumulated in member order.
+    Each group is applied in turn: stocks per group, then each member's columns; the
+    ledger total is accumulated in member order.
     """
 
     cols: "UnitColumns"
@@ -273,49 +273,6 @@ class CellHarvests:
         for value in harvest.tolist():
             total += value
         ledger.harvest_kcal = total
-
-
-@dataclass(frozen=True)
-class CellHarvest:
-    """Foraging outcome for one species group in one cell."""
-
-    cell: int
-    unit_ids: tuple[str, ...]
-    unit_harvest_kcal: tuple[float, ...]
-    unit_hours: tuple[float, ...]
-    unit_marginal_kcal_per_hour: tuple[float, ...]
-    plant_removed_kcal: float
-    game_removed_kcal: float
-    learning_rate: float
-    familiarity: FamiliarityRule
-
-    def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Deplete stocks, credit harvests, and grow local familiarity (learning by doing)."""
-        eco = state.ecology
-        eco.plant_stock_kcal[self.cell] = max(
-            eco.plant_stock_kcal[self.cell] - self.plant_removed_kcal, 0.0
-        )
-        eco.game_stock_kcal[self.cell] = max(
-            eco.game_stock_kcal[self.cell] - self.game_removed_kcal, 0.0
-        )
-        removed = self.plant_removed_kcal + self.game_removed_kcal
-        plant_share = self.plant_removed_kcal / removed if removed > 0 else 0.0
-        for unit_id, harvest, hours, marginal in zip(
-            self.unit_ids,
-            self.unit_harvest_kcal,
-            self.unit_hours,
-            self.unit_marginal_kcal_per_hour,
-            strict=True,
-        ):
-            unit = state.units[unit_id]
-            unit.forage_harvest_kcal = harvest
-            unit.forage_hours = hours
-            unit.forage_marginal_kcal_per_hour = marginal
-            unit.forage_plant_share = plant_share
-            unit.harvest_kcal = unit.farm_harvest_kcal + harvest
-            unit.labor_debt_hours = 0.0
-            unit.familiarity.practice(self.cell, state.year, self.learning_rate, self.familiarity)
-            ctx.ledger.harvest_kcal += unit.harvest_kcal
 
 
 _AccessMatrices = tuple[FloatArray, FloatArray, FloatArray, FloatArray]

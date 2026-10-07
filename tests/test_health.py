@@ -14,22 +14,11 @@ from madexplorer.population.health import (
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.life_history import LifeTables
 from madexplorer.species.profile import Health, SpeciesProfile
+from tests.conftest import make_unit
 
 
 def _unit(uid: str, n: int, cell: int = 0, residence: int = 30, groups: int = 1) -> PopulationUnit:
-    females = np.zeros(91, dtype=np.int64)
-    females[25] = n
-    return PopulationUnit(
-        id=uid,
-        species_id="human",
-        cell=cell,
-        females=females,
-        males=np.zeros(91, dtype=np.int64),
-        reserve_kcal_per_capita=0.0,
-        founded_year=0,
-        residence_years=residence,
-        groups=groups,
-    )
+    return make_unit(uid, {25: n}, cell=cell, residence_years=residence, groups=groups)
 
 
 def _hazards(

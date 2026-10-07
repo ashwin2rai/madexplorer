@@ -1,10 +1,88 @@
 # Implementation Status — MVP 3 (staged)
 
-**Updated:** 2026-10-06 (Stage 4D)\
+**Updated:** 2026-10-07 (Stage 4E)\
 **Current scientific base:** MVP 2.1 frozen; pre-MVP 3 consolidation complete\
 **Current milestone:** MVP 3 — staged socioeconomic differentiation
 
 ## MVP 3 stage handoff
+
+**Completed:** Stage 4E — durable productive-asset control counterfactual (design §S).
+
+**Production behavior:** unchanged. The raw and logical MVP 2.1 oracles are IDENTICAL.
+The Stage 3B/3C fixtures, the Stage 4C/4D tests and the physical goldens are unchanged, and
+so is the RNG.
+
+**General primitive:** effective control over durable productive capacity, meaning a
+physical stock `[U]` plus a control partition `[U,S]`. **Concrete asset:** cultivated
+fields (`fields_ha` + `field_claim`). `field_claim` is a share of effective control over
+cultivated capacity. It is not ownership, title, inheritance, exclusion, rent or authority.
+
+**Hypotheses tested** (who controls new hectares `dF`; then `c' = (c·F0 + n·dF)/Σ`):
+- **H1, population allocation:** `n = s` (the current rule).
+- **H2, clearing-contribution allocation:** **it collapses exactly to H1.** Clearing hours
+  are one unit-level flow from the single labor pool of the shared age structure, with
+  unit-level technology. No code on that path reads strata, so every stratum contributes
+  `s·hours`.
+- **H3, continuity:** `n = s + p·(c − s)`, with `p = field_claim_continuity`.
+  **COUNTERFACTUAL ONLY** (`population/field_control.py`, probe
+  `scripts/probes/field_control_counterfactual.py`). It has no canonical value and is not
+  a scenario setting.
+
+**Exact properties:**
+- `p = 0` reproduces the current rule bit for bit. In real runs, the shadow sidecar equals
+  the authoritative one.
+- Under pure expansion `p = 1` keeps claims unchanged.
+- Each step multiplies every deviation by `ρ = p + (1 − p)·F0/F1 ∈ [F0/F1, 1]`, so a
+  difference halves after `2^{1/(1−p)}` of area growth.
+- Neutral control stays neutral. Results stay in the convex envelope, normalized and
+  nonnegative.
+- Zero fields reset claims to share, and regrowth does not resurrect old control.
+
+**Persistence results** (shadow trajectories; neolithic / pressure + cultivation; 4 seeds;
+physical state identical across p and capacity):
+- At `p = 0`, fusion-created differences halve after a median ×2.3 of gross expansion,
+  about 11–12 years. 38 % / 29 % survive 25 years without halving, 9 % / 3 % survive 50.
+- At `p = 1` there is no dilution. 70 % / 68 % survive 25 years and 43 % / 37 % survive
+  50. Every end is a zero-field reset (migration or abandonment).
+- People-weighted deviation rises from 0.014 / 0.031 to 0.036 / 0.094.
+
+**Boundedness and concentration:** no deviation ever increased without a fusion, in
+every run. The per-year law holds to 1.6e-14. Continuity preserves differences; it does not
+create or amplify them.
+
+**Resolution, 16 vs 32:**
+- Totals: `Σ|D16 − D32|`/signal is ≤ 2.6e-3, and the episode statistics are identical.
+- Per unit-year field-position distributions: the share of signal-bearing unit-years where
+  the 16 vs 32 difference exceeds 10 % of the signal rises with `p`, from 1.9 % to 7.8 %
+  (neolithic) and from 1.5 % to 19 % (pressure).
+- Coalescence field error grows about 10× from `p = 0` to `p = 1`: continuity preserves
+  approximation error along with history.
+
+**w = 1 stress:**
+- Field control is unchanged.
+- Store deviation grows with `p` by ×1.8 / ×1.6 (0.047 → 0.085, 0.124 → 0.197).
+- Under pressure, the resolution tail reaches 24 % of unit-years.
+
+**Physical-feedback gate:** still closed.
+
+**Recommendation:**
+- Continuity is the first mechanism in MVP 3 that gives persistent differentiation without
+  property, inheritance or hierarchy. It deserves a later activation design, but only:
+  - derived from a named cause for differentiated clearing or plot extension (which would
+    make H2 differ from H1), not as a bare `p`;
+  - after the §M6 mechanism-aware coalescence metric.
+- Keep `p = 0`.
+
+**Next:** PAUSE FOR SCIENTIFIC REVIEW.
+
+**Refactoring pass (alongside, behavior-preserving):** see `objective/REFACTORING.md`.
+- 226 lines of dead code removed (superseded one-unit proposal classes and unused helpers).
+- A shared `make_unit` test helper.
+- Removing historical benchmarks and retired probes awaits approval.
+
+---
+
+### Stage 4D — reserve management design and counterfactual (previous handoff)
 
 **Completed:** Stage 4D — reserve management design and counterfactual (design §R).
 
@@ -68,7 +146,7 @@ Stage 4C access therefore stays one-shot per store cycle.
 **Hierarchy:** not implemented. No authority, coercion or conditional access. The possible
 pathway and power-as-capacity principle are recorded as future hypotheses only (design §R8).
 
-**Next:** PAUSE FOR SCIENTIFIC REVIEW.
+**Next (at 4D):** pause for scientific review; done, then Stage 4E (above).
 
 ---
 

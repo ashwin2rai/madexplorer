@@ -79,7 +79,3 @@ class SpatialIndex:
             )
             self._pairs[key] = pairs
         return pairs
-
-    def rows_in(self, cell: int) -> list[PopulationUnit]:
-        """Units in ``cell`` in unit order (empty if unoccupied)."""
-        return self.by_cell.get(cell, [])

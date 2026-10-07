@@ -192,64 +192,11 @@ def energy_balance_batch(
     )
 
 
-@dataclass(frozen=True)
-class EnergyUpdate:
-    """New nutritional and storage state of one unit (reference form of :class:`EnergyUpdates`)."""
-
-    unit_id: str
-    need_kcal: float
-    balance: EnergyBalance
-    storage_retention: float
-
-    def apply(self, state: SimulationState, ctx: StepContext) -> None:
-        """Commit the unit's energy state; stores spoil at the end of the year."""
-        b = self.balance
-        _commit_energy(
-            state.units[self.unit_id],
-            ctx,
-            self.need_kcal,
-            b.food_ratio,
-            b.deficit,
-            b.reserve_kcal,
-            b.stores_kcal,
-            b.stored_kcal,
-            b.spoiled_kcal,
-            self.storage_retention,
-        )
-
-
-def _commit_energy(
-    unit: PopulationUnit,
-    ctx: StepContext,
-    need_kcal: float,
-    food_ratio: float,
-    deficit: float,
-    reserve_kcal: float,
-    stores_kcal: float,
-    stored_kcal: float,
-    spoiled_kcal: float,
-    retention: float,
-) -> None:
-    n = unit.population
-    unit.food_ratio = food_ratio
-    unit.energy_deficit = deficit
-    unit.reserve_kcal_per_capita = reserve_kcal / n
-    retained = stores_kcal * retention
-    ctx.ledger.spoilage_kcal += spoiled_kcal + (stores_kcal - retained)
-    unit.stores_kcal = retained
-    unit.stored_kcal = stored_kcal
-    unit.energy_debt_kcal = 0.0
-    unit.residence_years += 1
-    unit.harvest_history.append(unit.harvest_kcal / n)
-    ctx.ledger.need_kcal += need_kcal
-
-
 @dataclass(frozen=True, eq=False)
 class EnergyUpdates:
     """Energy state of many units, committed as columns (one proposal per step).
 
-    Equivalent to one :class:`EnergyUpdate` per row in row order: ledger totals are
-    accumulated sequentially in that order.
+    Ledger totals are accumulated sequentially in row order.
     """
 
     cols: "UnitColumns"

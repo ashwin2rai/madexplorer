@@ -251,7 +251,6 @@ class DenseBeliefStore:
         self.hops[slots, cells] = hops
 
 
-SPARSE_ENTRY_BYTES = BYTES_PER_CELL + 4  # cell id (int32) + the four fields
 COMPACT_GARBAGE_FRACTION = 0.5  # compact when released capacity exceeds this share of the pool
 COMPACT_MIN_ENTRIES = 4096
 

@@ -18,7 +18,7 @@ from madexplorer.economy.agriculture import (
 from madexplorer.population.composition import MergeMode, merge_state, split_off
 from madexplorer.population.familiarity import FamiliarityRule
 from madexplorer.population.unit import PopulationUnit
-from tests.conftest import ROOT, mvp2_scenario_dict, step_context
+from tests.conftest import ROOT, make_unit, mvp2_scenario_dict, step_context
 
 CULT, CLEAR, RATE, MARGIN, SHARE = 600.0, 800.0, 0.3, 0.1, 0.9
 PAYS = {"yield_per_ha": 6e5, "forage_marginal": 400.0}  # new land beats foraging x 1.1
@@ -90,18 +90,7 @@ def test_expansion_never_exceeds_the_need_area_or_the_labor_budget(
 
 
 def _unit(uid: str, n: int, hazard: float) -> PopulationUnit:
-    females = np.zeros(91, dtype=np.int64)
-    females[20] = n
-    return PopulationUnit(
-        id=uid,
-        species_id="human",
-        cell=0,
-        females=females,
-        males=np.zeros(91, dtype=np.int64),
-        reserve_kcal_per_capita=0.0,
-        founded_year=0,
-        move_hazard=hazard,
-    )
+    return make_unit(uid, {20: n}, move_hazard=hazard)
 
 
 def test_move_hazard_merges_by_population_and_splits_by_copy() -> None:
