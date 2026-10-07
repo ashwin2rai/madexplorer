@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-07 (MVP 3 Stage 4E; simplification pass)\
+**Updated:** 2026-10-07 (MVP 3 Stage 5A)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,50 +13,83 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**Completed:** Stage 4E, a counterfactual for control over durable productive assets
-(design §S).
+**Completed:** Stage 5A, an audit of endogenous socioeconomic differentiation (design §T).
 
-**Production behavior:** unchanged. The MVP 2.1 raw and logical oracles are identical,
-and the Stage 3B/3C strata fixtures and goldens are unchanged.
+**Production behavior:** unchanged (design and read-only probe only).
 
-**Result:**
-- **Primitive:** effective control over durable productive capacity: a physical stock
-  `[U]` plus a control partition `[U,S]`. Cultivated fields (`fields_ha` + `field_claim`)
-  are the first specialization.
-- **H2 = H1:** H2 (new land follows clearing contribution) collapses exactly to H1 (new
-  land follows population share). Clearing labor is one unit-level pool with no
-  stratum-specific input.
-- **H3 (continuity), counterfactual only:** new land follows
-  `share + p·(field_claim − share)`, with `p = field_claim_continuity` in
-  `population/field_control.py`.
-  - Every expansion step scales deviations by `ρ = p + (1 − p)·F0/F1`. Continuity
-    preserves differences; it never creates or amplifies them.
-  - At `p = 0` (current), fusion-created differences halve after about 2.3× field
-    growth (11–12 years).
-  - At `p = 1`, they last until the fields reach zero; 37–43 % are undiminished after 50
-    years.
-- **Cost of continuity:** it also preserves numerical coalescence error (about 10× larger
-  at `p = 1`). The 16-vs-32 resolution tail grows to 19–24 % of signal-bearing unit-years
-  under pressure.
+**Starting HEAD:** `f5e44e0` (Stage 4E plus the refactor-only cleanup).
+- Re-verified on that base: `make check` (787 passed), `make test-stat` (3/3), raw and
+  logical MVP 2.1 oracles IDENTICAL, `git diff --check` clean.
 
-**Recommendation:**
-- Keep `p = 0`. The physical-feedback gate stays closed.
-- Any later activation must first derive `p` from a named cause, such as differentiated
-  clearing or plot extension, which would make H2 differ from H1.
-- The §M6 mechanism-aware coalescence metric must come before that activation.
+**Scientific problem:** how a persistent socioeconomic difference can arise inside an
+initially homogeneous population. Fusion is the only source so far.
 
-**Next:** PAUSE FOR SCIENTIFIC REVIEW. Choose between (a) designing a cause for
-differentiated clearing or plot extension, and (b) the §M6 resolution metric first.
+**Candidates audited:**
+- uneven technology adoption;
+- learning-by-doing;
+- differentiated contribution to durable assets (clearing);
+- exchange participation;
+- migration and settlement history;
+- resource access;
+- familiarity;
+- age-structured participation.
 
-**Simplification pass (behavior-preserving; both oracles identical, see §5):**
-- removed dead one-unit proposal classes and unused helpers;
-- shared merge helpers between the two engines;
-- one `unassigned_ids` helper, and `log_normalization` moved into `strata.py`;
-- probe helpers in `scripts/probes/_common.py`;
-- a `make_unit` test helper;
-- 92 historical benchmark JSONs and 8 finished probe/perf scripts retired (recoverable
-  from `aae0974`);
-- stale "spec §" comments removed.
+**Recommended:** practice concentration under finite activity demand, sustained by
+learning-by-doing. The first domain is cultivation against foraging.
+
+**Why:**
+- **Demand is finite.** Cultivation uses a median 35 % (neolithic) and 57 % (pressure) of a
+  unit's labor capacity, and it is below half of capacity in 75 % / 36 % of farming
+  unit-years. The practicing share `f = s/s_max` is therefore determined, with no random
+  fraction. The probe is `scripts/probes/practice_participation.py`.
+- **The existing learning rule rewards concentration.** Its gain is linear in practice
+  share with proportional decay, so equilibrium competence scales as `1/f`. Practitioners
+  reach, for example, agricultural efficiency 0.83 vs 0.64 after 20 years (N = 40,
+  s = 0.25).
+- **Practice persists long enough.** Cultivation spells per unit last 14 / 8 years
+  (median) and 52 / 46 years (p90).
+- **The alternatives lack substrate.** Technology is a unit-wide Boolean; trade is a
+  unit-level food balance; migration moves whole units; fission is representative.
+
+**Smallest causal differentiating event:**
+- In a year where cultivation demand is below the unit's practice capacity, subset A
+  (share `f`) performs the cultivation hours and subset B forages.
+- A and B are mixture components, not identified people; there is no random partition.
+
+**Open hypothesis:** initiation needs one explicit hypothesis. The options are a
+per-participant cost, experience-based assignment, or anticipatory allocation.
+Experience-based assignment alone only amplifies fusion-born differences.
+
+**New state likely required (design only):**
+- per-stratum domain competence (agriculture first): intensive; inherited at a split;
+  concatenated at fusion (unit knowledge = Σ share·K); copied at fission;
+  population-weighted at coalescence; decays with disuse (half-life ≈ 35 y);
+- per-stratum practice share: a flow.
+
+There are no labels and no power, status or rank scalar.
+
+**New strata:** design only. They would arise if a future mechanism meets the §T criterion
+(a materially different practice flow assigned to a subset). Growth is bounded: at most one
+marginal stratum splits per activity per unit-year.
+
+**Epoch-general interpretation:** different practice histories lead to different
+competence. The same idea fits crafts, trade, administration and machinery.
+
+**Relationship to `field_claim`:** if practitioners also clear, clearing contribution
+concentrates. H2 then differs from H1, and §S continuity gets a cause instead of a set `p`.
+This is a further hypothesis.
+
+**Resolution implications:** a future merge metric must protect competence, weighted by
+its effect on efficiency `K_half/(K + K_half)²`, along with practice status and
+`field_claim`. Leavers decay toward non-practitioners but never merge with them exactly.
+
+**Physical-feedback gate:** closed.
+
+**Next:** Stage 5B, after scientific review. It would be a design plus counterfactual
+probe: shadow per-stratum competence under a concentration degree `c ∈ [0, 1]` (0 is
+today's spread), measuring persistence, split frequency, resolution load, and the
+clearing-contribution link to §S. It would include no physical feedback, and the review
+should choose among the initiation hypotheses.
 
 ## 2. MVP 3 so far
 
@@ -71,6 +104,7 @@ differentiated clearing or plot extension, and (b) the §M6 resolution metric fi
 | 4C | Claim-sensitive access to stored food: small and one-shot per store cycle under the MVP 2.1 withdrawal rule (counterfactual) | §Q |
 | 4D | Store release `X = min(D, K)` is kcal-optimal under current physics; reserve targets rejected (counterfactual) | §R |
 | 4E | Control over new fields: H2 = H1; continuity preserves but never amplifies (counterfactual) | §S |
+| 5A | Endogenous differentiation audit: recommend practice concentration under finite demand with learning-by-doing (design only) | §T |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**

@@ -2,7 +2,7 @@
 
 **Status:** current contract plus findings register (rewritten 2026-10-07; the full
 stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 4E (§S). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
+stage: 5A (§T). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
 is closed.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
 (`PopulationStore`, `population/fields.py`).
@@ -572,9 +572,194 @@ no causal reason for p today (H2 collapses to H1; p should be derived from a nam
 not set), and it preserves numerical error, so the §M6 metric must precede any reader of
 persistent `field_claim`.
 
+
+### §T. Stage 5A — endogenous differentiation audit (design only, 2026-10-07)
+
+Starting point `f5e44e0` (Stage 4E plus the refactor-only cleanup; both MVP 2.1 oracles
+re-verified identical). No mechanism was added and production behavior is unchanged.
+Evidence: the code audit below and the read-only probe
+`scripts/probes/practice_participation.py` (`controlled`; `runs`, observer neutral by
+digest).
+
+**Problem.** Through Stage 4E, heterogeneity enters only through fusion. A homogeneous unit
+stays homogeneous; store control is too transient to persist (§Q, §R). Field control can
+persist, but its continuity has no cause (§S). The missing piece is a modeled process that
+treats part of an initially homogeneous population differently, so that a persistent
+causal distinction follows.
+
+**Epoch-general principle.** Candidates are judged as general primitives (differentiated
+practice, skill, contribution, investment, access, participation, control or network
+position), with an era-specific concrete implementation.
+
+**Audit of existing substrate:**
+
+| Area | What exists (code) | Partial / subset treatment today |
+|---|---|---|
+| Technology | `technologies: frozenset` per unit, plus a bitmask. Capabilities are additive and apply to the whole unit as soon as the technology is held (`knowledge/system.py`, `capability_column`). Discovery, availability, practice and proficiency are one Boolean (system.py docstring) | none. Practice *intensity* of cultivation is already separate (`fields_ha`, `farm_hours` are an economic decision) |
+| Knowledge and learning | Domain levels `K_d` `[U]`, intensive (merge: population mean; split: copy). Practice `s_d = Σ_a w_{d,a}·hours_a/labor`. Learning `K ← K + lr·s·log1p(N·s/n) − (decay/retention)·K` (`learning.py`, rule note: "all members practice in proportion to labor"). Agriculture efficiency `K/(K + 2)` multiplies crop yield; ecology efficiency `K/(K + 0.05)` is saturated | none, but the rule is hours-driven: gain is linear in `s`, with proportional decay |
+| Familiarity | per-cell foraging skill; +rate per year foraged, not scaled by hours; decays when idle | none; foraging is near saturation |
+| Labor | capacity = cohorts × age curve × 5 h/d × 365. Order: clearing debt, then cultivation (cap 0.9), then foraging. Foraging solves for an effort fraction < 1 when full effort overshoots its target. No idle-hours variable | unit-wide, population-proportional; age enters only as unit totals |
+| Durable assets | `fields_ha` (created by clearing labor), `stores_kcal`. Storage is a retention *rate*, not a capacity stock; soil is per cell; there is no infrastructure | none (H2 = H1, §S) |
+| Trade | unit-to-unit food kcal, whole-unit balance; `trade_ties` unit-level (daughters start with none) | none; no goods, money or per-person access |
+| Migration, fission | Migration moves the whole unit. Fission draws departing cohorts binomially at one rate per cohort; the daughter copies knowledge, technology, familiarity and strata | none beyond fusion; fission is representative |
+| Other resources | per-cell plant, game, soil and arable land; arable shared pro rata with no incumbency | none |
+
+**Measured activity demand** (labor capacity at the start of the year; neolithic 600 y /
+pressure + cultivation 400 y; seeds 0–3):
+
+| | neolithic | pressure |
+|---|---|---|
+| farming unit-years | 318,012 of 379,499 | 94,681 of 119,321 |
+| cultivation hours ÷ capacity, p50 / p90 | 0.35 / 0.61 | 0.57 / 0.78 |
+| farming unit-years with cultivation below 0.5 / 0.25 of capacity | 0.75 / 0.28 | 0.36 / 0.11 |
+| labor-capped (≥ 0.9) | 0.00 | 0.02 |
+| unused capacity, p50 / p90 | 0.16 / 0.39 | 0.00 / 0.25 |
+| cultivation spell per unit id, p50 / p90 | 14 / 52 y | 8 / 46 y |
+| farming unit-years with clearing; clearing ÷ capacity p90 | 0.16; 0.06 | 0.18; 0.09 |
+
+Hours can exceed the start-of-year capacity (max about 1.6) where demography or fusion
+changes the unit during the year.
+
+- **Finite activity demand is the rule, not the exception.** Cultivation needs only part of
+  a unit's labor. If those hours were performed by the people who farm, the practicing
+  share would be `f = s / s_max`, strictly between 0 and 1. This is deterministic and
+  follows from the field area, the hours per hectare and the time budget; no random
+  fraction is involved.
+
+**The existing learning rule rewards concentration**
+(`practice_participation.py controlled`, neolithic parameters, the authoritative `learn`):
+- The same total cultivation hours are performed either by everyone (share `s`) or by
+  `f = s/0.9` of the people at share 0.9.
+- In the concentrated case, practitioners reach agricultural efficiency far sooner and
+  hold it higher. For example, at N = 40:
+  - s = 0.25: 0.58 vs 0.34 after 5 years, 0.83 vs 0.64 after 20 years, 0.92 vs 0.82 at
+    equilibrium;
+  - s = 0.1: 0.88 vs 0.65 at 100 years.
+- Non-practitioners stay at 0.07–0.42 (they still learn a little through the foraging
+  weight 0.15).
+- Ecology competence is saturated either way (0.99+), so the economically consequential
+  difference is in agriculture.
+- The reason is the rule's form. Gain is linear in practice share, and
+  `N·s = (fN)·(s/f)` keeps the practitioner term unchanged, so the equilibrium level
+  scales as `1/f`.
+
+**Candidates ranked** (by audit evidence):
+
+| Candidate | Existing causal substrate | Can split a homogeneous unit | Persistence | Epoch-general | New state | New physical feedback (when active) | Risk of smuggling institutions | Verdict |
+|---|---|---|---|---|---|---|---|---|
+| **Practice concentration under finite activity demand, sustained by learning-by-doing** | yes: finite demand (above), hours-driven learning, knowledge → crop yield | yes; the share `f` is deterministic | while practiced; decays with disuse (agriculture decay 0.02/y, half-life ≈ 35 y) | yes (practice → competence) | per-stratum domain competence; practice share as a flow | yes (yield of practitioners) — gated | low: no rank or ownership; needs one initiation hypothesis (below) | **recommended** |
+| Differentiated contribution to durable assets (clearing) | clearing is finite demand (16–18 % of farming unit-years, small FTE) | only with the same concentration hypothesis | as fields (§S) | yes (investment → control) | per-stratum contribution (flow) | no (claims are passive) | moderate: contribution ⇒ control is a further hypothesis | downstream of the recommended mechanism; gives §S its cause |
+| Uneven technology adoption | none: technology is a unit-wide Boolean with instant whole-unit effect | no, without separating discovery from practice | — | yes | a practice/adoption ontology | yes | moderate | subsumed: for cultivation, practice is already hours, not the Boolean |
+| Familiarity differentiation | per-cell skill, not hours-scaled | no | decays | partly | per-stratum familiarity maps (heavy: sparse per cell) | small (foraging near saturation) | low | rejected: inert and expensive |
+| Exchange participation | unit balance only; food only; unit ties | no | — | yes | per-stratum ties or goods | yes | high (merchant category) | rejected for now: no substrate |
+| Migration and settlement history | whole-unit migration; representative fission | no (only fusion) | — | yes | selective fission or migration | yes | low | rejected: no within-unit path |
+| Resource access (stores, fields) | claims exist (§Q–§S) | no | stores transient; fields need a cause | yes | — | yes | moderate | not a first splitter (§Q, §R, §S) |
+| Age-structured participation | labor and need curves by age | no (age is shared by design, §1.3) | people age through it | — | — | — | low | rejected: not socioeconomic |
+
+**Recommended first differentiator: practice concentration under finite activity demand.**
+*Different practice histories lead to different accumulated competence.*
+- **Epoch-general primitive:** persistent practice differentiation leading to competence.
+- **First concrete domain:** cultivation, against foraging. The same idea later fits
+  crafts, trade, administration and machinery.
+
+**Smallest causal event.**
+- In a unit-year where cultivation demand `H` is below the practice capacity of the whole
+  unit, subset A (share `f = s/s_max`, with `s = H/C`) performs the year's cultivation
+  hours and subset B does not; B forages.
+- "A farmed this year, B did not" is a stated cause. "Specialists vs others" is a
+  category and is not used.
+- No individual identities are represented: A and B are mixture components, so no random
+  partition picks people. `f` comes from demand and the time budget.
+
+**Initiation needs one explicit hypothesis** (the only new behavioral assumption;
+undecided):
+- (i) **A per-participant cost** (setup, travel or coordination per practitioner-year).
+  Concentration then lowers hours immediately and dominates. Epoch-general, but it is a
+  physical labor cost.
+- (ii) **Experience-based assignment** (work goes to the most competent). This is
+  deterministic and self-reinforcing once competence differs. It ties at perfect
+  homogeneity, so on its own it amplifies only fusion-born differences.
+- (iii) **Allocation that anticipates learning.** This is a foresight hypothesis.
+
+Stage 5B should not choose by fiat. It should treat concentration as a counterfactual
+degree `c ∈ [0, 1]` (0 = spread, the current assumption), like `p` in §S, and measure the
+consequences. The candidate causes go to review.
+
+**Randomness policy.** Concentration needs none: `f` is determined. A stochastic version
+would represent real uncertainty about who is available (illness, absence), not a
+partition chosen to manufacture strata; it is not recommended.
+
+**Future split criterion (not implemented).** A stratum may be split when a modeled
+allocation gives a subset of it a materially different practice flow (practice share
+differing by more than a set fraction of the activity's demand) in a year. The split
+creates two components with identical claims and inherited competence. They differ from
+that year's learning step onward, so exact compaction does not re-merge them; positions
+must then include competence.
+- **Bounded growth.** With experience-based allocation (water-filling from the most
+  competent stratum), each activity splits at most one marginal stratum per unit-year.
+  Other strata are wholly in or wholly out.
+  - When demand rises, part of B joins A. When it falls, part of A leaves; that part keeps
+    competence without practice and decays toward B.
+  - Decay is exponential, so the leavers never merge with B exactly. Capacity coalescence
+    must absorb them, and its metric must include competence.
+- **Combinatorics.** One activity gives at most two practice states per stratum
+  lineage. Several activities would multiply profiles. Hence: one activity first, then
+  differentiate more only with evidence.
+
+**Candidate state semantics (design; nothing added):**
+
+| State | Kind | Creation | Reinforcement | Decay or destruction | Fusion | Fission | Coalescence |
+|---|---|---|---|---|---|---|---|
+| per-stratum domain competence `K_{s,d}` (first: agriculture) | intensive (per capita) | split: both parts inherit `K` | the existing learning rule on the stratum's own practice `s_{s,d}` and population | the existing proportional decay; no reset on loss of fields (skill outlasts the asset and decays with disuse) | strata concatenate, each keeping its `K`; the unit's knowledge is derived as `Σ share·K` (matches today's population-mean merge) | copy (representative); selective fission by practice is a later possibility | population-weighted mean |
+| per-stratum activity practice `s_{s,a}` | intensive flow (per tick, not stored) | allocation each year | — | — | — | — | — |
+| per-stratum clearing contribution (for §S) | extensive flow (hours) | allocation each year | — | — | — | — | — |
+
+**Consequences and links:**
+- **Technology ontology.** Discovery, availability, practice, proficiency and
+  infrastructure are conflated in the Boolean technologies. The recommended mechanism does
+  *not* require separating them: `plant_cultivation` stays a unit-level affordance,
+  practice is hours, and proficiency is the existing agriculture domain made `[U,S]`.
+  Partial technology adoption would need the separation later.
+- **Labor (revisits §N).** Differentiated labor becomes meaningful only after this split:
+  A's hours go to cultivation and B's to foraging. The order is preserved: differentiation
+  first, labor dimensions second.
+- **§S continuity.** If the same practitioners also clear (construction practice comes
+  from clearing), clearing contribution concentrates. H2 then differs from H1, and new
+  land follows contribution. This gives continuity a cause: `p` would emerge from the
+  overlap between practitioners and existing controllers instead of being set. This is a
+  further hypothesis, not forced.
+- **Later hierarchy (future research only).** Persistent practice differentiation could
+  lead to different productive positions, then different dependencies or bargaining
+  positions, then asymmetric control over consequential decisions, and possibly
+  institutions. Only the first step belongs to Stage 5. No power, status or rank scalar is
+  introduced.
+- **Resolution.** A future mechanism-aware merge metric must preserve, per stratum:
+  - agriculture competence, weighted by its consequence: the efficiency derivative
+    `K_half/(K + K_half)²`, so differences matter most at low competence;
+  - current practice status;
+  - `field_claim` position.
+
+  Equal-weight Euclidean distance in claim positions (§M6) would not protect competence.
+- **Physical feedback (when ever active).** Crop yield would use practitioners' competence,
+  and competence would change hours and yield. Gated (§N7). Stage 5B stays counterfactual.
+
+**Deferred:**
+- the initiation hypothesis;
+- any activation, and the yield and labor feedback;
+- selective fission;
+- multi-activity profiles;
+- competence in the coalescence metric;
+- per-stratum familiarity, exchange and access;
+- hierarchy, property, inheritance and authority.
+
 ---
 
 ## 3. Open questions
+
+- **First endogenous differentiator (§T).** Practice concentration under finite demand
+  needs an initiation hypothesis (per-participant cost, experience-based assignment, or
+  anticipatory allocation) before any design is activated; Stage 5B evaluates the
+  counterfactual degree of concentration.
 
 - **Cause of differentiated clearing or plot extension.** Whether new land follows labor
   (H1/H2) or control (H3) needs a named lower-level cause (plot extension,
