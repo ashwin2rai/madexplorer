@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-07 (MVP 3 Stage 5A)\
+**Updated:** 2026-10-08 (MVP 3 Stage 5B, paused)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,83 +13,60 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**Completed:** Stage 5A, an audit of endogenous socioeconomic differentiation (design §T).
+**In progress, PAUSED (2026-10-08):** Stage 5B, a counterfactual for participation overhead
+and practice concentration (design §U). It is paused before the real-run sweep.
 
-**Production behavior:** unchanged (design and read-only probe only).
+**Production behavior:** unchanged. The new module is not called by the simulator, has no
+scenario setting and registers no model rule.
 
-**Starting HEAD:** `f5e44e0` (Stage 4E plus the refactor-only cleanup).
-- Re-verified on that base: `make check` (787 passed), `make test-stat` (3/3), raw and
-  logical MVP 2.1 oracles IDENTICAL, `git diff --check` clean.
+**Starting HEAD:** `2671a1f` (Stage 5A).
 
-**Scientific problem:** how a persistent socioeconomic difference can arise inside an
-initially homogeneous population. Fusion is the only source so far.
+**Done:**
+- **Pure module** `population/practice_concentration.py` (NOT ACTIVE): feasible share,
+  overhead cost, optimum, diagnostic concentration, component practice, component
+  learning, and efficiency with its slope.
+- **Tests:** `tests/test_practice_concentration.py`, 16 passing, including a test
+  documenting the corner solution.
+- **Probe:** `scripts/probes/practice_concentration_counterfactual.py`. The `controlled`
+  mode is done. The `runs` mode is fixed after an out-of-memory failure: compact results,
+  one file per job, resumable, with progress lines.
+- **Design document:** §U written, apart from the real-run results.
 
-**Candidates audited:**
-- uneven technology adoption;
-- learning-by-doing;
-- differentiated contribution to durable assets (clearing);
-- exchange participation;
-- migration and settlement history;
-- resource access;
-- familiarity;
-- age-structured participation.
+**Key results so far:**
+- **Labor audit.** `f_min = P / (m (C − D))`: the cap `m = 0.9` applies to labor after
+  clearing debt `D`. Productive cultivation hours contain no implicit overhead.
+- **Optimization.** Cultivation labor `P + o·f·L` is linear in `f`. At `o = 0` every
+  feasible `f` is equally good (indifference). For **any** `o > 0` the optimum is the
+  corner `f = f_min`. The size of `o` barely moves `f*`, and no model quantity calibrates
+  it.
+- **Countervailing forces.** Only the cap `m` exists. There is no work cost, fatigue,
+  diminishing per-participant productivity, risk spreading, availability or spatial
+  limit.
+- **Who participates.** Overhead fixes *how many* participate, not *who*. Persistent
+  competence differences need continuity of participation, which is a separate
+  hypothesis; rotation erases them.
+- **Neutral limit.** Component learning reproduces the authoritative rule bit for bit
+  under equal practice. The share-weighted mean competence equals the unit level at every
+  `c`.
+- **Clearing.** No causal reason exists for cultivation participants to clear. H2 still
+  equals H1.
 
-**Recommended:** practice concentration under finite activity demand, sustained by
-learning-by-doing. The first domain is cultivation against foraging.
+**Provisional recommendation: B.** Participation overhead is plausible but degenerates to
+maximal concentration, so a countervailing mechanism is needed before activation. It
+rests on the exact optimization; the real runs measure consequences.
 
-**Why:**
-- **Demand is finite.** Cultivation uses a median 35 % (neolithic) and 57 % (pressure) of a
-  unit's labor capacity, and it is below half of capacity in 75 % / 36 % of farming
-  unit-years. The practicing share `f = s/s_max` is therefore determined, with no random
-  fraction. The probe is `scripts/probes/practice_participation.py`.
-- **The existing learning rule rewards concentration.** Its gain is linear in practice
-  share with proportional decay, so equilibrium competence scales as `1/f`. Practitioners
-  reach, for example, agricultural efficiency 0.83 vs 0.64 after 20 years (N = 40,
-  s = 0.25).
-- **Practice persists long enough.** Cultivation spells per unit last 14 / 8 years
-  (median) and 52 / 46 years (p90).
-- **The alternatives lack substrate.** Technology is a unit-wide Boolean; trade is a
-  unit-level food balance; migration moves whole units; fission is representative.
-
-**Smallest causal differentiating event:**
-- In a year where cultivation demand is below the unit's practice capacity, subset A
-  (share `f`) performs the cultivation hours and subset B forages.
-- A and B are mixture components, not identified people; there is no random partition.
-
-**Open hypothesis:** initiation needs one explicit hypothesis. The options are a
-per-participant cost, experience-based assignment, or anticipatory allocation.
-Experience-based assignment alone only amplifies fusion-born differences.
-
-**New state likely required (design only):**
-- per-stratum domain competence (agriculture first): intensive; inherited at a split;
-  concatenated at fusion (unit knowledge = Σ share·K); copied at fission;
-  population-weighted at coalescence; decays with disuse (half-life ≈ 35 y);
-- per-stratum practice share: a flow.
-
-There are no labels and no power, status or rank scalar.
-
-**New strata:** design only. They would arise if a future mechanism meets the §T criterion
-(a materially different practice flow assigned to a subset). Growth is bounded: at most one
-marginal stratum splits per activity per unit-year.
-
-**Epoch-general interpretation:** different practice histories lead to different
-competence. The same idea fits crafts, trade, administration and machinery.
-
-**Relationship to `field_claim`:** if practitioners also clear, clearing contribution
-concentrates. H2 then differs from H1, and §S continuity gets a cause instead of a set `p`.
-This is a further hypothesis.
-
-**Resolution implications:** a future merge metric must protect competence, weighted by
-its effect on efficiency `K_half/(K + K_half)²`, along with practice status and
-`field_claim`. Leavers decay toward non-practitioners but never merge with them exactly.
+**To resume:**
+1. Get approval for the long run. Seeds 0–3 take about 100 minutes; it can run in parts,
+   because it resumes:
+   `uv run python scripts/probes/practice_concentration_counterfactual.py runs --jobs 2 --out <dir>`.
+   Then run `report --load <dir>`.
+2. Fill in the §U real-run results: opportunity, the `c` sweep, persistence,
+   representation growth, 16 vs 32, merge metrics, and the clearing link.
+3. Run the full validation (`make check`, `make test-stat`, both oracles,
+   `git diff --check`).
+4. Pause for scientific review.
 
 **Physical-feedback gate:** closed.
-
-**Next:** Stage 5B, after scientific review. It would be a design plus counterfactual
-probe: shadow per-stratum competence under a concentration degree `c ∈ [0, 1]` (0 is
-today's spread), measuring persistence, split frequency, resolution load, and the
-clearing-contribution link to §S. It would include no physical feedback, and the review
-should choose among the initiation hypotheses.
 
 ## 2. MVP 3 so far
 
@@ -105,6 +82,7 @@ should choose among the initiation hypotheses.
 | 4D | Store release `X = min(D, K)` is kcal-optimal under current physics; reserve targets rejected (counterfactual) | §R |
 | 4E | Control over new fields: H2 = H1; continuity preserves but never amplifies (counterfactual) | §S |
 | 5A | Endogenous differentiation audit: recommend practice concentration under finite demand with learning-by-doing (design only) | §T |
+| 5B (paused) | Participation overhead: corner solution for any o > 0; continuity of participation needed for persistence; provisional B (counterfactual) | §U |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**

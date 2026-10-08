@@ -26,8 +26,8 @@ Modes:
 
 Usage:
     uv run python scripts/probes/practice_concentration_counterfactual.py controlled
-    uv run python scripts/probes/practice_concentration_counterfactual.py runs [--jobs 2] [--years N] [--out f.pkl]
-    uv run python scripts/probes/practice_concentration_counterfactual.py report --load f.pkl
+    uv run python scripts/probes/practice_concentration_counterfactual.py runs [--jobs 2] [--years N] [--out DIR]
+    uv run python scripts/probes/practice_concentration_counterfactual.py report --load DIR
 """
 
 import argparse
@@ -571,6 +571,28 @@ def knowledge_model(scenario: Scenario) -> KnowledgeModel:
     return KnowledgeModel(scenario.knowledge)
 
 
+ARRAYS = {
+    "comps": np.int16,
+    "gaps_e": np.float32,
+    "gaps_k": np.float32,
+    "gap_people": np.float32,
+    "dispersion": np.float32,
+    "potential": np.float32,
+    "lifetimes": np.int32,
+    "clearing_dev": np.float32,
+    "rank_corr": np.float32,
+    "slope_corr": np.float32,
+}
+
+
+def compact(stats: Stats) -> Stats:
+    """Per-unit-year lists as small numpy arrays (Python float lists of every shadow exhaust
+    memory on full runs)."""
+    for name, dtype in ARRAYS.items():
+        setattr(stats, name, np.asarray(getattr(stats, name), dtype=dtype))
+    return stats
+
+
 def job(spec: tuple[str, int]) -> dict[str, Any]:
     name, seed = spec
     scenario = scenario_for(name, seed, 0.0, YEARS)
@@ -596,7 +618,7 @@ def job(spec: tuple[str, int]) -> dict[str, Any]:
     return {
         "name": name,
         "seed": seed,
-        "stats": {s.p.label: s.stats for s in shadows},
+        "stats": {s.p.label: compact(s.stats) for s in shadows},
         "opportunity": observer.opportunity,
         "neutral": physical_digest(sim) == physical_digest(plain),
         "seconds": seconds,
@@ -666,22 +688,22 @@ def report(results: list[dict[str, Any]]) -> None:
         labels = list(rs[0]["stats"])
         for label in labels:
             ss = [r["stats"][label] for r in rs]
-            comps = np.concatenate([np.array(s.comps) for s in ss])
+            comps = np.concatenate([np.asarray(s.comps) for s in ss])
             uy = sum(s.unit_years for s in ss)
             ge = (
                 np.concatenate([np.array(s.gaps_e) for s in ss])
-                if any(s.gaps_e for s in ss)
+                if any(len(s.gaps_e) for s in ss)
                 else np.zeros(0)
             )
             gk = (
                 np.concatenate([np.array(s.gaps_k) for s in ss])
-                if any(s.gaps_k for s in ss)
+                if any(len(s.gaps_k) for s in ss)
                 else np.zeros(0)
             )
             disp = np.concatenate([np.array(s.dispersion) for s in ss])
             pot = (
                 np.concatenate([np.array(s.potential) for s in ss])
-                if any(s.potential for s in ss)
+                if any(len(s.potential) for s in ss)
                 else np.zeros(0)
             )
             frac = " / ".join(f"{(ge > g).sum() / uy:.3f}" for g in GAPS)
@@ -841,6 +863,14 @@ def controlled() -> None:
     )
 
 
+def load_results(path: Path) -> list[dict[str, Any]]:
+    results = []
+    for file in sorted(path.glob("*.pkl")):
+        with file.open("rb") as f:
+            results.append(pickle.load(f))
+    return sorted(results, key=lambda r: (r["name"], r["seed"]))
+
+
 def _set_years(years: int | None) -> None:
     global YEARS
     YEARS = years
@@ -859,16 +889,26 @@ def main() -> None:
         controlled()
         return
     if args.mode == "report":
-        with args.load.open("rb") as f:
-            report(pickle.load(f))
+        report(load_results(args.load))
         return
     specs = [(name, seed) for name in SCENARIOS for seed in args.seeds]
+    out = args.out
+    if out is not None:  # one file per job: a failure loses one job, and reruns resume
+        out.mkdir(parents=True, exist_ok=True)
+        specs = [sp for sp in specs if not (out / f"{sp[0]}_{sp[1]}.pkl").exists()]
+    started = time.perf_counter()
+    results = []
     with Pool(args.jobs, initializer=_set_years, initargs=(args.years,)) as pool:
-        results = pool.map(job, specs, chunksize=1)
-    if args.out:
-        with args.out.open("wb") as f:
-            pickle.dump(results, f)
-    report(results)
+        for result in pool.imap_unordered(job, specs, chunksize=1):
+            print(
+                f"done {result['name']} seed {result['seed']} after {time.perf_counter() - started:.0f} s",
+                flush=True,
+            )
+            if out is not None:
+                with (out / f"{result['name']}_{result['seed']}.pkl").open("wb") as f:
+                    pickle.dump(result, f)
+            results.append(result)
+    report(load_results(out) if out is not None else results)
 
 
 if __name__ == "__main__":

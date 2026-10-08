@@ -878,7 +878,27 @@ practitioners / others):
 - The shadow only quantifies the hypothetical case where participants clear (below). It
   is not evidence for the link.
 
-REAL_RUN_PLACEHOLDER
+**Real-run results: PENDING (stage paused 2026-10-08).**
+- The first full sweep (4 seeds per scenario) ran out of memory after about 100 minutes
+  without output. The probe now keeps compact arrays, writes one file per job, can resume,
+  and prints progress.
+- Preliminary signals come from 200–260-year smoke runs, seed 0; they are not
+  conclusions:
+  - the mean competence of the shadow matches the authoritative unit level to 1e-15 at
+    every `c`;
+  - rotation leaves no lasting gap;
+  - continuity gives a median efficiency gap of 0.04–0.07 between participants and
+    others, with c = 1 the largest;
+  - competence-based assignment widens the gap to about 0.15;
+  - immediate splitting saturates capacity under fusion-heavy pressure runs;
+  - an accumulated-divergence merge at τ = 0.05 keeps components at about 2 per unit.
+
+**Provisional recommendation: B.** Participation overhead is physically plausible, but it
+degenerates mathematically to maximal concentration. A countervailing mechanism (or a
+graded cost) is needed before activation, and persistence also needs continuity of
+participation, which is a separate hypothesis. This rests on the exact optimization result
+above. The real runs would measure consequences, not change this conclusion; it is
+pending confirmation and review.
 
 ---
 
