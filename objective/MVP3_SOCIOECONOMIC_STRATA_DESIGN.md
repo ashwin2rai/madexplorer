@@ -752,6 +752,134 @@ must then include competence.
 - per-stratum familiarity, exchange and access;
 - hierarchy, property, inheritance and authority.
 
+
+### §U. Stage 5B — participation overhead and practice concentration (2026-10-08)
+
+**COUNTERFACTUAL / NOT ACTIVE.**
+- Pure functions in `population/practice_concentration.py`. No simulator path calls them,
+  no model rule is registered, and there is no scenario setting.
+- Probe: `scripts/probes/practice_concentration_counterfactual.py` (`controlled`,
+  `runs`). Tests: `tests/test_practice_concentration.py`.
+- Starting point `2671a1f` (Stage 5A). Authoritative labor, crop output, knowledge and
+  strata are unchanged.
+
+**Question.** Why would a finite amount of cultivation be concentrated on part of an
+otherwise identical population, rather than spread across everyone? Candidate tested: a
+per-participant overhead (setup, access, coordination or travel), with the epoch-general
+primitive *participation costs labor beyond productive time*.
+
+**Labor as built** (audited in `economy/agriculture.py` and `economy/foraging.py`):
+- capacity `C` = age-weighted adults × `foraging_hours_per_day` (5) × 365;
+- clearing debt `D` = last year's clearing hours;
+- cultivation hours `P = min(fields × 600, m·max(C − D, 0))`, with
+  `m = max_farm_labor_share` = 0.9 — the cap is 0.9 of *post-debt* labor;
+- foraging gets `max(C − D − P, 0)`, and its effort fraction falls below 1 when full
+  effort would overshoot the target;
+- productive hours contain no implicit overhead.
+
+Learning, per unit:
+`K ← max(K + speed·lr·s·log1p(N·s/n) − (decay/retention)·K, 0)`, with
+`s = 1.0·P/C + 0.15·plant_forage/C`, agriculture `lr` 0.35, `n` 2 and decay 0.02.
+Crop yield = potential × crop capability × `K/(K + 2)`, so
+`dE/dK = K_half/(K + K_half)²` exactly (tested numerically).
+
+**Overhead hypothesis.**
+- Each participating labor-equivalent person (`L = C/(5·365)` of them) costs `o` hours a
+  year, inside the same budget.
+- Total cultivation labor is `P + o·f·L`, where `f` is the participating share. Strata
+  share the age structure, so a population share is also a labor share.
+- Feasibility: `m·f·(C − D) ≥ P + o·f·L`, so
+  **`f_min = P / (m(C − D) − o·L)`**, which is `P/(m(C − D))` at `o = 0`. It is 1 when
+  that budget does not exceed `P`, and 0 without cultivation.
+
+**Optimization result: a corner solution.**
+- The cost `P + o·f·L` is linear in `f` with slope `o·L`.
+- At `o = 0` every feasible `f ∈ [f_min, 1]` costs the same: indifference, so there is no
+  reason to concentrate.
+- For **every** `o > 0`, however small, the optimum jumps to the minimum feasible share
+  `f_min` (tested for `o` down to 1e-9).
+- So the overhead does not give graded concentration. It is a switch from "undetermined"
+  to "maximal concentration", and the size of `o` barely moves the result. At
+  `P/(C − D) = 0.35` and 40 labor-equivalents, `f*` is 0.389 / 0.391 / 0.401 / 0.443 at
+  `o` = 1 / 10 / 50 / 200 h per participant-year.
+- The labor saved by concentrating is small unless `o` is large: 0.03 % / 0.3 % / 1.6 % /
+  6 % of capacity at those `o`. The incentive's scale is unidentified, and no existing
+  quantity calibrates `o`.
+
+**Countervailing forces in the existing model:**
+- The cap `m` (0.9 of post-debt labor per participant) is the **only** force that
+  bounds concentration, and it sets `f_min` itself.
+- None of the following exist:
+  - a cost of work, fatigue or load (§N: work has no energetic or demographic cost);
+  - diminishing productivity per participant (yield is per hectare, and hours are
+    linear);
+  - risk diversification;
+  - temporal availability;
+  - spatial or task-simultaneity limits.
+- Age enters only as unit totals.
+- The learning rule itself *rewards* concentration (§T), so it adds no balance.
+
+**Who participates is a separate question.** Overhead per participant-year fixes how many
+participate, not who.
+- If participants were reassigned every year in proportion across the unit ("rotation"),
+  everyone's practice history would average out and no persistent competence difference
+  would form. The shadow runs confirm it (below).
+- Persistent differences need **continuity of participation** (the same components
+  keep practicing). That is a further hypothesis. An *entry* overhead (a cost paid when
+  someone starts practicing) would imply continuity; an annual overhead does not.
+- The primary experiment uses continuity: changes in the participating share are taken
+  from or returned to the other components in proportion, so competence is never used.
+  Competence-based assignment is a separate, secondary test.
+
+**Diagnostic concentration** `f(c) = 1 − c·(1 − f_min)` is a sensitivity coordinate, not
+a mechanism. `c = 0` is today's spread.
+
+**Component learning.**
+- Each shadow component learns with the authoritative arithmetic on its own practice
+  `s_i`.
+- The social-learning term counts the *unit's* practitioners `N·s_unit`, which does not
+  depend on how the same hours are distributed.
+- Participants farm `P/(f·C)`; the rest of the labor forages in proportion to what each
+  component has left.
+- Hours are conserved (`Σ share·s_i = s_unit`), and learning is linear in `s` and `K`. So
+  **the share-weighted mean competence equals the authoritative unit level at every
+  `c`**: concentration redistributes competence without changing the unit's mean.
+- At `c = 0` (equal practice) the update is the unit update bit for bit (tested).
+- Diffusion and innovation change `K` after learning. The shadow carries those unit-level
+  increments to every component alike, a stated neutral convention.
+
+**Controlled two-component trajectories** (40 people; agricultural efficiency,
+practitioners / others):
+
+| case | c = 0 (5 / 25 / 100 y) | c = 1 (5 / 25 / 100 y) |
+|---|---|---|
+| low demand, s = 0.1 | 0.17 / 0.46 / 0.65 | 0.53 / 0.08 · 0.82 / 0.28 · 0.91 / 0.46 |
+| moderate, s = 0.35 | 0.42 / 0.75 / 0.87 | 0.63 / 0.12 · 0.87 / 0.36 · 0.94 / 0.56 |
+| near-full, s = 0.85 (f_min = 0.94) | 0.68 / 0.90 / 0.95 | 0.69 / 0.15 · 0.90 / 0.43 · 0.95 / 0.62 |
+| capped, s = 0.95 | identical (no concentration possible) | identical |
+| no cultivation | identical; no split | identical |
+| stop after 30 y (s = 0.35) | 0.75 at 25 y, 0.57 at 100 y | 0.87 / 0.36 at 25 y → 0.70 / 0.38 at 100 y |
+| demand falls 0.6 → 0.2 at y 30 | 0.85 at 25 y, 0.83 at 100 y | 0.89 / 0.40 at 25 y → 0.93 / 0.70 at 100 y |
+
+- **Differentiation is bounded.** Both components learn under the same rule. The gap is
+  largest early and at low demand, and the non-participants still learn a little through
+  the 0.15 foraging weight. Nothing runs away.
+- **Disuse.** Without practice both components decay by 2 % a year, so the competence
+  gap halves in 34.3 years.
+- **Starting after a homogeneous history.** Both components inherit equal competence and
+  diverge only from the first differing year.
+
+**Clearing and field control (§S).**
+- The labor sequence gives **no causal reason** that cultivation participants are also
+  the people who clear. Clearing is a unit-level flow charged as debt against the next
+  year's *total* capacity, and it is not attributed to anyone.
+- **Differentiated clearing contribution therefore still lacks a mechanism**, and H2 still
+  equals H1.
+- The shadow only quantifies the hypothetical case where participants clear (below). It
+  is not evidence for the link.
+
+REAL_RUN_PLACEHOLDER
+
 ---
 
 ## 3. Open questions
