@@ -1170,16 +1170,171 @@ output).
 - Sensitivity `turnover`: each year a share `τ` of every component with a history becomes
   history-free (same `K`, a stated approximation) and must pay to enter.
 
-**Real-run results: PENDING** (seeds 0–3 run externally; smoke run, pressure seed 0 over
-100 years, is observer-neutral with shadow mean competence equal to the unit level to
-≤ 5.6e-16).
+**Real runs** (neolithic 600 y and pressure + cultivation 400 y, seeds 0–3, at `15e06f0`;
+13 shadows, trajectories at `e = 50 h`).
+- Every run reached its horizon and was observer-neutral by physical digest.
+- Shadow mean competence equals the authoritative unit level to ≤ 1.1e-15 in every shadow.
+- **Cross-checks:** M2 min W1 reproduces §U's `c = 1` continuity (E-gap 0.0211 / 0.0576 vs
+  0.0214 / 0.0579), and M3 reproduces §U's competence assignment (0.091 / 0.179). This is
+  as the mathematics predicts: with one-year memory, minimal entry is §U's continuity.
+- Cells below show neolithic · pressure.
 
-**Recommendation: PENDING** the real runs. Provisional reading from the mathematics and
-controlled cases: **B**. Entry costs explain continuity (incumbents before newcomers;
-rotation costs `eL·f(1 − f)` a year). Initiation is still §U's corner and depends on a
-myopic coordination assumption. Allocation hysteresis comes from the memory form and the
-tie convention, and without turnover, persistence beyond about 20 years is hereditary by
-representation.
+*Authoritative context.*
+
+| | neolithic | pressure |
+|---|---|---|
+| farming unit-years | 325,766 | 102,200 |
+| cultivation spells per unit id, p50 / p90 / p99 | 11 / 50 / 113 y | 8 / 44 / 122 y |
+| turnover `τ` (labor new to work per year), p50 / p90 | 0.032 / 0.056 | 0.031 / 0.053 |
+| fissions / fusions | 9,857 / 6,464 | 4,311 / 3,713 |
+
+*The entry ledger* (mean entry hours as a share of capacity per farming unit-year, and
+the share of farming unit-years infeasible, at `e = 50`):
+
+| model | entry hours / C | infeasible | entrants / year |
+|---|---|---|---|
+| M0 proportional | 0.00081 · 0.00072 | 0.0001 · 0.0024 | 0.029 · 0.026 |
+| M1 rotation | 0.00557 · 0.00528 | 0.0078 · 0.0621 | 0.204 · 0.193 |
+| M2 min W1 | 0.00085 · 0.00151 | 0.0078 · 0.0621 | 0.031 · 0.055 |
+| M2 retain W1 | 0.00047 · 0.00061 | 0.0029 · 0.0165 | 0.017 · 0.022 |
+| M2 min W10 | 0.00009 · 0.00012 | 0.0025 · 0.0098 | 0.003 · 0.005 |
+| M2 min H10 | 0.00034 · 0.00048 | 0.0074 · 0.0597 | 0.012 · 0.018 |
+
+- **Continuity saves 70–85 % of rotation's entry labor**, but the amounts are small: about
+  0.5 % of capacity for rotation at `e = 50`, and about 2.4 % at `e = 200`.
+- **Universal participation is as cheap or cheaper over real histories.** M0 pays entry
+  once per cultivation start. It costs the same as minimal continuity in neolithic
+  (0.00081 vs 0.00085) and half as much under pressure (0.00072 vs 0.00151), where demand
+  rises often. Measured over the spell, the entry cost does not favor concentration. Only
+  the myopic first-entry choice does (Result 3).
+- **Concentration meets infeasibility.** When demand rises near the cap, a concentrated
+  unit cannot absorb its entrants' entry labor. That happens in 6.2 % of pressure farming
+  unit-years under minimal continuity, against 0.24 % for M0. A physical version would have
+  to displace production or broaden participation.
+- **Sensitivity.** Entry labor scales almost linearly with `e` (ledger `e` = 1 / 10 / 50 /
+  200 for M2 min W1: 0.00002 / 0.00016 / 0.00085 / 0.00376 of C, neolithic). The ranking of
+  models is the same at every `e > 0`, and at `e = 0` everything is zero (indifference).
+- **Indifference is common.** Under minimal continuity, 2–4 % of the unit could join at
+  zero cost on an average farming year, and 28–30 % under W10. The `min` / `retain` choice
+  is real, not a corner case.
+
+*Competence* (participants minus others; same metrics as §U):
+
+| model | E-gap p50 / p90 | E-gap > 0.05 / > 0.1 | yield effect p50 / p90 | splits / unit-year | lifetime p50 / p90 |
+|---|---|---|---|---|---|
+| M1 rotation | 0.002 / 0.006 · 0.001 / 0.004 | 0 / 0 · 0 / 0 | 0.2 % / 0.4 % · 0.04 % / 0.3 % | 13.4 · 12.1 | 0 / 1 y |
+| M2 min W1 | 0.021 / 0.058 · 0.006 / 0.033 | 0.115 / 0.019 · 0.043 / 0.008 | 1.2 % / 4.4 % · 0.2 % / 2.1 % | 6.8 · 6.7 | 0 / 2–3 y |
+| M2 retain W1 | 0.040 / 0.112 · 0.033 / 0.112 | 0.319 / 0.105 · 0.164 / 0.059 | 1.1 % / 3.3 % · 0.2 % / 1.9 % | 1.1 · 0.5 | 1 / 22 y · 4 / 32 y |
+| M2 min W10 | 0.024 / 0.076 · 0.002 / 0.028 | 0.187 / 0.039 · 0.033 / 0.005 | 1.4 % / 4.4 % · 0.07 % / 1.4 % | 10.7 · 11.0 | 0 / 1 y |
+| M2 min H10 | 0.053 / 0.124 · 0.013 / 0.064 | 0.444 / 0.148 · 0.113 / 0.026 | 2.9 % / 6.8 % · 0.4 % / 3.2 % | 5.1 · 5.6 | 0 / 3 y |
+| M2 min W1 turnover | 0.019 / 0.050 · 0.005 / 0.029 | 0.083 / 0.013 · 0.037 / 0.007 | 1.1 % / 3.9 % · 0.2 % / 2.0 % | 13.1 + 13.8 · 11.8 + 13.7 | 0 / 1 y |
+| M2 min W1, e = 200 | 0.020 / 0.056 · 0.006 / 0.032 | 0.110 / 0.018 · 0.042 / 0.008 | 1.2 % / 4.3 % · 0.2 % / 2.1 % | 6.8 · 6.7 | 0 / 2 y |
+| M3 competence | 0.091 / 0.179 · 0.058 / 0.112 | 0.747 / 0.362 · 0.469 / 0.111 | 4.1 % / 8.1 % · 1.1 % / 4.6 % | 0.8 · 0.8 | 2–3 / 21–24 y |
+
+- **Entry-cost continuity does not change §U's result.** With one-year memory, the gap,
+  yield effect and churn are §U's continuity. The size of `e` is irrelevant to competence
+  (e = 200 ≈ e = 50): the cost changes the ledger, not who practices.
+- **Memory form is what matters.** Decaying memory (H10) orders entrants strictly by
+  recency, so the same people continue. It roughly doubles to triples the gap (median
+  yield effect 2.9 %), approaching competence assignment from history alone.
+  - The 10-year window rotates the whole former pool through the proportional tie: it
+    narrows the gap under pressure (0.002) and creates no lasting core.
+  - `retain` keeps a fixed core (p90 lifetime 22–32 y) with a larger tail (E-gap > 0.1 in
+    10.5 % / 5.9 % of unit-years). Its median yield effect is no larger, because more people
+    participate.
+- **Who participates still matters more than entry costs.** M3's median gap is 1.7–4.5× H10's
+  and 4–10× W1's.
+
+*Persistence after cultivation stops* (KM share not halved at 25 / 50 years): neolithic
+0.81–0.87 / 0.41–0.46 for every M2 variant and M3 (§U: 0.86 / 0.46); pressure 0.21–0.36 /
+0.00. τ = 0.05 shortens it (0.60 / 0.27; 0.08 / 0). **Entry costs do not prolong
+persistence:** once cultivation stops, competence decays the same way whatever the
+allocation rule was.
+
+*Population turnover.*
+- Turnover reduces the gap by about 12 % (0.0211 → 0.0186 neolithic) and doubles the
+  churn (13.8 extra history splits per unit-year). It does not change the conclusions
+  above.
+- It does change the interpretation of long continuity. With `τ ≈ 0.032`, only half of a
+  participating component's labor is the same people after about 22 years.
+- In the runs without turnover, a lineage that keeps participating for decades (p90
+  cultivation spell 44–50 y; `retain` cores to 32 y) is mostly its members' successors.
+  Strata share the age structure, so those successors are implicitly the participants'
+  own children. Without turnover, **long incumbency in anonymous strata is hereditary by
+  representation, not by mechanism**. This limitation does not invalidate continuity over
+  years to about a decade, and it does invalidate any reading of multi-generation
+  occupational persistence.
+
+*Representation.*
+
+| model | components after merges (cap 16), mean | splits / unit-year | τ merges or coalescences |
+|---|---|---|---|
+| M0 | 8.1 · 12.4 (fusion only) | 0 | coalescences 41 k · 44 k |
+| M1 rotation | 14.9 · 14.5 | 13.4 · 12.1 | 5.2 M · 1.6 M |
+| M2 min W1 | 14.9 · 14.5 | 6.8 · 6.7 | 2.7 M · 0.9 M |
+| M2 retain W1 | 14.7 · 14.2 | 1.1 · 0.5 | 0.49 M · 0.11 M |
+| M3 | 14.8 · 14.4 | 0.8 · 0.8 | 0.39 M · 0.14 M |
+| M2 min W1, τ = 0.01 | ≤ 13.6 · ≤ 10.7 | 5.5 · 3.8 | 2.0 M τ / 0.21 M · 0.49 M τ / 0.01 M |
+| M2 min W1, τ = 0.05 | 5.0 · 3.4 (p90 9 · 6) | 1.5 · 1.0 | 0.61 M τ / 1 · 0.14 M τ / 0 |
+
+(Counts after the year's merges are `min(pre-merge count, capacity)` from the saved
+pre-merge counts; exact without a τ merge, an upper bound with one. The probe now records
+them after merging.)
+
+- **Entry-cost continuity halves rotation's churn, and `retain` cuts it 12×. Every rule
+  except a divergence merge still fills the capacity.** Reduced churn under `retain` and
+  M3 means stable cores, which is exactly the lock-in §24 warns about, not better science.
+- **τ = 0.05 remains enough**: 5.0 / 3.4 components with no forced coalescence, keeping the
+  p90 dispersion (0.0446 vs 0.0489 neolithic).
+
+*16 vs 32.*
+- Gaps, yield effects and persistence are identical at 16 and 32 (M2 min and M2 retain).
+  Within-unit dispersion differs by under 3 %.
+- Doubling the capacity doubles splits and coalescences, and the redundant pairs grow
+  3–4×. As in §U, resolution does not drive the scientific distributions.
+
+*Coalescence metric.*
+- The slope-weighted K-distance ranks pairs exactly as efficiency loss does (median
+  Spearman 1.00 in every shadow). Merging by plain K-distance loses 1.3–9× more efficiency
+  variance. §U's conclusion holds under entry-cost continuity.
+- **History matters for equivalence when memory is longer than a year.**
+  - Under W10, 0.23 · 0.18 pairs per unit-year have near-equal competence (|ΔE| < 1e-3) but
+    a different entry-cost class. A competence-only metric would merge components whose
+    future entry costs differ.
+  - Under W1 there are none, because one-year history coincides with current status.
+- The shadow merged only within the same class: no forced coalescence had to cross
+  classes. Merges of different `since` within a class (e.g. W10 incumbents 2 and 7 years
+  idle) are frequent and approximate the history by a share-weighted mean.
+
+*Clearing.* Nothing in 5C attributes clearing; H2 equals H1, and `field_claim_continuity`
+stays off.
+
+**Recommendation: B** (entry costs explain continuity, not initiation), with a D caveat on
+magnitude.
+- **Initiation** is §U's corner: maximal concentration for every `e > 0`, indifference at
+  0. A strict subset enters only under a myopic unit-level coordination assumption. Over
+  real histories, universal participation costs the same entry labor (neolithic) or half
+  (pressure), with far fewer infeasible years.
+- **Continuity** is explained relative to rotation: entry costs put incumbents before
+  newcomers and save 70–85 % of rotation's entry labor. They leave how many incumbents to
+  keep undetermined, and the outcome then depends on memory form and tie convention.
+  Allocation hysteresis is convention-made except under decaying memory.
+- **Consequence:** with one-year memory, entry-cost continuity reproduces §U's small gap
+  (median yield effect 1.2 % / 0.2 %). Decaying memory raises it to 2.9 % / 0.4 %. The size
+  of `e` does not matter.
+- **Not E**, provided turnover is stated. Over about a decade, persistence is causal (entry
+  cost plus learning). Beyond about one generation, anonymous strata make it hereditary by
+  representation.
+- **What remains unexplained:**
+  - why a unit would start with a subset rather than everyone (the coordination
+    assumption);
+  - how many incumbents to keep when demand falls;
+  - which memory form, if any, is real;
+  - the physical cost of infeasible entry (displacement), which is not modeled.
+- **If anything is carried forward:** a decaying-memory entry cost as the continuity
+  hypothesis, a turnover term, a τ divergence merge, and a slope-weighted coalescence
+  metric that also respects entry-cost class.
+- Pending scientific review.
 
 ---
 
@@ -1189,7 +1344,9 @@ representation.
   needs an initiation hypothesis (per-participant cost, experience-based assignment, or
   anticipatory allocation) before any design is activated. Stage 5B (§U): overhead alone
   gives a corner solution; assignment (continuity or competence) matters more than the
-  degree of concentration; the consequence is small under continuity.
+  degree of concentration; the consequence is small under continuity. Stage 5C (§V): entry
+  costs explain continuity relative to rotation but not initiation (same corner); how many
+  incumbents to keep, the memory form, and the coordination assumption remain open.
 
 - **Cause of differentiated clearing or plot extension.** Whether new land follows labor
   (H1/H2) or control (H3) needs a named lower-level cause (plot extension,

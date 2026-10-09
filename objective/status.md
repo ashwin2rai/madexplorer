@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-08 (MVP 3 Stage 5B, awaiting review)\
+**Updated:** 2026-10-09 (MVP 3 Stage 5C, awaiting review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,52 +13,82 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**Stage 5B complete, awaiting scientific review (2026-10-08):** a counterfactual for
-participation overhead and practice concentration (design §U).
+**Completed:** Stage 5C, entry costs and participation continuity (design §V), a
+counterfactual. **PAUSE FOR SCIENTIFIC REVIEW.**
 
-**Production behavior:** unchanged. The new module is not called by the simulator, has no
-scenario setting and registers no model rule.
+**Production behavior:** unchanged. `population/entry_cost.py` is not called by the
+simulator, has no scenario setting and registers no model rule. Both MVP 2.1 oracles are
+identical.
 
-**Starting HEAD:** `2671a1f` (Stage 5A).
+**Starting HEAD:** `eeb431f` (Stage 5B). Real runs at `15e06f0`.
 
 **Done:**
-- **Pure module** `population/practice_concentration.py` (NOT ACTIVE): feasible share,
-  overhead cost, optimum, diagnostic concentration, component practice, component
-  learning, and efficiency with its slope.
-- **Tests:** `tests/test_practice_concentration.py`, 16 passing, including a test
-  documenting the corner solution.
-- **Probe:** `scripts/probes/practice_concentration_counterfactual.py` (`controlled`,
-  `runs`, `report`). `runs` writes one file per job, resumes, prints progress every 100
-  years and warns when a run ends before its horizon.
-- **Real runs:** seeds 0–3, both scenarios, at `c88d489`; all reached their horizon and
-  were observer-neutral. Results in §U.
+- **Pure module** `population/entry_cost.py` (NOT ACTIVE): entry-cost factor by memory
+  (window, decay), minimum-entry allocation with proportional ties, history-blind
+  allocations (proportional, rotation), status-quo retention, participation split, history
+  advance, and turnover.
+- **Tests:** `tests/test_entry_cost.py`, 27 passing, including the corner, tie neutrality,
+  infeasibility, conservation, and an observer-neutrality run.
+- **Probe:** `scripts/probes/entry_cost_counterfactual.py` (`controlled`, `runs`,
+  `report`): 15 controlled cases, a hysteresis cycle and 13 real-run shadows.
 
-**Key results:**
-- **Optimization.** Cultivation labor `P + o·f·L` is linear in `f`: indifference at
-  `o = 0`, the corner `f = f_min` for any `o > 0`. Only the cap `m` bounds concentration.
-- **Opportunity.** `f_min` < 0.75 in 93 % (neolithic) / 64 % (pressure) of farming
-  unit-years.
-- **Consequence is small.** At `c = 1` with continuity the median participant/other
-  efficiency gap is 0.021 / 0.006, and the median yield effect if practitioners' competence
-  were used is 1.2 % / 0.2 %. It grows smoothly with `c`.
-- **Who participates matters more than how many.** Rotation erases the gap;
-  competence-based assignment raises it 4–10× and makes it self-reinforcing.
-- **Representation.** Immediate splitting saturates any capacity (16 or 32) without
-  changing the measured differentiation; a τ = 0.05 divergence merge keeps 2–3.5 components
-  per unit. The slope-weighted K-distance ranks coalescence pairs exactly as efficiency
-  loss does; plain K-distance loses 2–9× more.
-- **Persistence.** After cultivation stops, about half of neolithic spreads are not halved
-  after 50 y; under pressure all are halved by 50 y.
-- **Clearing.** No causal reason for participants to clear; H2 still equals H1. The
-  hypothetical H2 deviation is linear in `c` (median 0.09 / 0.04 at `c = 1`).
+**Candidate mechanism:** entry and re-entry costs (`e` hours per entering
+labor-equivalent; a probe input, no canonical value) and path-dependent participation.
 
-**Recommendation: B, confirmed** (§U): overhead alone degenerates to maximal
-concentration and needs a countervailing mechanism or a graded cost; persistence needs
-continuity of participation as its own hypothesis.
+**Does it explain initial differentiation?** No.
+- First entry is §U's corner: `f* = P/(B − eL)` for every `e > 0`, and indifference at 0.
+- The cost decides how many enter, not who.
+- A strict subset enters only under a myopic unit-level coordination assumption. Over
+  real histories, universal participation costs the same entry labor (neolithic) or half
+  (pressure).
 
-**Next:** scientific review of §U, then choose Stage 5C (candidates: a countervailing force
-or graded cost; continuity or entry cost as the participation hypothesis; the
-slope-weighted coalescence metric).
+**Does it explain continuity?** Partly.
+- Incumbents come before newcomers. That saves 70–85 % of rotation's entry labor (about
+  0.5 % of capacity at `e = 50`).
+- When incumbents exceed need, how many to keep is indifferent. The outcome then depends
+  on the memory form and the tie convention: allocation hysteresis is convention-made
+  except under decaying memory.
+
+**Mathematical result:** minimum entry fills components in ascending entry factor (greedy
+is optimal). Corner at initiation; an indifference interval `[P/B, h]` when incumbents
+suffice; all incumbents plus `(P − hB)/(B − eL)` entrants otherwise. Entry cost locks in
+whatever the first allocation was.
+
+**Competence effect:**
+- With one-year memory, identical to §U's continuity: median E-gap 0.021 / 0.006, median
+  yield effect 1.2 % / 0.2 %.
+- Decaying memory raises the median yield effect to 2.9 % / 0.4 %. The size of `e` is
+  irrelevant to competence.
+- Competence assignment remains larger (4.1 % / 1.1 %).
+
+**Representation pressure:**
+- Continuity halves rotation's splits (6.8 vs 13.4 per unit-year); `retain` cuts them 12×
+  by locking in cores.
+- Every rule fills the capacity except a τ = 0.05 divergence merge (5.0 / 3.4
+  components).
+- Under 10-year memory, near-equal competence with a different entry-cost class is common
+  (0.2 pairs per unit-year), so a merge metric must respect history.
+
+**Population-turnover limitation:**
+- About 3 % of labor is new to work each year, so half of a participating component is
+  its members' successors after about 22 years.
+- Turnover changes gaps by about 12 %, but any persistence beyond about a generation is
+  hereditary by representation in anonymous strata.
+
+**Resolution 16 vs 32:** identical gaps, yield effects and persistence; dispersion within
+3 %. Capacity changes only churn.
+
+**Scientific recommendation: B** (explains continuity, not initiation), with a D caveat
+on magnitude.
+
+**Unexplained:**
+- why a subset rather than everyone starts;
+- how many incumbents to keep;
+- which memory form is real;
+- the physical cost of infeasible entry (6.2 % of pressure farming unit-years under
+  minimal continuity).
+
+**Next:** PAUSE FOR SCIENTIFIC REVIEW. Do not begin Stage 5D without it.
 
 **Physical-feedback gate:** closed.
 
@@ -77,6 +107,7 @@ slope-weighted coalescence metric).
 | 4E | Control over new fields: H2 = H1; continuity preserves but never amplifies (counterfactual) | §S |
 | 5A | Endogenous differentiation audit: recommend practice concentration under finite demand with learning-by-doing (design only) | §T |
 | 5B | Participation overhead: corner solution for any o > 0; small consequence under continuity; assignment matters more than degree; B confirmed (counterfactual) | §U |
+| 5C | Entry costs: initiation is the same corner; incumbents before newcomers explains continuity relative to rotation; how many to keep is indifferent; one-year memory reproduces 5B; turnover makes long incumbency hereditary by representation; B (counterfactual) | §V |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
@@ -98,8 +129,9 @@ slope-weighted coalescence metric).
   resolution policy is shown stable for the information it uses. Status: closed.
 
 **Do not forget:**
-- `strata_access.py`, `store_release.py` and `field_control.py` are NOT ACTIVE. Nothing in
-  the simulator calls them, and their parameters are not scenario settings.
+- `strata_access.py`, `store_release.py`, `field_control.py`, `practice_concentration.py`
+  and `entry_cost.py` are NOT ACTIVE. Nothing in the simulator calls them, and their
+  parameters are not scenario settings.
 - Capacity coalescence is numerical, and its equal-weight metric is mechanism-agnostic.
   Revisit it (§M6) before anything reads claims.
 - Never use strata to brake population growth (§4 below).

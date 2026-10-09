@@ -414,13 +414,13 @@ class Shadow:
         if not farming:  # nobody participated: everyone one year further away
             u.c = Components(c.share, c.competence, c.since + 1.0, c.participating)
         self._normalize(u)
+        st.comps.append(int(u.c.share.size))  # after the year's merges, as in §U
+        st.at_cap += int(u.c.share.size >= p.capacity)
 
     def _diagnose(
         self, uid: str, c: Components, farming: bool, k_new: float, was_stopped: bool
     ) -> None:
         st, u = self.stats, self.units[uid]
-        st.comps.append(int(c.share.size))
-        st.at_cap += int(c.share.size >= self.p.capacity)
         e = efficiency(c.competence, self.half)
         ebar = float((c.share * e).sum())
         st.dispersion.append(float((c.share * np.abs(e - ebar)).sum()))
@@ -753,8 +753,9 @@ def report(results: list[dict[str, Any]]) -> None:
         print(
             f"farming unit-years {f.size}; P/(C-D) {q([o[3] for o in opp])}; f_min {q(f)}; turnover tau (new labor share / y) {q([o[4] for o in opp])}"
         )
+        runs = [s for r in rs for s in spells([(o[0], o[1]) for o in r["opportunity"]])]
         print(
-            f"cultivation spells per unit (y): {q(spells([(o[0], o[1]) for o in opp]))}; fissions {sum(r['events']['fission'] for r in rs)}, fusions {sum(r['events']['fusion'] for r in rs)}"
+            f"cultivation spells per unit (y): {q(runs)}; fissions {sum(r['events']['fission'] for r in rs)}, fusions {sum(r['events']['fusion'] for r in rs)}"
         )
         labels = list(rs[0]["stats"])
         print("\nParticipation and the entry ledger (e = 50 h trajectories; farming unit-years)")
