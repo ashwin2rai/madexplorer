@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-09 (MVP 3 Stage 5D, awaiting review)\
+**Updated:** 2026-10-09 (MVP 3 Stage 5E, awaiting review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,46 +13,58 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**Completed:** Stage 5D, causal opportunity differentiation audit (design §W), design and
-audit only. **PAUSE FOR SCIENTIFIC REVIEW.**
+**Completed:** Stage 5E, partial knowledge exposure falsification (design §X), a
+counterfactual. **PAUSE FOR SCIENTIFIC REVIEW.**
 
-**Production behavior:** unchanged. No production or shadow code was added. One read-only
-probe (`scripts/probes/exposure_audit.py`) reads the event stream of plain runs. Both MVP
-2.1 oracles are identical.
+**Production behavior:** unchanged. `population/knowledge_exposure.py` is not called by the
+simulator, has no scenario setting and registers no model rule. The probe records with a
+read-only farming hook and replays the event stream. Both MVP 2.1 oracles are identical.
 
-**Starting HEAD:** `4eb4d55` (Stage 5C).
+**Starting HEAD:** `d674105` (Stage 5D).
 
-**Audit result:** nothing in the simulator gives different subsets of one unit different
-opportunities.
-- Location, foraging access, fields, familiarity, technology, knowledge, contacts, trade
-  and activity hours are all unit-level.
-- The only subset draw is fission's binomial departure per cohort. It is representative
-  and creates differences between units, not within.
-- No headcount limit exists anywhere.
+**Done:**
+- **Pure module** `population/knowledge_exposure.py` (NOT ACTIVE): exposure,
+  mass-action transmission and calibration, turnover, expected and finite-knower fission,
+  fusion, `f_min` and the knowledge constraint.
+- **Tests:** `tests/test_knowledge_exposure.py`, 19 passing, including replay ordering,
+  conservation and observer neutrality.
+- **Probe:** `scripts/probes/knowledge_exposure_counterfactual.py`.
+  - `record`: 8 runs, about 2 minutes with 2 jobs.
+  - `replay`: 84 settings × 8 histories, about 3 minutes.
+  - `controlled`.
 
-**Timing evidence:**
-- About 97 % of units holding `plant_cultivation` got it by fission copy.
-- Units that invent or adopt it (28 people at invention, p50) first cultivate a median 16
-  years later (neolithic) or 8 years later (pressure), never in the same year.
+**Event ordering:** invention and adoption come after that year's farming and field
+planning. The earliest effect is the next year's field plan, and the first cultivation
+hours come the year after. 5D's "no same-year start" is scheduling.
 
-**Candidates ranked:** C uneven transmission > E fission/recombination > B finite
-opportunities > A localized exposure ≈ D contact history. None is ready.
-- C, a technique reaching some people first, is the only one grounded in an existing
-  event (invention, adoption) that could break symmetry within a unit.
-- It needs a knower share per unit and two unmodeled quantities: how many people an event
-  exposes, and the within-unit transmission rate.
-- Timing suggests the exposure is usually gone before practice begins.
+**Earliest consequential use:** `plant_cultivation` acts only through `crop_yield`. It is
+first consequential at the first field plan that sets fields above 0. Invention lineages
+plan fields a median 2–3 years after invention; adoption lineages 10–20 years after.
 
-**Scientific recommendation: D** (no convincing initiation mechanism yet).
+**Key results** (k = 1, turnover):
+- **Partial knowledge exists at every acquisition, but rarely matters.** Material
+  shortfall (≥ 5 % of planned hours) occurs in under 0.2 % (neolithic) and 1 % (pressure)
+  of farming unit-years. Constrained hours stay under 0.1 % and 0.4 % while within-unit
+  spread reaches 50 % in 5 years or less.
+- **Initial exposure matters only near invention.** Farming years in inventing units
+  within 10 years of invention are 0.06 % / 0.13 % of all cultivation, and 22–33 % of them
+  bind at T50 = 5 y. This depends strongly on `k`.
+- **Slow spread (T50 ≥ 10 y)** gives broad constraints (up to 22 % of pressure farming
+  unit-years at 20 y). These come from untaught new workers in fission descendants, almost
+  independent of `k`, and nearly vanish without turnover.
+- **Finite-knower fission** raises constrained hours 1.2–9× at slow rates and leaves
+  1–3 % of holder unit-years with no knowers.
+- **Model-internal bound:** between co-resident units, adoption is 0.2 a year (50 %
+  within about 3–4 years), consistent with within-unit T50 ≲ 5 y.
 
-**Proposed Stage 5E (for review):** a read-only falsification test of C.
-- A shadow knower share `q` starts at `k/N` at invention, follows fission and fusion,
-  admits new workers unexposed at the measured turnover, and spreads at swept half-times
-  of 1–20 years.
-- Measure how often `q < f_min` in farming unit-years.
-- If it rarely binds, reject C for cultivation.
+**Scientific recommendation: B.** Partial knowledge almost always disappears before
+consequential activity. Reject uneven cultivation knowledge as the leading splitter; do
+not add a slow transmission parameter. This would change to C only with independent
+evidence for T50 ≥ 10 y, in which case the operative mechanism is teaching new workers.
 
-**Next:** PAUSE FOR SCIENTIFIC REVIEW. Do not begin Stage 5E without it.
+**Next:** PAUSE FOR SCIENTIFIC REVIEW. Candidate for review: selective fission (5D family
+E) as the remaining opportunity mechanism with existing substrate, or a representation
+change (subset contacts, within-unit places). Do not begin the next stage without review.
 
 **Physical-feedback gate:** closed.
 
@@ -73,6 +85,7 @@ opportunities > A localized exposure ≈ D contact history. None is ready.
 | 5B | Participation overhead: corner solution for any o > 0; small consequence under continuity; assignment matters more than degree; B confirmed (counterfactual) | §U |
 | 5C | Entry costs: initiation is the same corner; incumbents before newcomers explains continuity relative to rotation; how many to keep is indifferent; one-year memory reproduces 5B; turnover makes long incumbency hereditary by representation; B (counterfactual) | §V |
 | 5D | Opportunity audit: no within-unit opportunity differentiation exists; best-grounded origin is partial exposure at technique acquisition, but knowing precedes practice by 8–16 y (p50); D, falsification test proposed (design only) | §W |
+| 5E | Partial knowledge exposure: exists at every acquisition but binds cultivation materially in < 1 % of farming unit-years under model-consistent spread (T50 ≲ 5 y); only near rare inventions or with slow spread (then untaught new workers); B (counterfactual) | §X |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
@@ -94,9 +107,9 @@ opportunities > A localized exposure ≈ D contact history. None is ready.
   resolution policy is shown stable for the information it uses. Status: closed.
 
 **Do not forget:**
-- `strata_access.py`, `store_release.py`, `field_control.py`, `practice_concentration.py`
-  and `entry_cost.py` are NOT ACTIVE. Nothing in the simulator calls them, and their
-  parameters are not scenario settings.
+- `strata_access.py`, `store_release.py`, `field_control.py`, `practice_concentration.py`,
+  `entry_cost.py` and `knowledge_exposure.py` are NOT ACTIVE. Nothing in the simulator
+  calls them, and their parameters are not scenario settings.
 - Capacity coalescence is numerical, and its equal-weight metric is mechanism-agnostic.
   Revisit it (§M6) before anything reads claims.
 - Never use strata to brake population growth (§4 below).

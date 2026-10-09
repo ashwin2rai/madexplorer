@@ -1549,6 +1549,265 @@ inside the group) is the general primitive. Cultivation is the first case.
     subsets).
 - No splitting, no activation, no new canonical parameter. The physical-feedback gate
   stays closed.
+- Reviewed and accepted (2026-10-09).
+
+
+### §X. Stage 5E — partial knowledge exposure falsification (2026-10-09)
+
+**COUNTERFACTUAL / NOT ACTIVE.**
+- Pure functions in `population/knowledge_exposure.py`. No simulator path calls them, no
+  model rule is registered, and there is no scenario setting.
+- Probe: `scripts/probes/knowledge_exposure_counterfactual.py` (`controlled`, `record`,
+  `replay`). Tests: `tests/test_knowledge_exposure.py` (19).
+- Starting point `d674105` (Stage 5D). The technology Boolean, labor, crop output, strata
+  and RNG are unchanged.
+
+**Question.** If a newly acquired technique were first known by only a few people, would
+the difference last long enough to constrain cultivation? Two conditions must both hold:
+partial knowledge *exists*, and it *matters* (knowers are too few for the required
+cultivation hours).
+
+**Answer.** Under transmission rates consistent with the model's own between-unit
+adoption, partial knowledge almost always disappears before it matters.
+- The exception is the first years of cultivation in the rare inventing units, about
+  0.1 % of all cultivation.
+- Broad constraints appear only with slow within-unit spread (50 % after 10 years or
+  more). They then come from untaught new workers, not from who discovered the technique.
+- **Recommendation: B.**
+
+#### Event ordering (audited in code)
+
+Within one year (`core/simulation.py` `build_pipeline`):
+
+```text
+farming -> foraging -> trade -> energetics -> demography -> extinction -> field planning
+-> learning -> diffusion (adoption) -> innovation (invention) -> fission -> fusion -> migration
+```
+
+A technique acquired in year `t` follows this timeline:
+- It cannot affect year `t`'s farming or field planning, which run earlier in the year.
+- Year `t+1` field planning is the first that sees `crop_yield > 0` and can set fields
+  (`cultivation_started`). The clearing it plans becomes debt.
+- Year `t+2` farming is the first that can use cultivation hours, after paying that
+  clearing from capacity.
+
+So 5D's "no same-year cultivation start" is scheduling, not a technological delay.
+
+#### Earliest consequential use
+
+`plant_cultivation`'s only effect is the `crop_yield` capability, 0 → 0.5
+(`technologies/neolithic.yaml`; `seed_selection` adds 0.4 and requires it).
+
+| pathway | consequential when | evidence |
+|---|---|---|
+| field planning | `crop_yield > 0` and new-land return beats foraging (`expand_gap > 0`), so fields go from 0 to > 0 | `agriculture_kernel.py` `plan_fields` |
+| clearing | follows planned expansion; debt paid next year | `FieldPlans.apply` |
+| farming (harvest, hours) | only on existing fields | `FarmingSubsystem.evaluate` |
+| migration value of fields | only with fields > 0 | `migration.py:607` |
+
+- **Present:** the unit holds the Boolean.
+- **Consequential:** the first field plan that sets fields above 0, i.e. the
+  `cultivation_started` year.
+- **Practiced:** the first year with cultivation hours `P > 0`.
+
+Before the first consequential use, holding the technique changes no operation. The plan
+stays at 0 fields whether or not the unit holds it.
+
+#### Shadow model
+
+- **`q`** is the share of a unit's labor capacity held by people who know the technique.
+  It equals the share of people under the representative age composition strata already
+  assume. It is compared with `f_min`, which is a labor share. Not authoritative and not in
+  `StrataTable`.
+- **Exposure:** at a genuine invention or adoption, `q = min(k / L, 1)`.
+  - `L` is the unit's labor-equivalents, because a discoverer is a worker.
+  - `k` = 1, 2, 5 for invention; adoption is also tested with `k` = 5.
+  - Repeated events never lower `q`.
+  - Neither scenario starts with holders. The `q = 1` convention for pre-existing holders
+    exists but is never used.
+- **Turnover:** each year, workers new to labor do not know: `q ← (1 − τ) q`.
+  - `τ` is derived per unit-year from the cohort history: labor gained by aging into work
+    (the age ramp from 6 to 15) ÷ labor. Median 0.032, p90 0.053–0.056.
+  - A no-turnover control is included.
+- **Transmission** (mass action, a hypothesis):
+
+```latex
+q \leftarrow q + (1 - q)\,(1 - e^{-\beta q})
+```
+
+  - Properties: bounded, monotone, no spontaneous knowledge at `q = 0`, and `q = 1` stays.
+  - `β` is calibrated so one knower in the reference unit reaches 50 % in T = 1, 2, 5, 10
+    or 20 years. The reference unit is the median at invention: 28 people, 19.0
+    labor-equivalents in neolithic (β = 12.1 / 2.74 / 0.732 / 0.324 / 0.153); 27 people,
+    18.1 labor-equivalents under pressure.
+  - Bounds: instantaneous and none.
+  - The same β is slower in larger units (one knower in 80 labor-equivalents at T = 5 y
+    reaches 50 % in 8 years).
+- **Steady state with turnover** (τ = 0.032), as `q` at the farming check:
+
+| T50 | 1 y | 2 y | 5 y | 10 y | 20 y |
+|---|---|---|---|---|---|
+| steady-state `q` | 1.000 | 0.998 | 0.969 | 0.912 | 0.796 |
+
+- **Fission:**
+  - Expected value: the daughter and the parent both keep `q`. The expected knowing count
+    is conserved, but one knower can be counted fractionally on both sides: an
+    expectation, not a partition.
+  - Finite-knower sensitivity: `round(q·L)` knowing workers by stochastic rounding; the
+    departing group draws a hypergeometric number of its representative labor share. Uses
+    a shadow RNG, 5 independent draws. The knowing count is kept and never duplicated.
+- **Fusion:** `(N_A q_A + N_B q_B) / (N_A + N_B)` with the pre-fusion populations
+  (`resulting_population − merged_population`). A non-holder brings 0, whatever the
+  authoritative union says.
+- **Loss and extinction** remove `q`. A unit can hold the Boolean with no knowers (finite
+  fission); this is recorded, never repaired.
+- **Constraint:**
+  - `f_min = P / (m·max(C − D, 0))`, exactly `FarmingSubsystem`'s budget; 0 without
+    cultivation, 1 when everyone is needed.
+  - Binding when `q < f_min`.
+  - Knowers could supply `min(P, q·m·max(C − D, 0))` hours; the rest is the shortfall.
+  - *Material*: shortfall ≥ 5 % of `P`.
+  - *Trivial*: binding only because `f_min ≈ 1` and turnover keeps `q` a hair below 1
+    (shortfall < 1 %).
+  - Diagnostic only; never applied.
+- **Replay:** one read-only recorder run per scenario and seed (labor inputs at farming,
+  plus the event stream). Every setting is a pure replay of that same history.
+
+#### Controlled cases (one unit, 20 labor-equivalents, cultivation needing 30 % of labor)
+
+| case | instantaneous | T50 = 5 y | T50 = 20 y | none |
+|---|---|---|---|---|
+| one knower, cultivation the next year | no binding | 3 of 9 years bind (q 0.09 at first cultivation) | 9 of 9 | 9 of 9 |
+| one knower, unit 4× larger | no binding | 6 of 9 (q 0.02) | 9 of 9 | 9 of 9 |
+| cultivation after a 10-year delay | no binding | none (q 0.93) | 9 of 10 (q 0.14) | 10 of 10 |
+| cultivation after 30 years | no binding | none (q 0.97) | none (q 0.56) | 10 of 10 |
+
+Further cases:
+- **Fission with one knower:** expected value keeps a fractional knower on both sides.
+  Finite inheritance puts the knower on one side; the other holds the Boolean with no
+  knowers.
+- **Fusion with a non-holder:** halves `q` (knowers conserved).
+- **Loss then a genuine reacquisition:** starts a new lineage.
+- **A repeated event:** never lowers `q`.
+- **Extinction:** removes the unit.
+- **Turnover without transmission** decays `q` to 0.20 in 50 years.
+
+#### Real runs (neolithic 600 y, pressure + cultivation 400 y, seeds 0–3)
+
+All 8 recorder runs reached their horizon and were observer-neutral by physical digest.
+Cells show neolithic · pressure; `k = 1` with turnover and expected fission unless stated.
+
+*Lineage accounting.*
+
+| | neolithic | pressure |
+|---|---|---|
+| inventions / adoptions (acquisition lineages) | 38 / 205 | 38 / 101 |
+| fission copies / fusion unions | 9,305 / 4 | 3,959 / 10 |
+| invention → first planned fields, p50 | 2 y | 3 y |
+| invention → first cultivation hours, p50 | 4 y | 6 y |
+| adoption → first planned fields, p50 | 20 y | 10 y |
+| adoption → first cultivation hours, p50 | 23 y | 10 y |
+
+- **Inventions are need-driven** (`need: food_stress`), so cultivation follows within a
+  few years. Adoptions come through contacts long before cultivation pays. 5D's pooled
+  16-year lag hid this difference.
+
+*Knowing share when it is first needed* (p50, p10 in brackets):
+
+| T50 | invention: at first plan | invention: at first cultivation | invention: +10 y | adoption: at first cultivation |
+|---|---|---|---|---|
+| 1 y | 0.94 (0.34) · 0.94 (0.33) | 1.00 · 1.00 | 1.00 | 1.00 · 1.00 |
+| 2 y | 0.61 (0.11) · 0.81 (0.11) | 0.98 (0.37) · 0.99 (0.35) | 1.00 | 1.00 (0.44) · 1.00 (0.42) |
+| 5 y | 0.15 (0.05) · 0.20 (0.05) | 0.29 (0.10) · 0.63 (0.09) | 0.97 · 0.96 | 0.95 (0.12) · 0.91 (0.12) |
+| 10 y | 0.09 · 0.11 | 0.11 · 0.21 | 0.64 · 0.76 | 0.83 · 0.43 |
+| 20 y | 0.06 · 0.08 | 0.07 · 0.10 | 0.20 · 0.25 | 0.43 · 0.16 |
+
+*The constraint* (share of farming unit-years with a material shortfall; share of all
+cultivation hours constrained):
+
+| T50 | material binding | hours constrained | material: invention / adoption / fission routes | lineages ever material: invention / adoption |
+|---|---|---|---|---|
+| instantaneous | 0 · 0 | 0 · 0 | 0 | 0 |
+| 1 y | 0 · 0 | 0.000 · 0.000 | 0 | 0 |
+| 2 y | 0.00004 · 0.0002 | 0.00006 · 0.0003 | 0.001 / 0.0004 / 0 · 0.003 / 0.0009 / 0 | 0.13 / 0.04 · 0.21 / 0.07 |
+| 5 y | 0.0017 · 0.0097 | 0.0009 · 0.0033 | 0.010 / 0.004 / 0.001 · 0.021 / 0.010 / 0.009 | 0.76 / 0.37 · 0.82 / 0.64 |
+| 10 y | 0.013 · 0.076 | 0.0036 · 0.012 | 0.030 / 0.014 / 0.013 · 0.080 / 0.047 / 0.079 | 0.84 / 0.54 · 0.87 / 0.79 |
+| 20 y | 0.048 · 0.216 | 0.018 · 0.050 | 0.081 / 0.051 / 0.048 · 0.195 / 0.123 / 0.225 | 0.95 / 0.70 · 0.92 / 0.81 |
+| none | 0.999 · 0.997 | 0.998 · 0.997 | ≈ 1 | 1.00 / 0.87 · 0.92 / 0.85 |
+
+- **Trivial binding:** "binding" at T50 ≤ 2 y (0.7 % · 5.2 % of farming unit-years) is
+  entirely trivial. Units needing all their labor meet a turnover-held `q` just below 1,
+  with a shortfall under 1e-5 of `P`.
+- **Episodes are short:** median 1 year at every finite rate; p90 1–2 years at T ≤ 10 y,
+  4–6 years at 20 y.
+- **Where initial exposure matters:**
+  - Farming unit-years in an inventing unit within 10 years of invention are 0.06 % ·
+    0.13 % of all farming unit-years.
+  - At k = 1, of those years 22 % · 33 % bind materially at T50 = 5 y, and 61 % · 82 % at
+    10 y. At k = 5 the figures fall to 2 % · 9 % at 5 y.
+- **Where slow transmission matters:**
+  - At T50 ≥ 10 y, most material binding is in fission descendants: 1.3 % · 7.9 % of their
+    unit-years at 10 y.
+  - It is almost independent of `k` (total 1.35 % vs 1.25 % at k = 1 vs 5, neolithic).
+  - Without turnover it nearly vanishes (0.10 % · 0.32 % at 10 y).
+  - It is the steady-state gap of untaught new workers (`q* ≈ 0.91` at 10 y, `0.80` at
+    20 y), not the initial exposure.
+
+*Finite-knower fission* (k = 1, turnover, 5 shadow draws; binding / hours constrained):
+
+| T50 | expected value | finite (range over draws) | holders with no knowers (finite) |
+|---|---|---|---|
+| 5 y | 0.011 / 0.0009 · 0.070 / 0.0033 | 0.015–0.020 / 0.005–0.008 · 0.071–0.073 / 0.005–0.006 | 0.6–1.1 % · 0.2–0.4 % of holder unit-years |
+| 10 y | 0.021 / 0.0036 · 0.112 / 0.012 | 0.030–0.045 / 0.011–0.026 · 0.116–0.122 / 0.014–0.020 | 1.1–2.6 % · 0.4–1.1 % |
+| 20 y | 0.066 / 0.018 · 0.281 / 0.050 | 0.084–0.098 / 0.030–0.042 · 0.294–0.309 / 0.057–0.068 | 1.7–3.0 % · 1.0–2.4 % |
+
+- Finite inheritance raises constrained hours 1.2–9× at slow rates (most in neolithic) and leaves some
+  holders with nobody who knows. Expected-value copying understates the effect, but the
+  ordering across rates is unchanged.
+
+#### Where the rate boundary lies
+
+- **Material constraints:** under 0.2 % · 1 % of farming unit-years and under 0.1 % ·
+  0.4 % of hours while within-unit spread reaches 50 % in 5 years or less. They grow
+  quickly beyond 10 years.
+- **Model-internal plausibility:** a unit sharing a cell with a holder adopts the whole
+  technique with probability 0.2 a year (`diffusion.py:206`; `adoption_probability`,
+  `same_cell_contact = 1`), i.e. 50 % within about 3–4 years. Spread *within* a unit is
+  unlikely to be slower than spread *between* co-resident units. That supports T50 ≲ 5 y.
+  This is an internal-consistency argument, not a calibration.
+- The model contains no independent evidence for T50 ≥ 10 y.
+
+#### Limitations
+
+- `q` is a labor share under the representative age composition. A real discoverer's age
+  is not represented.
+- The exposure count `k` and the transmission law are hypotheses. Mass action is one
+  minimal form.
+- Turnover is labor gained by aging into work. It does not distinguish children taught at
+  home from outsiders.
+- Expected-value fission duplicates fractional knowers. The finite variant bounds this.
+- The knowledge gate itself (cultivation requires knowers) is an assumption. A binding
+  constraint is not evidence that work was allocated to knowers.
+- Adoption events do not record population; exposure uses the unit's labor-equivalents
+  that year.
+
+**Recommendation: B. Partial knowledge almost always disappears before consequential
+activity under model-consistent transmission.**
+- It *exists* at every acquisition. It *matters* only:
+  - in the first years at rare invention sites (≈ 0.1 % of cultivation; strongly
+    dependent on `k`);
+  - or under slow within-unit spread (T50 ≥ 10 y), where it becomes a chronic gap of
+    untaught new workers rather than symmetry broken by discovery.
+- Reject uneven cultivation knowledge as the leading endogenous splitter. Do not add an
+  artificially slow transmission parameter to rescue it.
+- **Would change to C** if independent evidence placed within-group transmission of a
+  technique at T50 ≥ 10 y. The operative mechanism would then be teaching new workers (a
+  life-course gap), which needs its own design.
+- **Next (for review):** evaluate a different opportunity mechanism or domain. Of 5D's
+  ranking, selective fission (E) is the remaining candidate with existing substrate; the
+  alternatives require a representation change (subset contacts or within-unit places).
+- No activation, no splitting, no new canonical parameter. The physical-feedback gate
+  stays closed.
 - Pending scientific review.
 
 ---
@@ -1564,7 +1823,9 @@ inside the group) is the general primitive. Cultivation is the first case.
   incumbents to keep, the memory form, and the coordination assumption remain open. Stage 5D
   (§W): the simulator has no within-unit opportunity differentiation; the best-grounded
   origin is partial exposure at technique acquisition, which timing suggests is transient;
-  a falsification test is proposed.
+  a falsification test is proposed. Stage 5E (§X): under model-consistent within-unit
+  transmission (T50 ≲ 5 y) partial knowledge almost never constrains cultivation; uneven
+  cultivation knowledge is rejected as the leading splitter.
 
 - **Cause of differentiated clearing or plot extension.** Whether new land follows labor
   (H1/H2) or control (H3) needs a named lower-level cause (plot extension,
