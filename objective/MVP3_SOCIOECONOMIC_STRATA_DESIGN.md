@@ -984,7 +984,202 @@ mechanical: the deviation is `(1 − f)` scaled by the expansion. It quantifies 
 - **If a version is ever activated,** it needs: continuity (or an entry cost) stated as a
   hypothesis; an accumulated-divergence merge (τ ≈ 0.05) rather than immediate splitting;
   and the slope-weighted coalescence metric.
-- Pending scientific review.
+- Reviewed and accepted (2026-10-09).
+
+
+### §V. Stage 5C — entry costs and participation continuity (2026-10-09)
+
+**COUNTERFACTUAL / NOT ACTIVE.**
+- Pure functions in `population/entry_cost.py`. No simulator path calls them, no model rule
+  is registered, and there is no scenario setting.
+- Probe: `scripts/probes/entry_cost_counterfactual.py` (`controlled`, `runs`, `report`).
+  Tests: `tests/test_entry_cost.py`.
+- Starting point `eeb431f` (Stage 5B). Authoritative labor, crop output, knowledge and
+  strata are unchanged.
+
+**Question.** Can a cost of *starting* an activity, which continuing practitioners do not
+pay again, make participation histories persistent? Two problems are kept apart:
+- **initiation:** why only part of a homogeneous unit would begin;
+- **continuity:** why the same part would continue rather than be replaced.
+
+**Epoch-general primitive.** Entering or re-entering an activity costs effort that
+continuing practitioners do not repeat: familiarization, tool preparation, access to a
+work place, learning procedures, coordination, switching. Cultivation is the first domain.
+
+**Labor audit (unchanged from §U, re-verified).**
+- `FarmingSubsystem.evaluate`: `P = min(fields × 600, m·max(C − D, 0))`, `m = 0.9`.
+- `D` is the clearing planned in the previous year (`FieldPlans.apply` adds it to
+  `labor_debt_hours`); foraging gets `max(C − D − P, 0)` and resets `D` to 0.
+- Agriculture practice is `1.0·farming + 0.15·plant_foraging`; clearing feeds the
+  construction domain only.
+- No existing quantity is a setup or entry cost, so nothing is double-counted. Entry hours
+  live in a counterfactual ledger only.
+
+**Entry cost versus §U overhead.**
+
+| | recurring overhead (§U) | entry cost (§V) |
+|---|---|---|
+| who pays | every participant | entrants only |
+| when | every year | the year of entry or re-entry |
+| labor | `P + o·f·L` | `P + e·L·Σ φ_i x_i` |
+| depends on history | no | yes, through `φ` |
+
+**Model.** `B = m(C − D)` is the whole unit's cultivation budget, `L = C/(5·365)` its
+labor-equivalents, `e` the entry cost in hours per entering labor-equivalent. Component `i`
+has share `s_i` and entry factor `φ_i ∈ [0, 1]` (0 = continuing participant, 1 = full
+entrant). This year's participants are `x_i ∈ [0, s_i]`.
+
+```latex
+\text{feasible: } \sum_i x_i\,(B - e L \varphi_i) \ge P, \qquad
+\text{entry labor: } e L \sum_i \varphi_i x_i
+```
+
+- Productive hours are never reduced. If even full participation cannot carry `P` plus
+  entry labor, the allocation is reported **infeasible** with its shortfall (labor that a
+  physical version would have to displace). No free hours are invented.
+- **Optimum.** Entry labor is linear, and a cheaper component also adds more net capacity
+  (`B − eLφ` falls with `φ`). Filling components in ascending `φ` is therefore optimal (an
+  exchange argument), and it stops at the smallest feasible share.
+- **Ties.** Components with equal `φ` cost the same. They are taken in proportion to their
+  shares, so the allocation never depends on component order or identity (tested by
+  permutation).
+
+**Result 1: initiation is the §U corner again.** With no history (`φ = 1` everywhere):
+
+```latex
+f^* = \frac{P}{B - eL} \quad (e > 0), \qquad f \in [P/B,\,1] \text{ indifferent at } e = 0
+```
+
+- This is exactly §U's `f_min` with `o = e`. For **every** `e > 0` the first entry is
+  maximal concentration. At `e = 0` the cost is flat.
+- The cost decides **how many** enter, never **which**. Equal components tie and are taken
+  in proportion: an anonymous exposure split with no identities.
+- That a strict subset enters at all rests on a behavioral assumption: the unit
+  coordinates this year's entry to minimize this year's entry labor (myopic, unit-level).
+  Physics does not imply it.
+- Infeasible when `P > B − eL`: first entry at `e = 1,500 h` and `s = 0.85` leaves a
+  shortfall of 0.77 C.
+
+**Result 2: continuity is real but not unique.** Incumbents `h` (`φ = 0`), others `φ = 1`:
+
+| case | optimum | determined? |
+|---|---|---|
+| `P ≤ hB` (incumbents suffice) | any `f ∈ [P/B, h]` drawn from incumbents; entry labor 0 | **no**: how many, and which incumbents, are both indifferent |
+| `P > hB` (incumbents insufficient) | all incumbents + `n = (P − hB)/(B − eL)` entrants | amount yes; which entrants: tie |
+
+- Entry cost explains why incumbents are used **before** newcomers. That is the
+  continuity-versus-rotation contrast.
+- It does not say whether to keep all incumbents (`retain`, status quo) or shed down to
+  `P/B` (`min`) when demand falls. Both ends of the interval are tested.
+- **Rotation's cost.** Rotation redraws participants in proportion, so with last year's
+  share `h` and need `f` it pays `eL·f(1 − h)`. In steady state that is `eL·f(1 − f)` a
+  year (0.0067 C at `f = 0.4`, `e = 50`), while continuity pays 0.
+
+**Result 3: universal participation is also a continuity equilibrium.**
+- If everyone participates (M0), everyone is an incumbent after the first year. Entry
+  labor is `eL` once, then 0 for as long as cultivation continues.
+- M2 pays `eL·f*` once, then 0 while demand does not rise. The one-time difference is
+  `eL(1 − f*)` per cultivation start.
+- Under fluctuating demand, M2 pays again at every rise above its incumbents; M0 never
+  does. Over a spell, a far-sighted unit could prefer universal familiarity.
+- **Entry cost locks in whatever the first allocation was.** Concentration comes from
+  the myopic first-entry choice, not from the continuing cost.
+
+**Participation memory (hypotheses, not model state).** `since` = years since a
+component last participated (1 = last year, ∞ = never). The competence state cannot
+stand in for it: non-participants also gain `K` (the 0.15 foraging weight, diffusion), and
+`K` is an intensive mean, not a recency. Using `K` for both would double-count one
+familiarity. Variants:
+- `W1`: immediate expiry (only last year's participants are incumbents);
+- `W10`: finite window of 10 years;
+- `H10`: gradual decay `φ = 1 − 2^{−(since − 1)/10}`.
+
+**Assignment models.**
+- **M0 proportional:** everyone participates.
+- **M1 rotation:** the smallest feasible share, redrawn in proportion every year.
+- **M2 entry-cost continuity:** minimum entry labor; `min` or `retain` at the indifference
+  interval.
+- **M3 competence:** the same amount as M2, drawn by descending `K` (secondary).
+
+At equal `K`, M3 ties and is proportional (tested): competence alone cannot select a
+subset from a homogeneous unit.
+
+**Coordination assumption.**
+- *Continuity* can be read as individual inertia: an incumbent loses nothing by
+  continuing, and a newcomer must pay to start.
+- *Initiation* and *shrinking* need a unit-level coordination that the model does not
+  represent: agreeing that only some start, and who stops when demand falls. No chief,
+  enforcement or ownership is implied, but the coordination is an assumption.
+
+**Controlled results** (40 people, `e = 50 h`; full tables in the probe's `controlled`
+output).
+
+*First entry and the ledger* (`s = P/B`):
+
+| s | e = 1 / 10 / 50 / 200: `f*` | entry hours / C at e = 50 | incumbents h = 0.2: entrants n at e = 50 |
+|---|---|---|---|
+| 0.1 | 0.100 / 0.101 / 0.103 / 0.114 | 0.003 | 0 |
+| 0.35 | 0.350 / 0.352 / 0.361 / 0.399 | 0.010 | 0.155 |
+| 0.6 | 0.600 / 0.604 / 0.619 / 0.683 | 0.017 | 0.413 |
+| 0.9 | 0.901 / 0.906 / 0.928 / infeasible | 0.025 | 0.722 |
+
+*Cases* (efficiency of incumbents / others at 25 and 100 years):
+
+| # | case | result |
+|---|---|---|
+| 1 | homogeneous, no cultivation | nothing happens in any model |
+| 2 | first encounter, s = 0.35 | M1–M3 enter at the corner `f = 0.40`; M2 then pays nothing (0.87/0.36 → 0.94/0.56), M1 pays 0.24 a year and equalizes (0.76/0.74 → 0.87/0.87), M0 pays once |
+| 3 | incumbents h = 0.4, stable | M2 keeps them at zero cost; M1 pays 0.24 a year; M0 pays 0.6 once |
+| 4–5 | demand rises gradually / suddenly 0.2 → 0.6 | M2 adds entrants only as demand rises (gradual: ≈0.01 a year; sudden: 0.46 in one year) |
+| 6 | demand falls gradually 0.6 → 0.2 | `min` sheds to 0.22 (0.93/0.61); `retain` keeps 0.69 (0.85/0.52) |
+| 7 | cultivation stops | W1 histories lapse in a year; W10 incumbents keep their status 10 years |
+| 8 | returns after 1 idle year | W1: history already lapsed, so re-entry is proportional and mixes (0.89/0.61 at 50 y); W10: former participants re-enter free and the same people resume (0.91/0.48) |
+| 9 | returns after 30 idle years | every memory has lapsed: M2 draws entrants in proportion, M3 picks the formerly competent; gaps re-form through practice (M2 0.92/0.60 at 100 y) |
+| 10 | incumbents exceed demand (h = 0.8, s = 0.2) | indifference interval [0.22, 0.80]: `min` 0.93/0.52, `retain` 0.81/0.52 at 100 y |
+| 11 | incumbents insufficient (h = 0.2, s = 0.6) | all incumbents + 0.48 entrants in year 1 |
+| 12 | fusion competence difference, no history | M2 ties (proportional); M3 selects the competent (0.64/0.38 in year 1) |
+| 13 | equal competence, different histories | M2 selects incumbents (0 entry); M3 ties and pays 0.24 |
+| 14 | e = 1,500 h, s = 0.85 | infeasible; shortfall 0.77 C |
+| 15 | e = 0 | indifferent; `min` concentrating at `e = 0` is a tie rule, not a cost |
+
+*Hysteresis* (demand 0.2 → 0.6 → 0.2 → 0.6, 20 years each; entrants at the second rise):
+
+| model | f at the second low | entrants at the second rise | cause |
+|---|---|---|---|
+| M0 | 1.00 | 0 | everyone stays familiar |
+| M1 | 0.23 | 0.53 | history ignored |
+| M2 min W1 | 0.22 | 0.46 | leavers lapse after one year: no allocation memory |
+| M2 retain W1 | 0.68 | 0 | status quo ratchets `f` to the past maximum |
+| M2 min W10 | 0.22 | 0.01 | proportional shrinking among equal-cost incumbents rotates the whole former pool, keeping it incumbent |
+| M2 min H10 | 0.22 | 0.34 | the most recent are strictly cheapest, so the same people continue; leavers partly decay |
+
+- **Hysteresis comes from the memory form combined with the tie convention, not from the
+  entry cost alone.** With W1 the allocation has no memory beyond a year. `retain` and W10
+  give strong but convention-made hysteresis. H10 gives graded hysteresis from cost
+  differences alone.
+
+**Population turnover.** A stratum is a mixture, not a set of immortal people.
+- Each year a share `τ` of a unit's labor is new to work: children ramping into labor
+  between ages 6 and 15. Measured from the actual age structure, `τ` is about 3 %/y
+  (pressure smoke run: p50 0.031, p90 0.049).
+- Without turnover, a participating component's new workers (its children; strata share
+  the age structure) silently inherit its incumbency. Persistence then becomes
+  **hereditary by representation**.
+- The share of original participants after `T` years is `e^{−τT}`: half after about
+  22 years.
+- Sensitivity `turnover`: each year a share `τ` of every component with a history becomes
+  history-free (same `K`, a stated approximation) and must pay to enter.
+
+**Real-run results: PENDING** (seeds 0–3 run externally; smoke run, pressure seed 0 over
+100 years, is observer-neutral with shadow mean competence equal to the unit level to
+≤ 5.6e-16).
+
+**Recommendation: PENDING** the real runs. Provisional reading from the mathematics and
+controlled cases: **B**. Entry costs explain continuity (incumbents before newcomers;
+rotation costs `eL·f(1 − f)` a year). Initiation is still §U's corner and depends on a
+myopic coordination assumption. Allocation hysteresis comes from the memory form and the
+tie convention, and without turnover, persistence beyond about 20 years is hereditary by
+representation.
 
 ---
 
