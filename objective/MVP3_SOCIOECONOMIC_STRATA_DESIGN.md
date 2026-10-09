@@ -1334,6 +1334,221 @@ magnitude.
 - **If anything is carried forward:** a decaying-memory entry cost as the continuity
   hypothesis, a turnover term, a τ divergence merge, and a slope-weighted coalescence
   metric that also respects entry-cost class.
+- Reviewed and accepted (2026-10-09).
+
+
+### §W. Stage 5D — causal opportunity differentiation audit (2026-10-09)
+
+**DESIGN AND AUDIT ONLY.** No production code, no shadow mechanism. One read-only probe
+(`scripts/probes/exposure_audit.py`) reads the event stream of plain runs. Starting point
+`4eb4d55` (Stage 5C).
+
+**Question.** What concrete event or process can make initially equivalent people within a
+unit meet different opportunities, gain different experience, and eventually differ
+persistently? This stage is about the *origin* of differentiation, not its persistence.
+
+**Answer.** Nothing in the current simulator gives different subsets of one unit
+different opportunities. Location, access, knowledge, technology, contact and activity
+decisions are all aggregated to the unit. The strongest candidate is a technique reaching
+some people before others. It has a real modeled event, but the timing evidence suggests
+the exposure would usually be gone before practice begins. **Recommendation: D.**
+
+#### Audit of within-unit opportunity representation
+
+| Domain | What the code represents | Within-unit subset? | Evidence |
+|---|---|---|---|
+| Location | one cell per unit; migration moves the whole unit | no | `unit.py:266`; `migration.py:172` ("Whole-group moves only; selective emigration arrives with distributional units") |
+| Foraging access | the unit's current cell only; per-cell access fractions | no | `foraging.py:296`, `:383-393` |
+| Fields | `fields_ha`, one scalar per unit; arable shared pro rata per cell | no | `unit.py:290`; `agriculture_kernel.py:140` |
+| Familiarity | one value per unit and cell | no | `familiarity.py:66`, `:84-93` |
+| Labor and activities | aggregate hours; cap on hours (`m = 0.9`), none on headcount | no | `agriculture.py:323-337`; `foraging.py:314-320` |
+| Technology | Boolean set per unit; invention adds it to the whole unit at once | no | `innovation.py:75` ("No specialists yet; innovation is a property of the whole group"), `:146-163`; `system.py:11-16` |
+| Knowledge | one vector per unit; learning from unit activity shares | no | `learning.py:366` ("all members practice in proportion to labor") |
+| Diffusion and adoption | unit-unit contact weights (same cell, adjacent, trade ties); every contact counts every year | no | `diffusion.py:30-47`, `:204-214` |
+| Information | unit-unit encounters pass 8 reports about cells | no | `exploration.py:709-781` |
+| Trade | unit-unit food balance; partners by proximity | no | `trade.py:106-151` |
+| Demography | age × sex cohort counts; binomial deaths and births | counts only; nothing records who | `demography.py:90-116` |
+| Fission | departing members drawn binomially per age/sex cohort; the daughter copies knowledge, technology, beliefs and strata shares | **yes, the only subset draw**, representative in everything but age/sex | `groups.py:93-102`; `lifecycle.py:71-136` |
+| Fusion | sums cohorts; population-weighted means; strata concatenate | between-unit only | `lifecycle.py:156-235`; `strata.py:212-230` |
+| Strata | `share`, `field_claim`, `store_claim`; age structure shared; nothing authoritative reads them | passive | `strata.py:9`, `:200-205` |
+| Turnover memory | knowledge, technology and familiarity are unit properties; no per-age skill | — | `life_history.py:141` ("Skill is not modeled separately from labor") |
+
+- **Subset events that exist:** deaths, births and fission. Only fission separates people,
+  and it is representative: who leaves differs from who stays only by age and sex.
+- **Existing quantities that count people:**
+  - the practitioner term `N·s` in learning (a scalar);
+  - crowding contact population;
+  - the reproductive-pair check for fusion.
+
+  None selects a subset.
+
+#### Timing evidence (read-only probe; neolithic 600 y, pressure 400 y, seeds 0–3)
+
+| | neolithic | pressure |
+|---|---|---|
+| `plant_cultivation` gained by invention / adoption / fission copy / fusion union | 38 / 205 / 9,305 / 4 | 38 / 101 / 3,959 / 10 |
+| population at invention, p50 / p90 (one discoverer ≈ 1/N) | 28 / 41 (0.036) | 28 / 40 (0.036) |
+| years from invention or adoption to first cultivation, p50 / p90 / max | 16 / 60 / 114 | 8 / 34 / 58 |
+| cultivation in the year of acquisition | 0 % | 0 % |
+| acquired but never cultivated | 34 of 243 | 20 of 139 |
+
+- About 97 % of holders get the technique by fission copy. Only a few dozen units per run
+  discover it or adopt it from a contact.
+- **Knowing comes years to decades before practice.** What starts cultivation is the
+  return comparison (`fields_toward_target`), not access to the technique.
+
+#### Candidate symmetry-breaking families
+
+**A. Localized opportunity or exposure.**
+- No substrate. A unit is in one cell, fields are a unit scalar, and foraging uses only
+  the current cell.
+- Partial exposure would need subsets placed in space (plots, trips, positions): new
+  spatial granularity inside the unit.
+
+**B. Finite participation opportunities.**
+- No headcount limit exists anywhere; only hours and land are limited.
+- Stages 5B and 5C showed that a limited amount of work does not choose its participants.
+  A capacity alone needs a selection rule, which is the problem itself.
+
+**C. Uneven knowledge transmission.**
+- The events exist: invention is a discrete stochastic event with a modeled hazard, and
+  adoption is a discrete draw per contact. A discovery is plausibly made by a few people.
+- But the representation applies them to the whole unit instantly. Supporting a subset
+  needs the ontology split that `system.py:11-16` already names: *availability* (the unit
+  holds the technique) versus *who knows it*.
+- Timing evidence: the exposure would most plausibly be gone within a few years, while
+  practice starts a median 8–16 years later. It binds only if within-unit spread is slow
+  or happens only through practice. Both are new assumptions; the second reduces back to
+  who practices (5B/5C).
+
+**D. Contact and interaction history.**
+- Contacts are unit-level weights with no headcount and no subset travel.
+- A subset meeting outsiders would need subset contacts, which is effectively a social
+  network or expeditions. Too early.
+
+**E. Movement and recombination.**
+- Fission is the only real subset draw, but it is representative and creates differences
+  *between* units, not within.
+- Selective fission (who leaves depends on experience) is a hypothesis.
+- Fusion is already the known source of differences, and it is excluded as an answer to
+  within-unit origin.
+
+#### Stochastic encounters and statistical symmetry
+
+- **Legitimate:** a modeled event (an invention, a contact) involves `k` of `N` people,
+  every member equally likely. Statistical symmetry holds before the event, and realized
+  symmetry breaks after it.
+- In the mixture representation the exposed share `k/N` is taken *in proportion from
+  every component*. That is the expected value, so no component is picked at random and
+  no identity is created.
+  - Randomness stays where the model already has it: whether the event happens (the
+    hazard).
+  - Randomness about `k` would be a stated hypothesis (e.g. a small number of
+    discoverers).
+- **Artificial:** dividing a homogeneous unit into classes by a random draw with no event
+  behind it. Rejected, as in every earlier stage.
+
+#### Ranked comparison
+
+| Criterion | C uneven transmission | E fission / recombination | B finite opportunities | A localized exposure | D contact history |
+|---|---|---|---|---|---|
+| Causal grounding | invention and adoption are modeled events; a finite number of discoverers is plausible | binomial cohort draw exists | none: hours, not positions | none in code | none in code |
+| Breaks within-unit symmetry | yes (realized, statistically symmetric) | no (between units) | no (needs a selection rule) | yes, if positions existed | yes, if subset contacts existed |
+| Existing substrate | events exist; no knower share | high | hours caps only | none | none |
+| Persistence | weak: knowledge precedes practice by 8–16 y (p50) | via separate units | — | — | — |
+| Epoch generality | high (literacy, metallurgy, machinery) | high | high | high | high |
+| Minimal new state | one knower share per unit per technique | none (selectivity is a hypothesis) | positions | within-unit positions | subset contact records |
+| Representation risk | low: acquisition events are rare (≈ 35–60 per run); no split needed until consequences differ | none | high (5B/5C churn) | high | high |
+| Demographic coherence | good if new workers start as non-knowers and learn | n/a | — | — | — |
+| Assumptions | number exposed; within-unit transmission rate; whether knowing gates practice | what makes leavers differ | the selection rule | spatial structure inside a unit | network structure |
+
+Ranking: **C > E > B > A ≈ D**. None is ready for implementation. C is the only one
+grounded in an existing event that could break symmetry within a unit.
+
+#### The smallest causal event (candidate C), specified
+
+1. **What happens:** a unit invents a technique, or adopts it through a contact. A small
+   number of its people know it first.
+2. **Why:** the invention hazard and the adoption draw already exist; a discovery is made
+   by someone.
+3. **Why only part:** an invention or a contact involves a finite number of people, not
+   the whole unit.
+4. **Affected fraction:** `k/N` with `k` the number of discoverers or contact
+   participants. This is a hypothesis: the model has no headcount for these events.
+   Taken in proportion from every component.
+5. **What differs immediately:** who knows the technique. Competence, claims and
+   everything else are unchanged.
+6. **Why it could persist:** only if knowing gates practice and practice builds
+   competence (5B), and if entry costs keep the same people practicing (5C).
+7. **Convergence:** within-unit transmission (a new rate), and turnover (new workers start
+   as non-knowers).
+8. **Turnover:** knowledge is not inherited by birth. New workers (≈ 3.2 % of labor a
+   year, §V) start unexposed and learn from the unit at large, so no successor silently
+   inherits a predecessor's experience. Teaching that favors knowers' own children would
+   be a further hypothesis.
+
+**Why this is not a stratum generator.** The event exists before any split. It is driven
+by the existing invention or adoption hazard, and it fixes an observable quantity (a
+knower share). A component would split only when that share changes what someone does,
+for example when cultivation needs more people than know the technique.
+
+**Meaningful consequences:**
+
+| Consequence | Status |
+|---|---|
+| Practice history | only if knowing gates practice (hypothesis) |
+| Competence | through practice (existing rule, 5B) |
+| Resource access, contribution, asset control | none modeled (H2 = H1; claims passive) |
+| Future opportunity | through 5C entry costs (hypothesis) |
+
+**Minimal state:** one knower share `q ∈ [0, 1]` per unit for the technique, not a
+stratum split. It follows fission (binomial knowers, proportional in expectation) and
+fusion (population-weighted). A stratum split happens only when `q` limits participation.
+
+#### Representation and turnover
+
+- **Split rule:** split a component only when an event gives part of it a different
+  *action* (practice), not merely a different exposure. Both parts inherit identical
+  competence and claims.
+- **Store state or consequences?** Store the exposure as a unit scalar `q` and represent
+  its consequences through components only when they occur. This avoids 5B/5C's splitting
+  every time practice changed.
+- **Merge rule:** components with the same knowledge status and near-equal competence (the
+  slope-weighted metric, §U/§V) may merge. Different status may not.
+- **Fission and fusion:** `q` is copied in expectation and population-weighted on fusion.
+  The knower status of components is carried with them.
+- **Turnover:** each year a share `τ` of labor enters unexposed and learns at the
+  within-unit transmission rate. Without such a rate the current model implicitly
+  transmits instantly and perfectly. That is today's whole-unit assumption, and it is what
+  makes acquisition unit-wide.
+
+#### Epoch-general interpretation
+
+Someone encounters a technique before others: a farming method, a craft, writing, a
+machine. The same event (partial exposure at discovery or contact, then transmission
+inside the group) is the general primitive. Cultivation is the first case.
+
+**Recommendation: D. No convincing initiation mechanism yet.**
+- The simulator has no within-unit opportunity differentiation (audit). Inventing one
+  (positions, places, networks) would be manufacturing.
+- The best-grounded candidate (C) is plausible and epoch-general. Its effect on who
+  cultivates depends on two unmodeled quantities: how many people an invention or contact
+  exposes, and how fast a technique spreads inside a group. The timing evidence (practice
+  8–16 years after acquisition) suggests the exposure is usually gone before it matters.
+- **Recommended Stage 5E (narrow):** a falsification test of C before any design.
+  - A read-only shadow keeps `q` per unit for `plant_cultivation`:
+    - start at `k/N` at invention (`k` = 1 and a small sweep);
+    - copy it on fission (expectation) and weight it on fusion;
+    - new workers enter unexposed at the measured `τ`;
+    - within-unit transmission is swept over half-times from 1 to 20 years (sensitivity,
+      not calibration).
+  - Measure how often `q < f_min` in farming unit-years, i.e. whether knowledge would
+    ever bind who cultivates.
+  - If it rarely binds at plausible half-times, reject C for cultivation and record that
+    initiation needs a different domain or a representation change (spatial or contact
+    subsets).
+- No splitting, no activation, no new canonical parameter. The physical-feedback gate
+  stays closed.
 - Pending scientific review.
 
 ---
@@ -1346,7 +1561,10 @@ magnitude.
   gives a corner solution; assignment (continuity or competence) matters more than the
   degree of concentration; the consequence is small under continuity. Stage 5C (§V): entry
   costs explain continuity relative to rotation but not initiation (same corner); how many
-  incumbents to keep, the memory form, and the coordination assumption remain open.
+  incumbents to keep, the memory form, and the coordination assumption remain open. Stage 5D
+  (§W): the simulator has no within-unit opportunity differentiation; the best-grounded
+  origin is partial exposure at technique acquisition, which timing suggests is transient;
+  a falsification test is proposed.
 
 - **Cause of differentiated clearing or plot extension.** Whether new land follows labor
   (H1/H2) or control (H3) needs a named lower-level cause (plot extension,

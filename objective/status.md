@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-09 (MVP 3 Stage 5C, awaiting review)\
+**Updated:** 2026-10-09 (MVP 3 Stage 5D, awaiting review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,82 +13,46 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**Completed:** Stage 5C, entry costs and participation continuity (design §V), a
-counterfactual. **PAUSE FOR SCIENTIFIC REVIEW.**
+**Completed:** Stage 5D, causal opportunity differentiation audit (design §W), design and
+audit only. **PAUSE FOR SCIENTIFIC REVIEW.**
 
-**Production behavior:** unchanged. `population/entry_cost.py` is not called by the
-simulator, has no scenario setting and registers no model rule. Both MVP 2.1 oracles are
-identical.
+**Production behavior:** unchanged. No production or shadow code was added. One read-only
+probe (`scripts/probes/exposure_audit.py`) reads the event stream of plain runs. Both MVP
+2.1 oracles are identical.
 
-**Starting HEAD:** `eeb431f` (Stage 5B). Real runs at `15e06f0`.
+**Starting HEAD:** `4eb4d55` (Stage 5C).
 
-**Done:**
-- **Pure module** `population/entry_cost.py` (NOT ACTIVE): entry-cost factor by memory
-  (window, decay), minimum-entry allocation with proportional ties, history-blind
-  allocations (proportional, rotation), status-quo retention, participation split, history
-  advance, and turnover.
-- **Tests:** `tests/test_entry_cost.py`, 27 passing, including the corner, tie neutrality,
-  infeasibility, conservation, and an observer-neutrality run.
-- **Probe:** `scripts/probes/entry_cost_counterfactual.py` (`controlled`, `runs`,
-  `report`): 15 controlled cases, a hysteresis cycle and 13 real-run shadows.
+**Audit result:** nothing in the simulator gives different subsets of one unit different
+opportunities.
+- Location, foraging access, fields, familiarity, technology, knowledge, contacts, trade
+  and activity hours are all unit-level.
+- The only subset draw is fission's binomial departure per cohort. It is representative
+  and creates differences between units, not within.
+- No headcount limit exists anywhere.
 
-**Candidate mechanism:** entry and re-entry costs (`e` hours per entering
-labor-equivalent; a probe input, no canonical value) and path-dependent participation.
+**Timing evidence:**
+- About 97 % of units holding `plant_cultivation` got it by fission copy.
+- Units that invent or adopt it (28 people at invention, p50) first cultivate a median 16
+  years later (neolithic) or 8 years later (pressure), never in the same year.
 
-**Does it explain initial differentiation?** No.
-- First entry is §U's corner: `f* = P/(B − eL)` for every `e > 0`, and indifference at 0.
-- The cost decides how many enter, not who.
-- A strict subset enters only under a myopic unit-level coordination assumption. Over
-  real histories, universal participation costs the same entry labor (neolithic) or half
-  (pressure).
+**Candidates ranked:** C uneven transmission > E fission/recombination > B finite
+opportunities > A localized exposure ≈ D contact history. None is ready.
+- C, a technique reaching some people first, is the only one grounded in an existing
+  event (invention, adoption) that could break symmetry within a unit.
+- It needs a knower share per unit and two unmodeled quantities: how many people an event
+  exposes, and the within-unit transmission rate.
+- Timing suggests the exposure is usually gone before practice begins.
 
-**Does it explain continuity?** Partly.
-- Incumbents come before newcomers. That saves 70–85 % of rotation's entry labor (about
-  0.5 % of capacity at `e = 50`).
-- When incumbents exceed need, how many to keep is indifferent. The outcome then depends
-  on the memory form and the tie convention: allocation hysteresis is convention-made
-  except under decaying memory.
+**Scientific recommendation: D** (no convincing initiation mechanism yet).
 
-**Mathematical result:** minimum entry fills components in ascending entry factor (greedy
-is optimal). Corner at initiation; an indifference interval `[P/B, h]` when incumbents
-suffice; all incumbents plus `(P − hB)/(B − eL)` entrants otherwise. Entry cost locks in
-whatever the first allocation was.
+**Proposed Stage 5E (for review):** a read-only falsification test of C.
+- A shadow knower share `q` starts at `k/N` at invention, follows fission and fusion,
+  admits new workers unexposed at the measured turnover, and spreads at swept half-times
+  of 1–20 years.
+- Measure how often `q < f_min` in farming unit-years.
+- If it rarely binds, reject C for cultivation.
 
-**Competence effect:**
-- With one-year memory, identical to §U's continuity: median E-gap 0.021 / 0.006, median
-  yield effect 1.2 % / 0.2 %.
-- Decaying memory raises the median yield effect to 2.9 % / 0.4 %. The size of `e` is
-  irrelevant to competence.
-- Competence assignment remains larger (4.1 % / 1.1 %).
-
-**Representation pressure:**
-- Continuity halves rotation's splits (6.8 vs 13.4 per unit-year); `retain` cuts them 12×
-  by locking in cores.
-- Every rule fills the capacity except a τ = 0.05 divergence merge (5.0 / 3.4
-  components).
-- Under 10-year memory, near-equal competence with a different entry-cost class is common
-  (0.2 pairs per unit-year), so a merge metric must respect history.
-
-**Population-turnover limitation:**
-- About 3 % of labor is new to work each year, so half of a participating component is
-  its members' successors after about 22 years.
-- Turnover changes gaps by about 12 %, but any persistence beyond about a generation is
-  hereditary by representation in anonymous strata.
-
-**Resolution 16 vs 32:** identical gaps, yield effects and persistence; dispersion within
-3 %. Capacity changes only churn.
-
-**Scientific recommendation: B** (explains continuity, not initiation), with a D caveat
-on magnitude.
-
-**Unexplained:**
-- why a subset rather than everyone starts;
-- how many incumbents to keep;
-- which memory form is real;
-- the physical cost of infeasible entry (6.2 % of pressure farming unit-years under
-  minimal continuity).
-
-**Next:** PAUSE FOR SCIENTIFIC REVIEW. Do not begin Stage 5D without it.
+**Next:** PAUSE FOR SCIENTIFIC REVIEW. Do not begin Stage 5E without it.
 
 **Physical-feedback gate:** closed.
 
@@ -108,6 +72,7 @@ on magnitude.
 | 5A | Endogenous differentiation audit: recommend practice concentration under finite demand with learning-by-doing (design only) | §T |
 | 5B | Participation overhead: corner solution for any o > 0; small consequence under continuity; assignment matters more than degree; B confirmed (counterfactual) | §U |
 | 5C | Entry costs: initiation is the same corner; incumbents before newcomers explains continuity relative to rotation; how many to keep is indifferent; one-year memory reproduces 5B; turnover makes long incumbency hereditary by representation; B (counterfactual) | §V |
+| 5D | Opportunity audit: no within-unit opportunity differentiation exists; best-grounded origin is partial exposure at technique acquisition, but knowing precedes practice by 8–16 y (p50); D, falsification test proposed (design only) | §W |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
