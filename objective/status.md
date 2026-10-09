@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-08 (MVP 3 Stage 5B, paused)\
+**Updated:** 2026-10-08 (MVP 3 Stage 5B, awaiting review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,8 +13,8 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**In progress, PAUSED (2026-10-08):** Stage 5B, a counterfactual for participation overhead
-and practice concentration (design §U). It is paused before the real-run sweep.
+**Stage 5B complete, awaiting scientific review (2026-10-08):** a counterfactual for
+participation overhead and practice concentration (design §U).
 
 **Production behavior:** unchanged. The new module is not called by the simulator, has no
 scenario setting and registers no model rule.
@@ -27,44 +27,38 @@ scenario setting and registers no model rule.
   learning, and efficiency with its slope.
 - **Tests:** `tests/test_practice_concentration.py`, 16 passing, including a test
   documenting the corner solution.
-- **Probe:** `scripts/probes/practice_concentration_counterfactual.py`. The `controlled`
-  mode is done. The `runs` mode is fixed after an out-of-memory failure: compact results,
-  one file per job, resumable, with progress lines.
-- **Design document:** §U written, apart from the real-run results.
+- **Probe:** `scripts/probes/practice_concentration_counterfactual.py` (`controlled`,
+  `runs`, `report`). `runs` writes one file per job, resumes, prints progress every 100
+  years and warns when a run ends before its horizon.
+- **Real runs:** seeds 0–3, both scenarios, at `c88d489`; all reached their horizon and
+  were observer-neutral. Results in §U.
 
-**Key results so far:**
-- **Labor audit.** `f_min = P / (m (C − D))`: the cap `m = 0.9` applies to labor after
-  clearing debt `D`. Productive cultivation hours contain no implicit overhead.
-- **Optimization.** Cultivation labor `P + o·f·L` is linear in `f`. At `o = 0` every
-  feasible `f` is equally good (indifference). For **any** `o > 0` the optimum is the
-  corner `f = f_min`. The size of `o` barely moves `f*`, and no model quantity calibrates
-  it.
-- **Countervailing forces.** Only the cap `m` exists. There is no work cost, fatigue,
-  diminishing per-participant productivity, risk spreading, availability or spatial
-  limit.
-- **Who participates.** Overhead fixes *how many* participate, not *who*. Persistent
-  competence differences need continuity of participation, which is a separate
-  hypothesis; rotation erases them.
-- **Neutral limit.** Component learning reproduces the authoritative rule bit for bit
-  under equal practice. The share-weighted mean competence equals the unit level at every
-  `c`.
-- **Clearing.** No causal reason exists for cultivation participants to clear. H2 still
-  equals H1.
+**Key results:**
+- **Optimization.** Cultivation labor `P + o·f·L` is linear in `f`: indifference at
+  `o = 0`, the corner `f = f_min` for any `o > 0`. Only the cap `m` bounds concentration.
+- **Opportunity.** `f_min` < 0.75 in 93 % (neolithic) / 64 % (pressure) of farming
+  unit-years.
+- **Consequence is small.** At `c = 1` with continuity the median participant/other
+  efficiency gap is 0.021 / 0.006, and the median yield effect if practitioners' competence
+  were used is 1.2 % / 0.2 %. It grows smoothly with `c`.
+- **Who participates matters more than how many.** Rotation erases the gap;
+  competence-based assignment raises it 4–10× and makes it self-reinforcing.
+- **Representation.** Immediate splitting saturates any capacity (16 or 32) without
+  changing the measured differentiation; a τ = 0.05 divergence merge keeps 2–3.5 components
+  per unit. The slope-weighted K-distance ranks coalescence pairs exactly as efficiency
+  loss does; plain K-distance loses 2–9× more.
+- **Persistence.** After cultivation stops, about half of neolithic spreads are not halved
+  after 50 y; under pressure all are halved by 50 y.
+- **Clearing.** No causal reason for participants to clear; H2 still equals H1. The
+  hypothetical H2 deviation is linear in `c` (median 0.09 / 0.04 at `c = 1`).
 
-**Provisional recommendation: B.** Participation overhead is plausible but degenerates to
-maximal concentration, so a countervailing mechanism is needed before activation. It
-rests on the exact optimization; the real runs measure consequences.
+**Recommendation: B, confirmed** (§U): overhead alone degenerates to maximal
+concentration and needs a countervailing mechanism or a graded cost; persistence needs
+continuity of participation as its own hypothesis.
 
-**To resume:**
-1. Get approval for the long run. Seeds 0–3 take about 100 minutes; it can run in parts,
-   because it resumes:
-   `uv run python scripts/probes/practice_concentration_counterfactual.py runs --jobs 2 --out <dir>`.
-   Then run `report --load <dir>`.
-2. Fill in the §U real-run results: opportunity, the `c` sweep, persistence,
-   representation growth, 16 vs 32, merge metrics, and the clearing link.
-3. Run the full validation (`make check`, `make test-stat`, both oracles,
-   `git diff --check`).
-4. Pause for scientific review.
+**Next:** scientific review of §U, then choose Stage 5C (candidates: a countervailing force
+or graded cost; continuity or entry cost as the participation hypothesis; the
+slope-weighted coalescence metric).
 
 **Physical-feedback gate:** closed.
 
@@ -82,7 +76,7 @@ rests on the exact optimization; the real runs measure consequences.
 | 4D | Store release `X = min(D, K)` is kcal-optimal under current physics; reserve targets rejected (counterfactual) | §R |
 | 4E | Control over new fields: H2 = H1; continuity preserves but never amplifies (counterfactual) | §S |
 | 5A | Endogenous differentiation audit: recommend practice concentration under finite demand with learning-by-doing (design only) | §T |
-| 5B (paused) | Participation overhead: corner solution for any o > 0; continuity of participation needed for persistence; provisional B (counterfactual) | §U |
+| 5B | Participation overhead: corner solution for any o > 0; small consequence under continuity; assignment matters more than degree; B confirmed (counterfactual) | §U |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**

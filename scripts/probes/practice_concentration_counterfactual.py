@@ -72,6 +72,7 @@ CAPACITIES = (16, 32)
 EPS = 1e-12
 GAPS = (0.01, 0.05, 0.1)  # efficiency-gap thresholds (sensitivity)
 YEARS: int | None = None
+PROGRESS_EVERY = 100  # years between progress lines per job
 
 
 # ---------------------------------------------------------------- shadow representation
@@ -604,8 +605,15 @@ def job(spec: tuple[str, int]) -> dict[str, Any]:
     try:
         sim = Simulator(scenario, record_strata=True)
         started = time.perf_counter()
-        for _ in range(scenario.config.simulation.n_years):
+        horizon = scenario.config.simulation.n_years
+        years = 0
+        for years in range(1, horizon + 1):
             sim.step()
+            if years % PROGRESS_EVERY == 0:
+                print(
+                    f"  {name} seed {seed}: year {years}/{horizon}, {len(sim.state.units)} units, {time.perf_counter() - started:.0f} s",
+                    flush=True,
+                )
             if not sim.state.units:
                 break
             alive = set(sim.state.units)
@@ -621,6 +629,8 @@ def job(spec: tuple[str, int]) -> dict[str, Any]:
         "stats": {s.p.label: compact(s.stats) for s in shadows},
         "opportunity": observer.opportunity,
         "neutral": physical_digest(sim) == physical_digest(plain),
+        "years": years,
+        "horizon": horizon,
         "seconds": seconds,
         "observer_seconds": observer.seconds,
         "plain_seconds": plain_seconds,
@@ -661,6 +671,14 @@ def km(durations: list[tuple[int, bool]], ages: tuple[int, ...]) -> list[float]:
     return out
 
 
+def _truncated(result: dict[str, Any]) -> str:
+    """Warning suffix for a run that stopped before its horizon (extinction); results saved
+    before the years were recorded have no check."""
+    if "years" not in result or result["years"] >= result["horizon"]:
+        return ""
+    return f"  WARNING: ended at year {result['years']} of {result['horizon']} (no units left)"
+
+
 def report(results: list[dict[str, Any]]) -> None:
     for name in SCENARIOS:
         rs = [r for r in results if r["name"] == name]
@@ -669,6 +687,9 @@ def report(results: list[dict[str, Any]]) -> None:
         print(
             f"\n=== {name}, seeds {[r['seed'] for r in rs]}; observer neutral: {all(r['neutral'] for r in rs)}"
         )
+        for r in rs:
+            if _truncated(r):
+                print(f"seed {r['seed']}{_truncated(r)}")
         opp = [o for r in rs for o in r["opportunity"]]
         f = np.array([o[2] for o in opp])
         print(f"farming unit-years {f.size}; P/(C-D) {q([o[3] for o in opp])}")
@@ -901,7 +922,7 @@ def main() -> None:
     with Pool(args.jobs, initializer=_set_years, initargs=(args.years,)) as pool:
         for result in pool.imap_unordered(job, specs, chunksize=1):
             print(
-                f"done {result['name']} seed {result['seed']} after {time.perf_counter() - started:.0f} s",
+                f"done {result['name']} seed {result['seed']} after {time.perf_counter() - started:.0f} s{_truncated(result)}",
                 flush=True,
             )
             if out is not None:

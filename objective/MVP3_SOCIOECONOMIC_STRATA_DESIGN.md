@@ -878,27 +878,113 @@ practitioners / others):
 - The shadow only quantifies the hypothetical case where participants clear (below). It
   is not evidence for the link.
 
-**Real-run results: PENDING (stage paused 2026-10-08).**
-- The first full sweep (4 seeds per scenario) ran out of memory after about 100 minutes
-  without output. The probe now keeps compact arrays, writes one file per job, can resume,
-  and prints progress.
-- Preliminary signals come from 200–260-year smoke runs, seed 0; they are not
-  conclusions:
-  - the mean competence of the shadow matches the authoritative unit level to 1e-15 at
-    every `c`;
-  - rotation leaves no lasting gap;
-  - continuity gives a median efficiency gap of 0.04–0.07 between participants and
-    others, with c = 1 the largest;
-  - competence-based assignment widens the gap to about 0.15;
-  - immediate splitting saturates capacity under fusion-heavy pressure runs;
-  - an accumulated-divergence merge at τ = 0.05 keeps components at about 2 per unit.
+**Real runs** (neolithic 600 y and pressure + cultivation 400 y, seeds 0–3; probe at
+`c88d489`; every run reached its horizon; observer neutral by physical digest in all 8).
+The shadow mean competence equals the authoritative unit level to ≤ 9.1e-16 in every
+shadow. Neolithic first, pressure second in each cell; E is agricultural efficiency
+`K/(K + 2)`.
 
-**Provisional recommendation: B.** Participation overhead is physically plausible, but it
-degenerates mathematically to maximal concentration. A countervailing mechanism (or a
-graded cost) is needed before activation, and persistence also needs continuity of
-participation, which is a separate hypothesis. This rests on the exact optimization result
-above. The real runs would measure consequences, not change this conclusion; it is
-pending confirmation and review.
+*Opportunity.* Concentration is possible in most farming unit-years:
+
+| | neolithic | pressure |
+|---|---|---|
+| farming unit-years | 325,766 | 102,200 |
+| `f_min` p50 / p90 | 0.41 / 0.71 | 0.68 / 0.93 |
+| `f_min` < 0.75 / < 0.5 / < 0.25 | 0.93 / 0.66 / 0.25 | 0.64 / 0.26 / 0.08 |
+| everyone needed (`f_min` = 1) | 0.006 | 0.047 |
+| consecutive years with `f_min` < 0.75, p50 / p90 / max | 6 / 34 / 258 | 3 / 12 / 133 |
+
+*Concentration sweep* (continuity assignment, capacity 16; gap = participants minus
+others, share-weighted, over unit-years with both):
+
+| | c = 0.25 | c = 0.5 | c = 0.75 | c = 1 |
+|---|---|---|---|---|
+| E-gap p50 / p90 | 0.014 / 0.040 · 0.005 / 0.022 | 0.015 / 0.043 · 0.005 / 0.024 | 0.017 / 0.049 · 0.006 / 0.027 | 0.021 / 0.058 · 0.006 / 0.034 |
+| unit-years with E-gap > 0.05 | 0.046 · 0.019 | 0.059 · 0.023 | 0.078 · 0.029 | 0.117 · 0.044 |
+| E-gap max | 0.18 · 0.14 | 0.19 · 0.14 | 0.20 · 0.15 | 0.23 · 0.20 |
+| practitioner E ÷ unit E − 1, p50 / p90 | 0.002 / 0.006 · 0.000 / 0.003 | 0.004 / 0.014 · 0.001 / 0.007 | 0.008 / 0.025 · 0.001 / 0.012 | 0.012 / 0.044 · 0.002 / 0.022 |
+
+- **The differentiation is real but small.** At maximal concentration the median gap is
+  0.021 (neolithic) and 0.006 (pressure); a gap above 0.1 occurs in 1.9 % and 0.9 % of
+  unit-years. The seed-0 smoke runs (0.04–0.07) overstated it.
+- **It grows monotonically and modestly with `c`.** No `c` produces a qualitative change,
+  consistent with the corner result: the degree of concentration is not where the
+  consequence lies.
+- **Potential physical consequence** (if crop yield used practitioners' competence instead
+  of the unit mean): a median 1.2 % / 0.2 % yield difference at `c = 1`, p90 4.4 % / 2.2 %.
+  This bounds what activation could do through this channel. Pressure is smaller because
+  demand is higher (`f_min` near 1).
+
+*Who participates* (c = 1, capacity 16):
+
+| assignment | E-gap p50 / p90 | > 0.05 / > 0.1 | K-gap p50 | splits / unit-year | component lifetime p50 / p90 |
+|---|---|---|---|---|---|
+| continuity | 0.021 / 0.058 · 0.006 / 0.034 | 0.117 / 0.019 · 0.044 / 0.009 | 4.2 · 2.9 | 6.8 · 6.7 | 0 / 3 y |
+| rotation | 0.002 / 0.006 · 0.001 / 0.004 | 0.000 / 0.000 · 0.000 / 0.000 | 0.5 · 0.6 | 13.4 · 12.1 | 0 / 1 y |
+| competence-based | 0.091 / 0.179 · 0.058 / 0.113 | 0.748 / 0.364 · 0.473 / 0.113 | 16.7 · 19.6 | 0.8 · 0.8 | 2–3 / 21–24 y |
+| continuity, minimum duration 3 y | 0.022 / 0.060 · 0.007 / 0.036 | 0.125 / 0.019 · 0.041 / 0.007 | 4.3 · 3.1 | 3.3 · 2.9 | 0 / 6–7 y |
+
+- **Rotation erases differentiation** (confirmed): no unit-year exceeds a 0.05 gap.
+- **Assignment matters more than concentration.** Competence-based assignment raises the
+  median gap 4× / 10× over continuity (0.09 / 0.06) and makes it self-reinforcing: the same
+  components keep practicing, so splits fall 8× and p90 component lifetime rises 8×. It is the
+  secondary hypothesis (ii) of §T; it is not tested here as a cause, only as a consequence.
+- A minimum participation duration halves the churn at no cost to the gap.
+
+*Representation.*
+- **Immediate splitting saturates any capacity.** For every `c > 0`, units sit at the
+  capacity in 88–92 % of unit-years, at 16 and at 32 alike (mean 14.9 / 29.5 components).
+  Doubling capacity doubles splits and coalescences.
+- **Capacity does not change the measured differentiation.** The participant/other gaps
+  are identical at 16 and 32, and within-unit dispersion differs by < 3 %. The extra
+  components hold near-duplicates (redundant pairs per unit-year 0.29 → 0.92 at `c = 1`
+  neolithic, 0.8 → 4.9 pressure).
+- **An accumulated-divergence merge is enough.** At τ = 0.05 (efficiency), units hold 3.5 /
+  2.4 components on average (p99 8 / 6), never reach the capacity, and need no forced
+  coalescence. Median within-unit dispersion falls (0.021 → 0.009 / 0.006 → 0.0015); p90
+  is largely kept in neolithic (0.049 → 0.045), less under pressure (0.025 → 0.016). τ = 0.01 still reaches the capacity in 39 % /
+  12 % of unit-years.
+- **The coalescence metric should be slope-weighted** (§T Resolution). Choosing the pair by
+  K-distance loses 2–9× more efficiency variance than choosing by efficiency, and picks a
+  different pair in 24–54 % of forced coalescences (`c > 0`). The slope-weighted K-distance
+  `K_half/(K + K_half)²·|ΔK|` ranks pairs exactly as the efficiency loss does (median
+  Spearman 1.00 in every shadow); plain K-distance does not (0.85–0.99).
+- **Cost.** The 13 shadows take about 100× the plain run (neolithic 2,058 s against 20 s for
+  4 seeds), dominated by split and coalescence churn. A single active representation with a
+  τ merge would be far cheaper; this is not measured here.
+
+*Persistence after cultivation stops* (units with a within-unit E spread ≥ 0.05 at the
+stop; Kaplan–Meier share not yet halved at 10 / 25 / 50 y, resumption censored):
+
+| | c = 0 (fusion only) | c = 1 continuity | c = 1, τ = 0.05 | c = 1 competence |
+|---|---|---|---|---|
+| neolithic | 1.00 / 0.63 / 0.17 (57) | 1.00 / 0.86 / 0.46 (8,724) | 0.85 / 0.62 / 0.30 (6,756) | 0.99 / 0.86 / 0.45 (9,264) |
+| pressure | 1.00 / 0.18 / 0.00 (58) | 1.00 / 0.38 / 0.00 (1,085) | 0.52 / 0.11 / 0.04 (953) | 1.00 / 0.29 / 0.00 (2,440) |
+
+- **Differences outlast practice by decades in neolithic** (about half not halved at 50 y,
+  near the 34-year decay half-life) and **for 10–50 years under pressure** (all halved by
+  50 y), where fusion mixes units faster. Stop episodes number in the thousands only because
+  concentration creates the spread; under fusion alone there are 57–58.
+- The τ = 0.05 merge shortens persistence because it fuses decaying leavers back early.
+
+*Clearing link* (hypothetical H2: participants clear; field-claim deviation from share
+per expansion, p50 / p90): 0.022 / 0.067 · 0.009 / 0.059 at c = 0.25, rising linearly to
+0.089 / 0.267 · 0.036 / 0.235 at c = 1 (36,950 · 15,385 expansions). The linearity is
+mechanical: the deviation is `(1 − f)` scaled by the expansion. It quantifies the size of
+§S's H2 *if* the link existed; it is not evidence for the link.
+
+**Recommendation: B, confirmed.** The real runs measure consequences and do not change it.
+- Participation overhead is physically plausible but degenerates to maximal
+  concentration; a countervailing mechanism or a graded cost is needed before activation.
+- Persistence needs continuity of participation, a separate hypothesis; rotation erases
+  the effect.
+- Even at maximal concentration with continuity, the consequence is small (median E-gap
+  0.02 / 0.006; median yield effect ≤ 1.2 %). Who participates (assignment) matters 4–10×
+  more than how many.
+- **If a version is ever activated,** it needs: continuity (or an entry cost) stated as a
+  hypothesis; an accumulated-divergence merge (τ ≈ 0.05) rather than immediate splitting;
+  and the slope-weighted coalescence metric.
+- Pending scientific review.
 
 ---
 
@@ -906,8 +992,9 @@ pending confirmation and review.
 
 - **First endogenous differentiator (§T).** Practice concentration under finite demand
   needs an initiation hypothesis (per-participant cost, experience-based assignment, or
-  anticipatory allocation) before any design is activated; Stage 5B evaluates the
-  counterfactual degree of concentration.
+  anticipatory allocation) before any design is activated. Stage 5B (§U): overhead alone
+  gives a corner solution; assignment (continuity or competence) matters more than the
+  degree of concentration; the consequence is small under continuity.
 
 - **Cause of differentiated clearing or plot extension.** Whether new land follows labor
   (H1/H2) or control (H3) needs a named lower-level cause (plot extension,
