@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-14 (MVP 3 Stage 5H, awaiting review)\
+**Updated:** 2026-10-14 (MVP 3 Stage 5I, awaiting review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,94 +13,88 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**Completed:** Stage 5H, material provisioning, donor choice and dependency validation
-(design §AA). **PAUSE FOR SCIENTIFIC REVIEW.**
+**Completed:** Stage 5I, food-energy semantics and nutritional fertility, with a
+controlled demographic branch (design §AB). **PAUSE FOR SCIENTIFIC REVIEW.**
 
-**Production behavior:** unchanged.
-- `economy/provisioning_counterfactual.py` (NOT ACTIVE) is not called by the simulator,
-  registers no rule and has no setting.
-- Probe `scripts/probes/provisioning_counterfactual.py` (`record` about 2 min for 8 runs,
-  `analyse` about 1 min, `controlled`).
-- Tests `tests/test_provisioning_counterfactual.py` (11).
+**Starting commit:** `7f54c09` (Stage 5H), clean worktree. The Stage 5H files and results
+remain part of the scientific history (§AA).
 
-**Starting commit:** `babc078` (Stage 5G), clean worktree.
+**Files changed:**
+- New: `src/madexplorer/population/dietary_intake.py` (NOT ACTIVE).
+- New: `scripts/probes/fertility_intake_experiment.py` (EXPERIMENTAL / OPT-IN / NOT
+  CANONICAL).
+- New: `tests/test_dietary_intake.py` (12 tests).
+- Updated: the design document (§AB) and this file.
 
-**Trade allocation audit** (`economy/trade.py`):
-- Surplus is `H + stores − need`; the offer is 0.3 × surplus (a behavioral hypothesis).
-- Deficit units are served by ascending `(balance/need, id)`; donors in range by ascending
-  `(path cost, id)`. Both orders are deterministic and break ties by unit id.
-- Transport: `exp(−cost/60 km)`. Donors pay from harvest, then stores.
-- Ties are symmetric `+received/need`, decay × 0.7, are pruned ≤ 1e-3, rewired on fusion,
-  and absent in daughters.
-- Ties are read by diffusion and innovation only, never by trade.
-- Newly recorded: floating-point dust transfers (0.7–1.5 % of transfers, ~1e-7 kcal)
-  create transient near-zero ties.
+**Production default:** unchanged.
+- No production file, rule, RNG stream, fixture or baseline was modified.
+- The branch replaces subsystem *instances* in one `Simulator`, never classes or the
+  default pipeline.
 
-**Baseline replay:** exact.
-- Every authoritative transfer is reproduced bit for bit in 4,000 / 4,000 trade years
-  (131,400 transfers).
-- The energetics recomputation is exact, and the shadow ties at weight 0 are exact.
-- All runs are observer-neutral.
+**Food-energy semantics:**
+- `food_ratio = H/N` (harvest after trade) is harvest adequacy.
+- Dietary intake is `(min(H, N) + X)/N`, where `X` is stores eaten.
+- Physiological sufficiency is `1 − deficit`, which includes reserve drawdown.
+- All three are exactly reconstructible from the energetics inputs.
+- Readers of `food_ratio`:
+  - fertility: the documented mechanism is intake, so intake is needed;
+  - innovation need and surplus: production and economic quantities, so H0 is coherent;
+  - fission food stress: ambiguous;
+  - telemetry.
+  - Migration uses its own function.
 
-**Meaningful donor choice** (neolithic · pressure):
-- Nominal choice in 0.96 · 0.89 of served recipient-years.
-- ≥ 2 donors able to deliver ≥ 25 % of the deficit: 0.79 · 0.46.
-- ≥ 2 donors that could each cover the whole deficit: 0.43 · 0.13.
-- Unserved deficit units always had no candidate left (exhausted supply).
+**H0 / H1:**
+- H0 = `fertility_multiplier(food_ratio)`.
+- H1 = `fertility_multiplier(dietary_intake_ratio)`.
+- Same function and parameters, no new state, no RNG. H1 excludes body reserves; H2 =
+  `1 − deficit` is a diagnostic only.
+- **Source invariance:** equal intake from harvest or stores gives an equal H1 multiplier
+  (H0: 1.0 vs 0.135).
 
-**Donor substitutability:**
-- Local replacement of the primary donor: full 0.90 · 0.72.
-- Network rematch (competition respected): full 0.80 · 0.40, none 0.16 · 0.50.
-- Under pressure, competition halves real replaceability.
+**Same-state diagnostic** (neolithic · pressure, 8 seeds):
+- H0 reconstruction is exact.
+- The multiplier changes by more than 0.01 in 3.2 % · 5.3 % of unit-years, and by more
+  than 0.10 in 1.4 % · 1.5 %. These are concentrated on recipients (33 % · 12 %) and on
+  store-using non-traders under pressure.
+- Expected births on fixed states: +0.38 % · +0.42 %.
+- §AA reconciliation: its strict figure undercounted stores that close the gap exactly.
+  With a 1e-12 tolerance it is 4.0 % · 4.4 %; the rest of the 4.4 % · 9.0 % is reserve
+  compensation.
 
-**Trade ties beyond geography:**
-- Lagged ties predict transfers (+0.08 · +0.11 within rank × cover × adequacy strata).
-- But H0 never reads them, and the decision state determines the donor set (99.5–99.9 %;
-  the rest are dust residues).
-- The predictive power is the recurrence of geography, surplus, need and competition, not
-  preference.
-- Pairs are rarely two-way (9 %). A past reverse flow has no consistent effect.
+**Branched simulation** (8 paired seeds per scenario):
+- Experimental H0 is bit-identical to canonical in 16 / 16 runs (digest, per-year
+  component hashes, metric rows).
+- H1's first divergence is always a birth difference in a unit whose multiplier changed,
+  with identical energetics in that year.
+  - Neolithic: years 142–262. Pressure: years 3–41.
 
-**Static alternative routing** (H1 = tie first; H2 interpolates; λ = 0 equals H0 exactly):
-- H1 changes the primary donor for 31 % · 15 % of recipients.
-- Delivered food +0.4 % · −0.5 %; shipped +4.8 % · +1.5 %; loss share +2.5 · +1.1 points;
-  unmet deficit −1.0 % · +0.3 %.
-- It relabels donors and raises transport loss and donor burden. Welfare proxies move in
-  the third decimal.
-- Shadow tie history (physical history conditioned): recurrence 0.38 → 0.57 · 0.37 → 0.45;
-  pairs ≥ 5 y 1.6 → 2.5 %.
-  - The feedback is mechanical and weak, and insensitive to decay and initial ties.
+**Downstream demographic effects:**
+- Neolithic: none detectable (final population ratio median 0.99, range 0.90–1.12, mixed
+  signs).
+- Pressure: year-400 population +5.9 % median, positive in 8 / 8 seeds (+0.5 % to +52 %).
+  - Outliers are seeds reaching granaries (H1 3 / 8 vs H0 1 / 8; unresolved, p ≈ 0.57).
+  - Seeds in the same storage regime under both inputs: +2.5 % median, all positive.
+- Births and deaths rise together; deficits show no consistent change.
+- Fission, trade and innovation change only through population.
 
-**Material provisioning consequences:** reliance is real (§Z). Partner-specific
-dependency is rare in neolithic and common under pressure (50 % irreplaceable after
-rematching), caused by scarcity and competition, not by relationships.
+**Raw / logical oracles:** IDENTICAL (default mode).
 
-**Food-ratio / fertility accounting:**
-- `food_ratio = H/need` (harvest after trade) excludes store consumption.
-- `nutritional_fertility` states an intake mechanism: "food intake falls below
-  requirement".
-- The same intake can give fertility 1.0 (all harvest) or 0.135 (60 % harvest + 40 %
-  stores). Abundant stores with a poor harvest give 0.008.
-- In real runs, `food_ratio` < 1 with no deficit occurs in 4.4 % · 9.0 % of unit-years
-  (recipients 42 % · 21 %; donors 9 % · 4 %; non-traders 1.5 % · 12.5 %). Fertility gap
-  p90 0.17 · 0.12.
-- This is a property of the rule, not of trade. It is an unresolved semantic mismatch with
-  strong evidence for interpretation A.
-- Readers: fertility, fission and innovation. Nothing changed.
-
-**Scientific decision: B primary, D secondary.**
-- Do not introduce tie preference.
-- Review the food-ratio semantics in a separate, versioned stage before any provisioning
-  behavior.
-
-**Population representation:** unchanged.
+**Scientific decision: A.** H1 is the better implementation of the stated mechanism.
+- Recommend a separate, versioned change of the fertility input only, with the ten
+  requirements in §AB.8.
+- Not activated; no baseline created.
 
 **Physical-feedback gate:** closed.
 
-**Recommended next stage:** a food-accounting and fertility semantics review. It would
-decide per reader (fertility, fission, innovation) between intake and production-stress
-semantics, run a branched comparison against MVP 2.1, and set a new invariant and baseline
-if approved.
+**Next recommended stage:** the versioned fertility-input change (e.g. MVP 2.2), if
+approved:
+- an explicit dietary-intake quantity computed in energetics;
+- tests for source invariance and reserve exclusion;
+- 16–32 seeds per scenario, including the granaries-regime frequency;
+- new oracles and goldens under the new version;
+- MVP 2.1 kept unchanged.
+
+Outstanding and separate: dust transfers (§AA) and fission food-stress semantics.
 
 **Next:** PAUSE FOR SCIENTIFIC REVIEW.
 
@@ -125,6 +119,7 @@ if approved.
 | 5F | Fusion-born knowledge heterogeneity: real (≈ 7 % of fusions ΔE ≥ 0.01, from different productive histories), slow to decay in K (34 y), but static consequence ≈ 0.004 % of harvest even with indefinite retention; K's ontology is mixed; B (audit + counterfactual) | §Y |
 | 5G | Causal-structure review: no within-unit initiator has substrate; between-unit provisioning is grounded and consequential (recipients' fertility and starvation), with reliance on the local pool rather than partners (ties unread by trade); compartments are the exact finite representation, mixtures miss threshold tails, marginals miss correlation; A (review + read-only audit + benchmark) | §Z |
 | 5H | Provisioning: exact replay; donor choice exists but competition halves substitutability under pressure; ties add no allocation information beyond recurring material configuration; tie routing relabels donors with ≤ 0.5 % change in delivered food; food_ratio excludes store consumption despite an intake rationale; B (+ D) (audit + counterfactual matching) | §AA |
+| 5I | Food-energy semantics: fertility's documented mechanism is intake but its input is harvest adequacy; dietary intake (H1) is exactly reconstructible, source-invariant, excludes reserves; experimental H0 branch bit-identical; H1 neutral in neolithic, +5.9 % population under pressure (granaries-regime outliers); A: separate versioned fertility-input change recommended (audit + controlled branch) | §AB |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
@@ -147,8 +142,9 @@ if approved.
 
 **Do not forget:**
 - `strata_access.py`, `store_release.py`, `field_control.py`, `practice_concentration.py`,
-  `entry_cost.py`, `knowledge_exposure.py`, `fusion_competence.py` and
-  `economy/provisioning_counterfactual.py` are NOT ACTIVE.
+  `entry_cost.py`, `knowledge_exposure.py`, `fusion_competence.py`,
+  `economy/provisioning_counterfactual.py` and `dietary_intake.py` are NOT ACTIVE; the 5I
+  branch (`scripts/probes/fertility_intake_experiment.py`) is experimental and opt-in.
   Nothing in the simulator calls them, and their parameters are not scenario settings.
 - Capacity coalescence is numerical, and its equal-weight metric is mechanism-agnostic.
   Revisit it (§M6) before anything reads claims.

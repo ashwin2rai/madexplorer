@@ -2,7 +2,7 @@
 
 **Status:** current contract plus findings register (rewritten 2026-10-07; the full
 stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 5H (§AA). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
+stage: 5I (§AB). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
 is closed.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
 (`PopulationStore`, `population/fields.py`).
@@ -2917,6 +2917,355 @@ and fertility semantics review**. Its tasks:
 
 Partner preference is not pursued. Pending scientific review.
 
+### §AB. Stage 5I — food-energy semantics and the fertility input (2026-10-14)
+
+**AUDIT + CONTROLLED CASES + EXPERIMENTAL BRANCH. EXPERIMENTAL / OPT-IN / NOT CANONICAL.**
+- Pure functions in `population/dietary_intake.py` (NOT ACTIVE: no simulator path calls
+  them, no rule, no setting).
+- Experiment: `scripts/probes/fertility_intake_experiment.py` (`controlled`, `run`,
+  `analyse`).
+- Tests: `tests/test_dietary_intake.py` (12).
+- Starting point `7f54c09` (Stage 5H). The production default is unchanged. No baseline
+  was created. MVP 2.1 remains the reference.
+
+**Question.** `food_ratio = H/need` (harvest after trade) feeds `nutritional_fertility`,
+whose stated mechanism is food *intake*. Stored food eaten this year is intake but is
+excluded. Does a dietary-intake input implement the stated mechanism better, and what
+does the change do to the whole system?
+
+**Answer.** Yes, for fertility.
+- **Semantics:** the fertility rule documents an intake mechanism. Of the `food_ratio`
+  readers, only fertility clearly needs intake; innovation's need and surplus terms fit
+  harvest adequacy; fission is ambiguous.
+- **Implementation:** H1 changes one input. The experimental H0 branch is bit-identical to
+  the canonical simulator in 16 / 16 runs.
+- **Same-state effect:** H1 changes the fertility multiplier by more than 0.01 in 3.2 % ·
+  5.3 % of unit-years and raises expected births by +0.38 % · +0.42 %.
+- **Branched runs (8 seeds each):**
+  - neolithic: no detectable effect (final population ratio median 0.99, 0.90–1.12, mixed
+    signs);
+  - pressure: +5.9 % population at year 400 (median; positive in 8 / 8 seeds, +0.5 % to
+    +52 %). The extremes come from a granaries-technology regime reached by 3 / 8 H1 vs
+    1 / 8 H0 seeds, which is not statistically resolved.
+- **Decision: A.** Recommend a separate, versioned change of the fertility input only.
+
+#### 1. Annual food-energy lifecycle (verified at `7f54c09`)
+
+```text
+farming   farm_harvest = fields × yield × worked                     (agriculture.py:336)
+foraging  harvest_kcal = farm_harvest + forage                       (foraging.py:265-270)
+trade     donor: harvest −= min(sent, harvest); stores −= rest;
+          recipient: harvest += received                             (trade.py:67-81)
+energetics  N = adult-equivalent need × climate + travel debt        (energetics.py:54-77)
+            H = harvest_kcal (after trade); S = stores after trade; R = body reserve
+            food_ratio = H/N (1 if N = 0)
+            fed (H ≥ N): surplus refills R up to its cap, the rest is stored or spoils
+            short: X = min(N − H, S) from stores; then min(N − H − X, R) from reserves
+            deficit = remaining / N                                  (energetics.py:118-193)
+demography  fertility × min(L(food_ratio)/L(1), 1), L logistic (0.8, 0.1);
+            starvation hazard × exp(3 · deficit · vulnerability)      (demography.py:39-205)
+later     fission (food stress), innovation (need, surplus, instability) read the same
+          columns; at fusion both are population-weighted (fields.py:108-109)
+```
+
+- All three quantities are reconstructible *exactly* from the energetics inputs.
+  - The branch recomputes H0 with zero difference from the authoritative `food_ratio`.
+  - `X` equals the production `from_stores`.
+- Shipped stores left the donor before energetics, so they can never be counted as the
+  donor's intake. Received food enters `H` exactly once.
+
+| quantity | definition | meaning |
+|---|---|---|
+| H0 harvest adequacy | `H / N` (the authoritative `food_ratio`) | current production and acquisition relative to need |
+| H1 dietary intake | `(min(H, N) + X) / N` ≤ 1 | food actually eaten (harvest and stores), excluding body reserves |
+| H2 net sufficiency (diagnostic only) | `1 − deficit` | intake plus reserve drawdown |
+
+#### 2. Every reader of `food_ratio` and `energy_deficit`
+
+| reader | code | equation | stated rationale | appropriate input |
+|---|---|---|---|---|
+| fertility | `demography.py:39-48, 196` (`nutritional_fertility`) | `min(L(fr)/L(1), 1)` | "Fecundity declines logistically as food **intake** falls below requirement (energetic constraint on ovulation)"; limitation "Uses intake relative to need only" | **dietary intake (H1)**; H0 contradicts the stated mechanism |
+| fission food stress | `groups.py:58` (`fission_hazard`) | logit + `w · max(0, 1 − fr)` | "food stress (1 − food ratio)" | **ambiguous**: shortage-driven splitting fits H1; a production-position or anticipated-scarcity reading fits H0. No document decides |
+| innovation need | `innovation.py:44` (`need_signals`, `food_stress`) | `max(0, 1 − fr) + forage decline` | invention "requires pressure (a technology-specific need signal)" | **production stress (H0) is defensible**: low current production, paired with declining forage returns, is a problem signal even when stores feed people |
+| innovation surplus | `innovation.py:234` | `min(1, stores/N + max(0, fr − 1))` | capacity: surplus | **H0 is consistent**: an economic surplus (stocks plus production above need), not nutrition |
+| innovation instability | `innovation.py:253` | uses `energy_deficit` | instability suppresses invention | physiological deficit (unchanged) |
+| starvation | `demography.py:192` | `exp(3 · deficit · vulnerability)` | deficit drives starvation | physiological deficit (correct as is) |
+| telemetry | `recorder.py:155-156`; `cli/main.py:79-84, 221` | population-weighted means | reporting | label as harvest adequacy |
+| migration | `migration.py:46-97, 143, 671, 889` | its own belief-based `food_ratio()` function | food utility of destinations | not this column |
+| fusion | `fields.py:108-109` | population-weighted | composition | n/a |
+
+- `unit.food_ratio` is documented as "acquired / required" (`unit.py:275`). That matches
+  H0's computation, not the fertility rationale.
+- The fertility docstring's "last year's food ratio" means the year just accounted by
+  energetics, which runs immediately before demography.
+- **No global replacement is warranted.**
+  - Fertility needs intake.
+  - Innovation's need and surplus terms are coherent with harvest adequacy and economic
+    surplus.
+  - Fission is genuinely ambiguous.
+
+#### 3. H0 and H1
+
+- **H0:** `fertility_multiplier(food_ratio)`, exactly as now.
+- **H1:** `fertility_multiplier(dietary_intake_ratio)`. Same function, midpoint, slope and
+  cap. No new parameter, no new state, no RNG.
+- The input is computed from the energetics inputs of the same year.
+- H1 = H0 bit for bit when no stores are eaten and the harvest is short. When the harvest
+  covers need, H1 = 1 and H0 ≥ 1, giving the same multiplier.
+- H1 is clipped at 1 for one-ulp overshoots (`H + X` can exceed `N` by a rounding step).
+  This is numerical, not behavioral, and does not change any multiplier.
+- **Body reserves are excluded.** H2 = `1 − deficit` would count reserve drawdown as if it
+  were food. It is a different hypothesis (net energy balance) and is kept as a diagnostic
+  only.
+
+#### 4. Controlled cases (`controlled`; need 100, reserve cap 30)
+
+| case | H0 | H1 | H2 | stores eaten | reserves | deficit | fertility H0 | fertility H1 |
+|---|---|---|---|---|---|---|---|---|
+| 1 adequate harvest | 1.10 | 1.00 | 1.00 | 0 | 0 | 0 | 1.000 | 1.000 |
+| 2 stores cover a short harvest | 0.70 | 1.00 | 1.00 | 0.30 | 0 | 0 | 0.305 | **1.000** |
+| 3 body reserves cover a shortfall | 0.80 | 0.85 | 1.00 | 0.05 | 0.15 | 0 | 0.568 | 0.707 (< 1: reserves are not food) |
+| 4 donor ships, stores cover | 0.90 | 1.00 | 1.00 | 0.10 | 0 | 0 | 0.830 | 1.000 |
+| 5 donor ships, genuine shortage | 0.70 | 0.75 | 0.80 | 0.05 | 0.05 | 0.20 | 0.305 | 0.429 (shortage visible) |
+| 6 recipient rescued | 1.00 | 1.00 | 1.00 | 0 | 0 | 0 | 1.000 | 1.000 |
+| 7 recipient still underfed | 0.70 | 0.70 | 0.75 | 0 | 0.05 | 0.25 | 0.305 | 0.305 |
+| 8a equal intake, all harvest | 1.00 | 1.00 | 1.00 | 0 | 0 | 0 | 1.000 | 1.000 |
+| 8b equal intake, 60 harvest + 40 stores | 0.60 | 1.00 | 1.00 | 0.40 | 0 | 0 | 0.135 | **1.000** |
+| 9 abundant stores, harvest 10 | 0.10 | 1.00 | 1.00 | 0.90 | 0 | 0 | 0.001 | 1.000 |
+| 10 shipment partly from stores (50 → 20 left) | 0.60 | 0.80 | 1.00 | 0.20 | 0.20 | 0 | 0.135 | 0.568 (shipped stores not eaten) |
+| 11 need 0 / 1e-300 (harvest 0, stores 5) | 1 / 0 | 1 / 1 | — | — | — | — | bounded | bounded |
+| 12 partial reserve compensation | 0.60 | 0.70 | 0.85 | 0.10 | 0.15 | 0.15 | 0.135 | 0.305 |
+
+**Invariants**, each tested:
+- H0 is the authoritative expression.
+- `X` is the production withdrawal, `X ≤ S`, and `H + X ≤ max(N, H)` within one rounding
+  step.
+- H1 ≤ 1, and H1 = H0 when no stores are eaten.
+- H1 is invariant to the food source when total intake is fixed.
+- Reserves are never intake, and H2 ≥ H1.
+- Shipped stores are excluded; received food is counted once.
+- The multiplier is bounded in [0, 1].
+- The pure functions draw no random numbers.
+
+#### 5. Same-state incidence and direct effect (authoritative history)
+
+Reconstruction from the energetics inputs: H0 equals the authoritative `food_ratio`
+with zero difference in all 876,185 unit-years. Values are neolithic · pressure (8 seeds,
+633,400 · 242,785 unit-years).
+
+| | all | population-weighted | donors | recipients | no trade |
+|---|---|---|---|---|---|
+| multiplier change > 0.01 | 0.032 · 0.053 | 0.036 · 0.055 | 0.066 · 0.036 | 0.329 · 0.119 | 0.011 · 0.054 |
+| multiplier change > 0.10 | 0.014 · 0.015 | 0.015 · 0.013 | 0.021 · 0.005 | 0.206 · 0.050 | 0.003 · 0.015 |
+| H0 < 1 but stores eaten bring intake to the requirement | 0.036 · 0.050 | 0.041 · 0.051 | 0.079 · 0.047 | 0.387 · 0.147 | 0.011 · 0.008 |
+| intake short but reserves cover part | 0.007 · 0.080 | | 0 · 0 | 0.075 · 0.161 | 0.004 · 0.182 |
+| stores eaten ≥ 5 % of need | 0.018 · 0.019 | | 0.029 · 0.008 | 0.228 · 0.057 | 0.005 · 0.019 |
+| population share | | | 0.135 · 0.568 | 0.048 · 0.144 | 0.817 · 0.287 |
+
+- Multiplier change where it exceeds 0.01, p50 / p90 / p99: 0.088 / 0.18 / 0.44 ·
+  0.052 / 0.16 / 0.28 (max 0.95 · 0.69). H1 never lowers the multiplier, since intake ≥
+  harvest adequacy.
+- **The discrepancy is common but small, with a rare large tail.** It concentrates on
+  recipients in neolithic and on store-using non-traders under pressure.
+- Fertility-weighted mean multiplier: 0.9920 → 0.9958 · 0.9410 → 0.9449.
+- **Direct effect on fixed states** (expected births under the existing demographic rule,
+  with survival, mate availability and the age schedule; no draws): 674,759 → 677,309
+  (**+0.38 %**) · 277,569 → 278,723 (**+0.42 %**). Realized births on the same history
+  were 675,120 · 277,792.
+
+**Reconciliation with §AA** (same seeds 0–3 reproduce §AA's numbers exactly):
+
+| condition | neolithic | pressure |
+|---|---|---|
+| H0 < 1 with zero final deficit (§AA: 4.4 % · 9.0 %); includes reserve compensation | 0.0439 | 0.0897 |
+| H0 < 1, harvest + stores *actually eaten* ≥ need, strict (§AA: 3.6 % · 3.5 %) | 0.0363 | 0.0352 |
+| same, with a 1e-12 tolerance | **0.0397** | **0.0438** |
+| seeds 0–7, tolerant | 0.0358 | 0.0495 |
+
+- §AA's second figure already used stores eaten, not stores available, but it undercounted.
+  When stores close the gap exactly, `(H + X)/N` can round to one ulp below 1. The probe now
+  uses a 1e-12 tolerance (`FULL`).
+- The two conditions differ by reserve compensation: 0.4 % · 4.6 % of unit-years have
+  H0 < 1, intake < 1 and still no deficit.
+- Denominators: populated unit-years with need > 0, both stages.
+
+#### 6. The experimental branch
+
+- **Implementation.** One `Simulator` per run, with three pipeline *instances* replaced by
+  subclasses. The classes and the default pipeline are untouched.
+  - `BranchEnergetics` runs production energetics and computes intake and diagnostics from
+    the same inputs. It changes no state.
+  - `BranchDemography` runs production demography with the `food_ratio` column holding the
+    branch input only during its `evaluate`. The authoritative column is then restored and
+    checked bit for bit every year (0 failures).
+  - `ObservingTrade` records roles only.
+- Starvation (deficit), fission and innovation read the authoritative `food_ratio` and
+  deficit.
+- The diagnostic expected-births calculation draws no random numbers.
+
+**Exactness of the experimental H0** (all 8 seeds of both scenarios):
+- final physical digest identical;
+- every per-year component hash identical (each RNG stream, cohorts, food state, other
+  unit state, knowledge);
+- metric rows identical, NaN-aware.
+
+The branch machinery is therefore neutral.
+
+**First H1 divergence.**
+
+| | neolithic | pressure |
+|---|---|---|
+| first year any unit's H1 multiplier ≠ H0 | years 3–108 | year 2–3 |
+| first state divergence | years 142–262 | years 3–41 |
+| components first differing | cohorts + knowledge (+ demography stream in 4 / 8) | cohorts + knowledge (+ demography stream; in 2 seeds also food and the fission stream) |
+
+- In every divergence year, energetics inputs are identical between H0 and H1, at least
+  one unit has a different multiplier, and births differ.
+- The other components follow in the same year:
+  - knowledge: learning reads population;
+  - food and fission stream (seeds 1 and 6 under pressure): the changed cohorts change the
+    fission departure draw and the stores split.
+- Divergence lags the first multiplier difference because a different binomial
+  probability often yields the same outcome, especially in small units.
+- After divergence, matched seeds no longer align event by event.
+
+**Branched outcomes** (H1 / H0 per seed; median and range over 8 paired seeds):
+
+| quantity | neolithic | pressure |
+|---|---|---|
+| population, final year (600 · 400) | 0.990 (0.897–1.118) | **1.059 (1.005–1.517)** |
+| population, final 50-year mean | 1.011 (0.889–1.145) | 1.056 (0.960–1.467) |
+| cumulative births | 1.019 (0.908–1.160) | 1.062 (0.920–1.223) |
+| cumulative deaths | 1.028 (0.910–1.172) | 1.062 (0.907–1.182) |
+| living units (final 50 y) | 1.019 (0.873–1.204) | 1.061 (0.920–1.439) |
+| mean unit size | 0.987 (0.901–1.021) | 1.017 (0.947–1.042) |
+| fissions / fusions (cumulative) | 1.006 / 1.013 | 1.049 / 1.052 |
+| migrations (cumulative) | 1.113 (0.850–1.443) | 1.032 (0.880–1.203) |
+| extinctions | 0.88 (few events) | 0–1 events |
+| crude birth / death rate (final 50 y) | 1.000 / 1.004 | 1.011 / 0.982 |
+| mean energy deficit (final 50 y) | 0.958 (0.30–52) | 0.904 (0.78–1.08) |
+| stores per capita (final 50 y) | 0.992 (0.33–1.04) | 1.007 (0.95–2.61) |
+| cultivated ha (final 50 y) | 0.948 (0.77–1.05) | 1.083 (0.96–1.64) |
+| farm share of harvest | 0.973 | 1.031 |
+| trade volume (cumulative) | 0.956 (0.45–3.70) | 1.080 (0.86–1.67) |
+| inventions / adoptions | 1.059 / 0.945 | 1.000 / 1.126 |
+| first plant_cultivation invention year | 1.000 (0.87–1.01) | 1.078 (0.89–1.27) |
+| plant and game stock fraction | 0.996 / 0.957 | 1.001 / 1.166 |
+| population ratio over time | 1.000 until year 200; then 1.07, 0.99, 1.05, 0.99 at years 300–600 | 1.000 / 1.015 / 1.027 / 1.015 / 1.072 / 1.059 at years 25 / 50 / 100 / 200 / 300 / 400 |
+
+- **Neolithic: no detectable systematic effect.**
+  - Most unit-years are fed by harvest (mean `food_ratio` 1.15), so few units ever have
+    their fertility changed.
+  - The trajectories diverge late (years 142–262), and seed-to-seed variation (±10 %)
+    dominates.
+- **Pressure: a modest, consistently signed population increase plus a regime lottery.**
+  - Units eat stores and draw reserves often, so H1 relieves an artificial fertility
+    penalty from year 2.
+  - Population is higher at year 400 in all 8 seeds.
+  - The large outliers (+52 % seed 2, +15 % seed 7) are seeds that reached **granaries**:
+    - H0: 1 / 8 seeds (seed 6, year 161);
+    - H1: 3 / 8 (seeds 2, 6, 7; years 164, 170, 129).
+    - Granaries raise stores per capita about 2.5× and support more cultivation and
+      population.
+    - Whether H1 changes the probability of reaching granaries is **not resolved**
+      (1 / 8 vs 3 / 8; Fisher exact p ≈ 0.57). It is a rare invention downstream of
+      population size and surplus.
+  - **Restricted to seeds in the same storage regime under both inputs** (0, 1, 3, 4, 5, 6),
+    year-400 population ratios are 1.028, 1.112, 1.022, 1.005, 1.090, 1.006: median
+    **+2.5 %**, all positive.
+- **Feedback offsets part of the direct effect, as expected.** Deaths rise about as much
+  as births (crude rates ≈ unchanged), and per-capita resources stay similar (harvest/need
+  1.000).
+  - Deficits do not rise consistently: H1 removes an accounting penalty, it does not
+    create food.
+- **Provisioning, fission and innovation** change only indirectly, through population.
+  Their rules still read the authoritative `food_ratio`.
+  - Trade volume and fissions scale roughly with population under pressure.
+  - Neolithic changes have inconsistent signs.
+- **Statistical caution.** Eight paired seeds per scenario resolve the sign under pressure
+  but not the magnitude. The neolithic effect is indistinguishable from zero. Granaries
+  regime frequency needs many more seeds.
+- No result is attributed to anything but the fertility input. Every first divergence is a
+  birth difference in a unit whose multiplier changed.
+
+#### 7. Biological limits of H1
+
+H1 implements the *stated* mechanism: fecundity responds to food eaten relative to need.
+It omits:
+- body condition (reserves);
+- the duration of stress;
+- lactation and reproductive state;
+- age-specific sensitivity;
+- chronic conditions.
+
+H2 shows that reserve compensation is common and can be large. A full reproductive-energetics
+model might weigh intake and condition together, but that would need new state and
+parameters and is not proposed. H1 is the minimal correction of an
+implementation/specification mismatch, not a validated theory of human fertility.
+
+#### 8. Decision
+
+**A: H1 is the better implementation of the stated mechanism.** Recommend a separate,
+versioned scientific change of the fertility input only. It is not activated here.
+
+- **Semantic validity** (independent of trajectories):
+  - `nutritional_fertility` states an intake mechanism.
+  - H0 makes fertility depend on the *source* of food at equal intake (1.0 vs 0.135),
+    which contradicts that mechanism.
+  - H1 is source-invariant, excludes reserves, and needs no new parameter or state.
+- **Implementation validity:**
+  - The experimental H0 is bit-identical to the canonical simulator.
+  - H1 isolation is verified: every first divergence is a birth difference after an
+    actual multiplier change, with identical energetics.
+- **Consequences:** coherent and bounded.
+  - Neutral in neolithic.
+  - Modestly positive under pressure (median +5.9 %; +2.5 % within the same storage
+    regime).
+  - Some uncertainty from rare technology-regime changes.
+- **Not B:** the dynamics are interpretable. Their remaining uncertainty is ordinary
+  stochastic regime variation, to be quantified during the versioned change.
+- **Not C:** H1 is a minimal, defensible reading of the stated mechanism. Body condition
+  and duration are acknowledged omissions, not a reason to keep a source-dependent rule.
+- **Not D:** no document supports a production-stress interpretation for fertility.
+- **Not E:** intake is exactly reconstructible.
+
+**Other readers (no change recommended now):**
+- Innovation need (`food_stress`) and surplus: harvest adequacy and economic surplus are
+  coherent with their stated roles. Keep H0, and document them as production quantities.
+- Fission food stress: genuinely ambiguous. Leave it unchanged. If ever revisited, decide
+  by an explicit hypothesis (shortage-driven vs production-driven splitting) with its own
+  experiment.
+- Suggested vocabulary, only where a reader needs it:
+  - `food_ratio` documented as *harvest adequacy* (keep the name and column: it is in
+    oracles and metrics);
+  - *dietary intake* computed in energetics for fertility;
+  - `energy_deficit` already is the physiological deficit.
+  - No nutrition-state framework.
+
+**Requirements for the later versioned change:**
+1. Approve the physiological interpretation: fertility responds to dietary intake
+   relative to need, with reserves excluded.
+2. Add an explicit causal quantity, dietary intake, computed in energetics from `H`, `X`
+   and `N`. Make it either transient or a declared unit field with its split/merge rule.
+3. Minimal production implementation: fertility reads it; nothing else changes.
+4. Tests for source invariance at equal intake.
+5. Tests distinguishing intake from reserve compensation (H2 ≠ H1).
+6. Verified demographic effects on at least 16–32 seeds per reference scenario, including
+   the frequency of the granaries regime.
+7. New raw and logical oracles plus new golden fixtures under a new version (e.g.
+   MVP 2.2), and statistical tests re-baselined deliberately.
+8. A comparison report against the MVP 2.1 artifacts, which are kept unchanged.
+9. An explicit version identifier and a `nutritional_fertility` rule version bump.
+10. Documentation migration: the `unit.food_ratio` comment, the fertility docstring
+    ("last year's"), and the status and objective sections.
+
+**Outstanding, kept separate:**
+- §AA dust transfers (numerical, versioned investigation).
+- The fission semantics.
+- Whether body condition should modulate fertility (a later biology question).
+
+Physical-feedback gate: closed. Pending scientific review.
+
 ---
 
 ## 3. Open questions
@@ -2944,10 +3293,10 @@ Partner preference is not pursued. Pending scientific review.
   donor choice exists, but ties add no allocation information beyond the recurring material
   configuration; tie routing relabels donors with ≤ 0.5 % change in delivered food; partner
   memory is deprioritized.
-- **Food-ratio semantics (§AA §7).** `food_ratio = H/need` excludes store consumption while
-  `nutritional_fertility` states an intake mechanism; same intake can give fertility 1.0 or
-  0.135. Readers: fertility, fission food stress, innovation need/surplus. A versioned
-  biology review is the recommended next stage.
+- **Food-ratio semantics (§AA §7, §AB).** Stage 5I: fertility should read dietary intake
+  (H1, source-invariant, reserves excluded); recommended as a separate versioned change
+  (decision A). Innovation need/surplus keep harvest adequacy; fission food stress remains
+  ambiguous and unchanged.
 - **Dust transfers (§AA §1).** Floating-point residues create ~1e-7 kcal transfers (0.7–1.5 %
   of transfers) and transient near-zero ties that can consume adoption draws.
 - **Hidden coordination assumptions (§Z).** Cooperative stopping in shared foraging patches;
