@@ -2,10 +2,11 @@
 
 **Status:** current contract plus findings register (rewritten 2026-10-07; the full
 stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 5I (§AB). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
-is closed.\
+stage: 5J (§AC); Stage 5 technically complete, pending approval. Strata are a passive
+accounting overlay; the physical-feedback gate (§N7) is closed.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
-(`PopulationStore`, `population/fields.py`).
+(`PopulationStore`, `population/fields.py`). Candidate MVP 2.2 (dietary-intake fertility,
+`baselines/mvp2_2/`, opt-in) pending approval.
 
 A **stratum** is one component of an adaptive mixture approximation of a unit's
 socioeconomic distribution. It has a population weight, a small vector of socioeconomic
@@ -3266,6 +3267,333 @@ versioned scientific change of the fertility input only. It is not activated her
 
 Physical-feedback gate: closed. Pending scientific review.
 
+### §AC. Stage 5J — versioned fertility correction (MVP 2.2 candidate) and Stage 5 closure (2026-10-14)
+
+**PRODUCTION CHANGE, VERSIONED, DEFAULT OFF.**
+- MVP 2.2 is a *candidate* model pending scientific approval. MVP 2.1 remains the
+  reference and the default.
+- Starting point `7177e57` (Stage 5I).
+
+**1. Scientific reason.**
+- `nutritional_fertility` states that fecundity responds to food intake relative to need.
+- MVP 2.1 supplies harvest adequacy `food_ratio = H/N` (harvest after trade), which
+  excludes stores eaten. At equal intake, fertility then depends on the food's source
+  (1.0 vs 0.135; §AB).
+- MVP 2.2 supplies dietary intake. The response function and every parameter are
+  unchanged.
+
+**2. Definitions.**
+- H0 (MVP 2.1): `fertility_multiplier(H/N)`.
+- H1 (MVP 2.2): `fertility_multiplier((min(H, N) + X)/N)`, with `X = min(max(N − H, 0), S)`
+  the stores withdrawn for consumption. `S` is the stores after trade, so shipped stores
+  are never counted. The ratio is capped at 1, and is 1 when `N = 0`.
+- Body-reserve drawdown is excluded.
+- H0 and H1 give the same *multiplier* whenever no stores are eaten (tested). Their raw
+  ratios differ when `H > N`.
+
+**3. Version boundary (code).**
+- `mechanisms.dietary_intake_fertility` (`config/schema.py`):
+  - default `False` = MVP 2.1;
+  - `scenarios/mvp2_2_neolithic.yaml` and `scenarios/mvp2_2_pressure.yaml` set it `True`.
+  - They are otherwise identical to the MVP 2.1 files (tested).
+- No existing scenario changes behavior. MVP 2.2 is not a global default.
+- Data flow:
+  - `EnergeticsSubsystem.evaluate` computes `dietary_intake_ratio(need, harvest, stores)`
+    from its own inputs, only when the switch is on.
+  - `EnergyUpdates.apply` places it on the transient `StepContext.dietary_intake`
+    (per unit id; the same pattern as `ctx.food_accounts`).
+  - `demography.fertility_input` returns `food_ratio` in MVP 2.1 and the intake in
+    MVP 2.2.
+  - A populated unit without intake raises, so the two inputs cannot be mixed within a
+    run.
+- **No persistent state, no `food_ratio` mutation, no new RNG draw.**
+- Fission, innovation (need, surplus, instability), starvation and telemetry read exactly
+  what they read before.
+- Rules:
+  - `dietary_intake` is registered (`population/dietary_intake.py`, v1.0, "MVP 2.2
+    candidate").
+  - `nutritional_fertility` documents both inputs; its equation and version are unchanged.
+- Provenance:
+  - The new config key changes `config_hash` of every scenario (default `false` recorded).
+  - Simulated results of MVP 2.1 are bit-identical. This follows the Stage 3 precedent
+    for `strata.*`.
+  - No oracle, golden or test depends on `config_hash` values.
+
+**4. Implementation equivalence and first divergence.**
+- `scripts/probes/fertility_version_comparison.py equivalence` ran production MVP 2.1
+  against the Stage 5I experimental H0 branch, and production MVP 2.2 against experimental
+  H1, on seeds 0–7 of both scenarios at full horizon.
+- Every per-year component hash (each RNG stream, cohorts, food state, other unit state,
+  knowledge) and every final physical digest is **identical in 32 / 32 comparisons**.
+- The Stage 5I attribution therefore carries over unchanged: every first divergence is a
+  birth difference in a unit whose multiplier changed, with identical energetics in that
+  year.
+- Births first differ in years 26–423 (neolithic, median about 170) and years 2–63
+  (pressure, median 16).
+- `tests/test_model_versions.py` re-checks a 40-year pressure equivalence and the
+  first-divergence components on every test run.
+
+**5. Prespecified paired experiment.**
+- Defined before any result and recorded in `status.md`.
+- Seeds 0–31 of neolithic (600 y) and pressure + cultivation (400 y), production code,
+  MVP 2.1 vs MVP 2.2: 128 runs, none excluded.
+- After the first divergent birth, matched seeds are no longer event-matched.
+- Values are H1/H0 paired ratios: median [bootstrap 95 % interval of the median over seed
+  pairs], range, and the share of seeds with H1 > H0.
+
+| outcome | neolithic | pressure |
+|---|---|---|
+| final population | 1.033 [0.982, 1.057], 0.69–1.52, 59 % | **1.071 [1.022, 1.138]**, 0.76–1.52, **81 %** |
+| cumulative births | 1.029 [0.994, 1.065], 62 % | **1.047 [1.021, 1.094]**, 75 % |
+| cumulative deaths | 1.028 [0.979, 1.074], 59 % | 1.051 [1.025, 1.087], 75 % |
+| final reproductive-age females | 1.025 [0.957, 1.055], 56 % | 1.064 [1.023, 1.138], 75 % |
+| final units | 1.018 [0.966, 1.071] | 1.061 [1.011, 1.154] |
+| fissions / fusions | 1.037 / 1.057 | 1.058 / 1.053 |
+| migrations | 1.058 [0.939, 1.121] | 1.001 [0.953, 1.042] |
+| extinction events (difference) | median −1 (H1 > H0 in 34 %, ties 12 %) | 0 (almost none) |
+| cultivated ha (final 50 y) | 1.044 [0.911, 1.079] | 1.100 [1.019, 1.193] |
+| food production (cumulative) | 1.026 [0.994, 1.061] | 1.054 [1.019, 1.077] |
+| harvest / need (final 50 y) | 0.997 [0.994, 1.003] | 0.997 [0.994, 1.002] |
+| stores per capita (final 50 y) | 0.972 [0.908, 1.019] | 0.992 [0.955, 1.050] |
+| mean energy deficit (final 50 y, difference) | +0.0002 (56 % higher) | −0.0005 (47 % higher) |
+| trade volume (cumulative) | 1.122 [0.854, 1.321] | 1.049 [1.010, 1.212] |
+| inventions / adoptions | 1.009 / 0.994 | 1.000 / 1.052 |
+| plant / game stock (final 50 y) | 0.999 / 0.995 | 0.994 / 0.962 |
+
+| population ratio over time (median [IQR], share > 1) | neolithic | pressure |
+|---|---|---|
+| year 100 | 1.000, 3 % | 0.981 [0.960, 1.062], 44 % |
+| year 200 | 1.000 [1.000, 1.005], 31 % | 0.992 [0.952, 1.124], 47 % |
+| year 300 | 1.028 [0.972, 1.101], 56 % | 1.079 [0.988, 1.146], 72 % |
+| final | 1.033 [0.933, 1.102], 59 % | 1.071 [1.006, 1.150], 81 % |
+
+**6. Granaries and amplification** (an outcome of the intervention; descriptive, not a
+conditioning variable).
+
+| | neolithic | pressure |
+|---|---|---|
+| reached granaries H0 / H1 | 14 / 12 of 32 | 8 / 10 of 32 |
+| both / H0 only / H1 only / neither | 6 / 8 / 6 / 12 | 4 / 4 / 6 / 18 |
+| exact McNemar (two-sided) | p = 0.79 | p = 0.75 |
+| first year, median H0 / H1 | 458 / 474 | 192 / 164 |
+
+- **No evidence that H1 changes granaries invention.** Stage 5I's 1 / 8 vs 3 / 8 was
+  sampling variation.
+- **Granaries amplify divergence in both directions.**
+  - Under pressure, the five largest final-population differences all involve granaries
+    discordance or timing:
+    - H1 only: seed 2, +52 %;
+    - H1 much earlier: seed 16 (165 vs 381), +30 %; seed 13 (152 vs 196), +23 %;
+    - H0 only: seed 27, −24 %; seed 23, −17 %.
+  - Granaries raise stores per capita about 2.5×, which supports more cultivation and
+    population.
+  - Recorded chain in each case: altered fertility → births differ early (years 3–41) →
+    population and settlement paths diverge → granaries invented (or not) at a different
+    time → stores and population.
+- In neolithic, the outliers (seed 9, +52 %; seed 31, +46 %; seed 11, −31 %) arise late,
+  from long stochastic divergence (first birth difference years 113–293), with and
+  without granaries.
+- None shows an implementation defect. Every divergence starts with births, and Stage 5I
+  plus the equivalence above verify energetics was identical at that point.
+
+**7. Interpretation.**
+1. *Semantic fidelity:* H1 is source-invariant at equal intake and excludes reserves
+   (tested). It implements the documented mechanism in every state; this does not depend
+   on the experiment.
+2. *Direct effect reproduced:* same-state expected births +0.38 % · +0.42 % (Stage 5I,
+   8 seeds). The paired experiment shows the matching start: births are the first quantity
+   to diverge in all 64 pairs.
+3. *Population effect:*
+   - pressure: +7.1 % median, interval excludes 0, positive in 81 % of seeds;
+   - neolithic: +3.3 % median, interval includes 0, 59 % positive.
+   - Seed-to-seed variation (range about −30 % to +50 %) is large in both.
+4. *Sign:* stable in tendency under pressure, variable in neolithic. Stage 5I's
+   conclusions survive: pressure positive (8 seeds: +5.9 %; 32 seeds: +7.1 %), neolithic
+   without a clear effect.
+5. *Rare events:* granaries discordance occurs in 14 / 32 · 10 / 32 seed pairs and drives
+   the extremes, in both directions.
+6. *Numerical instability:* none found. Equivalence is bit-exact, and divergence always
+   starts with births. Large spread arises only after long stochastic divergence.
+7. *Coherence:* per-capita food quantities (harvest/need, stores, deficit) are unchanged
+   within ±0.5 % in median. Births and deaths rise together; population, cultivation,
+   fissions and trade scale with them. The model behaves coherently enough for a candidate
+   baseline.
+
+**8. Biological limitations.**
+H1 is annual intake relative to need. It omits:
+- body condition (reserves enter only starvation);
+- the duration of shortfall;
+- lactation and reproductive state;
+- age-specific sensitivity.
+
+It corrects an implementation/specification mismatch. It is not a validated theory of
+human fertility.
+
+**9. Legacy reproducibility (MVP 2.1).**
+- With the versioned code, the frozen MVP 2.1 references are unchanged:
+  - `benchmarks/perf/oracle_mvp2_1.json`: raw, **IDENTICAL**;
+  - `oracle_mvp2_1_logical.json`: logical, **IDENTICAL**;
+  - golden and strata fixtures: unchanged;
+  - `make check` and `make test-stat`: green.
+- No MVP 2.1 artifact was regenerated or edited.
+- The default (switch off) path computes no intake and sets no context field.
+
+**10. Candidate MVP 2.2 reference** (not promoted; pending approval).
+- `benchmarks/perf/oracle_mvp2_2.json` (raw, dense) and `oracle_mvp2_2_logical.json`.
+  - Same cases as MVP 2.1: mvp2_2_neolithic seed 0, 400 y; mvp2_2_pressure seed 1,
+    300 y; 200-unit synthetic, 15 ticks.
+  - Recorded with `scripts/perf/exactness_oracle.py --model mvp2_2 [--logical] --record`.
+    The default without `--model` remains MVP 2.1.
+  - Both **reproduced IDENTICAL in fresh processes** after recording. MVP 2.2 against the
+    MVP 2.1 oracle is DIFFERENT, as expected.
+  - Neolithic seed 0 at year 400: 6,214 people in 251 units, vs 5,677 / 246 in MVP 2.1.
+- `baselines/mvp2_2/`:
+  - `freeze_manifest.json` records status CANDIDATE, the selector, the semantic change,
+    stage start `7177e57`, source commit and dirty flag, source-tree hash, numeric
+    platform, oracle and reference-run commands, validation summary and platform
+    assumptions;
+  - reference runs `neolithic_4x600`, `pressure_4x400_cultivation_true` and
+    `pressure_4x400_cultivation_false` (seeds 0–3), produced by `madexplorer ensemble`
+    with the MVP 2.1 layout.
+- The oracle is not used as validation of the science. The mechanism tests and the H1
+  equivalence passed before it was recorded.
+- Independent scientific tests (`tests/test_model_versions.py`,
+  `tests/test_dietary_intake.py`) use analytical expectations or the independent
+  experimental branch:
+  - source invariance;
+  - reserve exclusion;
+  - H1 ≥ H0;
+  - equality without stores;
+  - unchanged `food_ratio`, deficit, reserves and stores, so starvation, fission and
+    innovation inputs are unchanged;
+  - scenario files differing only by name and switch;
+  - no silent fallback;
+  - production = branch.
+
+**11. Promotion gates.**
+
+| gate | result |
+|---|---|
+| semantic correction justified | yes (§AB; documented intake mechanism) |
+| implementation isolated | yes: one input, transient; first divergence always births |
+| MVP 2.1 exact | yes: both oracles IDENTICAL; fixtures unchanged |
+| MVP 2.2 = validated H1 experiment | yes: bit-identical, 32 / 32 |
+| expanded stochastic comparison reviewed | completed at the target scope (32 seeds per scenario); **awaiting reviewer** |
+| new reference artifacts reproduce | yes: fresh-process verification IDENTICAL |
+| documentation explains the version difference | yes (§AB, §AC, manifest, rule text, scenario headers) |
+
+Promotion to the approved scientific foundation is the reviewer's decision. MVP 2.2
+stays a candidate, opt-in by scenario.
+
+#### Stage 5 consolidated decision record (5A–5J)
+
+| stage | question | finding | status |
+|---|---|---|---|
+| 5A (§T) | What can the simulator differentiate within a unit? | Nothing generates within-unit differences except fusion; practice concentration under finite demand was the best candidate, but needed an initiation hypothesis | audit; led to 5B–5D |
+| 5B (§U) | Does a participation overhead concentrate practice? | A fixed overhead gives a corner (maximal concentration) for any `o > 0`; assignment (continuity vs rotation) matters more than degree; effect small (yield ≤ 1.2 % · 0.2 %) | **rejected** as initiator (counterfactual, not active) |
+| 5C (§V) | Do entry costs explain who practices? | They explain continuity relative to rotation, not initiation (same corner); beyond about one generation, anonymous strata make persistence hereditary by representation | **rejected** as initiator; continuity a possible later hypothesis |
+| 5D (§W) | Is there any within-unit opportunity event? | None: location, access, knowledge, contact and decisions are unit-level; the only subset event is representative fission | audit (D) |
+| 5E (§X) | Does partial knowledge at technique acquisition bind cultivation? | It exists, but disappears before practice under model-consistent spread (T50 ≲ 5 y); binds < 1 % of farming unit-years | **rejected** as leading splitter |
+| 5F (§Y) | Does fusion erase meaningful competence differences? | Real (about 7 % of fusions ΔE ≥ 0.01) but static consequence ≈ 0.004 % of harvest; `K` ontology mixed | **rejected**; unit averaging kept |
+| 5G (§Z) | Which causal route has substrate, and which representation does it need? | Between-unit food provisioning is grounded and consequential. Compartments are the exact finite representation; mixtures miss threshold tails; marginals miss correlation; merging must respect decision cells | route **accepted for study**; representation principles recorded |
+| 5H (§AA) | Is donor choice meaningful; do ties matter? | Choice exists, but ties add no allocation information beyond recurring geography and supply; tie routing relabels donors (≤ 0.5 % food); under scarcity donor substitutability halves; `food_ratio` excludes stores eaten | partner preference **rejected**; food-ratio issue raised |
+| 5I (§AB) | Which quantity should fertility read? | Dietary intake (documented mechanism); exactly reconstructible; branch verified; neutral in neolithic, positive under pressure | **accepted in principle** |
+| 5J (§AC) | Versioned correction and validation | MVP 2.2 candidate behind `mechanisms.dietary_intake_fertility`; MVP 2.1 exact; production = H1 (32 / 32); 32-seed paired experiment: pressure +7.1 % [2.2, 13.8 %], neolithic +3.3 % [−1.8, 5.7 %]; granaries unchanged (p ≈ 0.75–0.79); candidate oracles reproduce | candidate MVP 2.2; pending approval |
+
+**Accepted mechanisms and representation.**
+- Population units remain statistical social actors.
+- Unit-level pooling, labor and knowledge stay as in MVP 2.1.
+- Strata remain passive.
+- Dietary-intake fertility (MVP 2.2) is accepted in principle and implemented as a
+  candidate.
+
+**Rejected under current assumptions** (do not reopen without a new causal basis):
+- participation overhead and entry costs as initiators;
+- partial cultivation knowledge as a splitter;
+- fusion-born competence retention;
+- partner (tie) preference in provisioning;
+- random or label-based differentiation (all stages).
+
+**Passive counterfactuals kept as tools (NOT ACTIVE):** `strata_access`, `store_release`,
+`field_control`, `practice_concentration`, `entry_cost`, `knowledge_exposure`,
+`fusion_competence`, `provisioning_counterfactual`.
+
+**Statistical representation lessons (5G, 5F, 5B):**
+- Units are statistical actors. Individual agents are not a prerequisite for
+  finite-population processes: finite-count compartments reproduce individual-reference
+  transitions exactly.
+- Independent marginals lose consequential correlations.
+- Means and variances are not universally sufficient (higher-order conjunctions).
+- Expected-value weighted mixtures err near thresholds.
+- Merging must preserve the combinations of states that determine decisions, i.e. merge
+  within decision cells.
+- A new internal dimension requires a specific causal mechanism.
+- No new structure was added in 5J.
+
+**Strongest remaining sociology substrate.**
+- Between-unit provisioning: under pressure, recipients often cannot replace a lost donor,
+  because supply is scarce and contested. That is material vulnerability.
+- The simulator has no bargaining, refusal, conditional provisioning, obligation,
+  enforceable debt, institutional reciprocity, authority or coercion.
+- **Dependency is not power.** A next mechanism must state its actor, information, choice
+  constraints and consequences before it is modeled.
+
+**Unresolved register (prioritized):**
+1. Scientific semantics:
+   - fission food-stress input (production vs shortage);
+   - shared vs individual knowledge ontology (§Y);
+   - implicit centralized labor allocation;
+   - unconditional 30 % surplus sharing;
+   - most-severe-first recipient priority;
+   - cooperative stopping in shared foraging patches;
+   - operational consequences of field/store control (none executable today).
+2. Numerical mechanics:
+   - floating-point dust transfers (§AA) and their near-zero ties, which can consume
+     technology-adoption draws;
+   - capacity and merge accuracy once a mechanism needs more causal state.
+3. Sociology:
+   - who makes allocation decisions;
+   - what determines willingness to provision;
+   - when material dependency becomes behaviorally consequential;
+   - which opportunities need persistent within-unit heterogeneity;
+   - how organization can emerge without presupposing rank.
+
+**What Stage 5 closure means.**
+- The exploratory search for the first credible socioeconomic mechanisms and adequate
+  statistical representations has produced documented conclusions, constraints and
+  priorities.
+- It does **not** mean that:
+  - MVP 3 is complete;
+  - classes, property or hierarchy have emerged;
+  - all physical mechanisms are final.
+- It means exploratory mechanism proliferation stops, and work proceeds toward one
+  specific, separately reviewed active mechanism.
+
+**Closure gates.**
+
+| gate | status |
+|---|---|
+| Scientific: fertility interpretation justified; 32-seed comparison complete; consequences characterized (including the granaries amplifier); no intervention contamination; unresolved issues recorded | passed |
+| Engineering: MVP 2.1 exact; MVP 2.2 = H1; invariants pass; candidate artifacts reproduce; explicit selection; no unapproved behavior change (diff limited to selector, intake computation, fertility input, scenarios, tests, tooling and docs) | passed |
+| Research: 5A–5J consolidated; rejected vs unresolved separated; representation principles recorded; next direction identified; no speculative mechanism activated | passed |
+
+**Recommendation: Stage 5 is technically complete, pending final scientific approval of
+the MVP 2.2 candidate and of this closure.**
+
+**Recommended next research objective** (for separate authorization, not started):
+- Make the **provisioning decision** the first active socioeconomic mechanism to study.
+  - Who decides an offer (the donor unit).
+  - What it knows: its own stores, need and outlook, and the requests in range.
+  - What constrains it: surplus, transport.
+  - What the offer does to both sides' food security.
+- Start with an audit and counterfactual of the fixed 30 % offer under scarcity, with
+  dependency and substitutability as *measured outcomes*, not targets.
+- Prerequisites:
+  - approval of MVP 2.2 as the biological base;
+  - optionally, a small versioned fix of the dust transfers, so provisioning
+    counterfactuals are not confounded by spurious ties and RNG draws.
+- No hierarchy, refusal-as-power or obligation is presupposed.
+
 ---
 
 ## 3. Open questions
@@ -3293,10 +3621,9 @@ Physical-feedback gate: closed. Pending scientific review.
   donor choice exists, but ties add no allocation information beyond the recurring material
   configuration; tie routing relabels donors with ≤ 0.5 % change in delivered food; partner
   memory is deprioritized.
-- **Food-ratio semantics (§AA §7, §AB).** Stage 5I: fertility should read dietary intake
-  (H1, source-invariant, reserves excluded); recommended as a separate versioned change
-  (decision A). Innovation need/surplus keep harvest adequacy; fission food stress remains
-  ambiguous and unchanged.
+- **Food-ratio semantics (§AA §7, §AB, §AC).** Fertility reads dietary intake in the MVP 2.2
+  candidate (Stage 5J; pending approval). Innovation need/surplus keep harvest adequacy;
+  fission food stress remains ambiguous and unchanged in both versions.
 - **Dust transfers (§AA §1).** Floating-point residues create ~1e-7 kcal transfers (0.7–1.5 %
   of transfers) and transient near-zero ties that can consume adoption draws.
 - **Hidden coordination assumptions (§Z).** Cooperative stopping in shared foraging patches;

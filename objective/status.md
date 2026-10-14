@@ -1,7 +1,8 @@
 # Implementation Status
 
-**Updated:** 2026-10-14 (MVP 3 Stage 5I, awaiting review)\
-**Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
+**Updated:** 2026-10-14 (MVP 3 Stage 5J; Stage 5 technically complete, pending approval)\
+**Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`). Candidate MVP 2.2
+(`baselines/mvp2_2/`, opt-in) is pending approval.\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
 
@@ -13,189 +14,114 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-### Stage 5J: IN PROGRESS (re-deployment runbook)
+**Stage 5 — technically complete; pending final scientific approval.**
 
-Stage 5J is not finished. This block records what has been done and the exact commands to
-reproduce or resume it if the codespace stops. The Stage 5I handoff below is still the
-last completed stage.
+**Completed:** Stage 5J, the versioned fertility correction (candidate MVP 2.2), scientific
+validation and Stage 5 consolidation (design §AC). **PAUSE FOR SCIENTIFIC REVIEW.**
 
-**Starting commit:** `7177e57` (Stage 5I), clean worktree. Changes are uncommitted.
+**Starting commit:** `7177e57` (Stage 5I), clean worktree. During the stage the user
+committed work in progress as `d44d44f` ("wip: socioeco experiments"). Later changes are
+uncommitted.
 
-**Code changes made so far (uncommitted):**
-- `src/madexplorer/config/schema.py`: `mechanisms.dietary_intake_fertility: bool = False`.
-  The default is MVP 2.1; MVP 2.2 switches it on.
-- `src/madexplorer/core/state.py`: transient `StepContext.dietary_intake`, a dict from
-  unit id to ratio.
-- `src/madexplorer/population/energetics.py`: when the switch is on, computes
-  `dietary_intake_ratio(need, harvest, stores)` and puts it on `ctx.dietary_intake`.
-- `src/madexplorer/population/demography.py`: `fertility_input()` returns `food_ratio`
-  for MVP 2.1 and the intake for MVP 2.2. It raises if MVP 2.2 has no intake for a
-  populated unit.
-- `src/madexplorer/population/dietary_intake.py`: registers the rule `dietary_intake`
-  (MVP 2.2 candidate).
-- `scenarios/mvp2_2_neolithic.yaml`, `scenarios/mvp2_2_pressure.yaml`: copies of the MVP 2.1
-  files with only the name and the switch changed.
-- `scripts/perf/exactness_oracle.py`: `--model mvp2_2` selects the MVP 2.2 scenarios. The
-  default is unchanged (MVP 2.1).
-- `scripts/probes/fertility_version_comparison.py`: equivalence, paired runs, analysis.
-- `tests/test_model_versions.py` (new); `tests/test_dietary_intake.py` (inactivity test
-  updated).
+**Files changed in Stage 5J:**
+- Production (minimal):
+  - `config/schema.py`: `mechanisms.dietary_intake_fertility = False`;
+  - `core/state.py`: transient `StepContext.dietary_intake`;
+  - `population/energetics.py`: intake computed only when the switch is on;
+  - `population/demography.py`: `fertility_input()`;
+  - `population/dietary_intake.py`: rule `dietary_intake` registered; docstring.
+- Scenarios: `scenarios/mvp2_2_neolithic.yaml`, `scenarios/mvp2_2_pressure.yaml`.
+- Tooling: `scripts/perf/exactness_oracle.py --model mvp2_2`;
+  `scripts/probes/fertility_version_comparison.py`.
+- Tests: `tests/test_model_versions.py` (new), `tests/test_dietary_intake.py` (updated).
+- Candidate artifacts: `benchmarks/perf/oracle_mvp2_2.json`, `oracle_mvp2_2_logical.json`,
+  `baselines/mvp2_2/` (freeze manifest plus three reference-run directories).
+- Docs: the design document (§AC) and this file.
 
-**Results obtained so far:**
-- MVP 2.1 raw and logical oracles: **IDENTICAL** with the change in place.
-- Equivalence: production MVP 2.1 equals experimental H0, and production MVP 2.2 equals
-  experimental H1, **bit-identical every year** in 32 / 32 comparisons (seeds 0–7, both
-  scenarios; about 8 min).
-- New and updated tests: 23 passed.
+**Expanded stochastic experiment** (prespecified):
+- Seeds 0–31 of neolithic (600 y) and pressure + cultivation (400 y), MVP 2.1 vs MVP 2.2,
+  production code, 128 runs, none excluded.
+- Pressure: final population H1/H0 median **1.071** [bootstrap 95 % 1.022, 1.138],
+  H1 > H0 in 81 % of seeds, range 0.76–1.52; births 1.047 [1.021, 1.094].
+- Neolithic: **1.033** [0.982, 1.057], 59 % of seeds, range 0.69–1.52 (no clear effect).
+- Per-capita food (harvest/need, stores, deficit) unchanged within ±0.5 % in median.
+- Granaries not changed (14 vs 12 · 8 vs 10 of 32; McNemar p = 0.79 · 0.75), but
+  granaries discordance drives the extreme outcomes in both directions.
+- Stage 5I's conclusions survive.
 
-**Prespecified paired experiment** (defined before results; do not change):
-- Seeds 0–31.
-- Neolithic `scenarios/mvp2_neolithic.yaml` vs `scenarios/mvp2_2_neolithic.yaml`, 600 years.
-- Pressure + cultivation `scenarios/mvp2_pressure.yaml` vs `scenarios/mvp2_2_pressure.yaml`
-  with `mechanisms.cultivation=true`, 400 years.
-- Production code only. 128 runs in total.
-- Outcomes:
-  - population, births, deaths, reproductive-age females, extinctions, units;
-  - fissions, fusions, migrations;
-  - cultivated ha, food production, harvest/need, stores, energy deficit, trade volume;
-  - inventions, adoptions, technology first years (granaries), ecological stocks.
-- Statistics: paired median/mean/IQR/range, share H1 > H0, bootstrap 95 % intervals over
-  seed pairs, exact McNemar for granaries; outliers kept.
-- Status when written: running (about 54 of 128 runs done). Its output is in
-  `/tmp/claude-1000/...` (the session scratchpad), which does **not** survive a codespace
-  restart.
+**H0 / H1 implementation status:**
+- MVP 2.1 (switch off, the default for every existing scenario) reads `food_ratio`.
+- MVP 2.2 (the `mvp2_2_*` scenarios) reads dietary intake `(min(H, N) + X)/N`, computed by
+  energetics from its own inputs and passed through the transient context.
+- No `food_ratio` mutation, no persistent state, no new RNG draw.
+- Fission, innovation and starvation are unchanged.
+- Production MVP 2.1 = experimental H0 and MVP 2.2 = experimental H1, bit-identical every
+  year in 32 / 32 comparisons.
 
-**To resume or re-run** (use `runs/`, which is gitignored and survives restarts; finished
-runs are skipped automatically):
+**MVP 2.1 exactness:** raw and logical oracles **IDENTICAL**; fixtures unchanged; no MVP 2.1
+artifact touched.
+
+**MVP 2.2 candidate reference:**
+- Oracles recorded, then **reproduced IDENTICAL** in fresh processes.
+- MVP 2.2 checked against the MVP 2.1 oracle is DIFFERENT, as expected.
+- Manifest records status CANDIDATE with full provenance. Not promoted.
+
+**Numerical invariants** (tested):
+- source invariance at equal intake;
+- reserves excluded;
+- H1 ≥ H0;
+- equal multipliers without stores;
+- bounded ratio and multiplier;
+- no silent fallback;
+- scenarios differ only by name and switch;
+- first-year energetics identical across versions;
+- divergence only through births.
+
+**Scientific interpretation:**
+- The correction implements the documented intake mechanism.
+- Its consequence is a modest population increase under storage-reliant pressure, and no
+  clear change in neolithic.
+- Rare technology events amplify divergence.
+- No numerical instability was found.
+- Biological limits: no body condition, duration, lactation or age sensitivity.
+
+**Closure gates:** scientific, engineering and research gates all **passed** (§AC).
+Candidate approval and formal closure are the reviewer's decision.
+
+**Remaining issues (prioritized register in §AC):**
+- fission food-stress semantics;
+- knowledge ontology;
+- centralized labor;
+- unconditional 30 % sharing;
+- most-severe-first priority;
+- cooperative foraging stop;
+- control without consequences;
+- dust transfers and their adoption-RNG side effect;
+- merge accuracy for future causal state.
+
+**Recommended next research milestone** (not started; needs authorization):
+- Make the provisioning decision the first active socioeconomic mechanism: who offers,
+  with what information, constraints and consequences.
+- Start with an audit and counterfactual of the fixed 30 % offer under scarcity, with
+  dependency measured, not targeted.
+- Prerequisites: MVP 2.2 approval; optionally a versioned dust-transfer fix.
+
+**Reproduce Stage 5J** (`runs/` is gitignored; `run` resumes):
 
 ```bash
-# 0. sanity: unit tests for the version boundary and intake rule
 uv run pytest tests/test_model_versions.py tests/test_dietary_intake.py -q
-
-# 1. MVP 2.1 must stay exact (legacy gate)
 uv run python scripts/perf/exactness_oracle.py benchmarks/perf/oracle_mvp2_1.json
 uv run python scripts/perf/exactness_oracle.py --logical benchmarks/perf/oracle_mvp2_1_logical.json
-
-# 2. production versions vs the Stage 5I experimental branch (expect EQUIVALENCE IDENTICAL)
-uv run python scripts/probes/fertility_version_comparison.py equivalence --jobs 2 --seeds 0 1 2 3 4 5 6 7
-
-# 3. prespecified paired experiment, 128 runs (~25-30 min with 2 jobs; resumable)
-uv run python scripts/probes/fertility_version_comparison.py run --jobs 2 --out runs/stage5j/paired
-uv run python scripts/probes/fertility_version_comparison.py analyse --load runs/stage5j/paired > runs/stage5j/analyse.txt
-```
-
-**Remaining Stage 5J steps (not yet done):**
-
-```bash
-# 4. candidate MVP 2.2 oracles (record once, then reproduce in a fresh process)
-uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --record benchmarks/perf/oracle_mvp2_2.json
-uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --logical --record benchmarks/perf/oracle_mvp2_2_logical.json
 uv run python scripts/perf/exactness_oracle.py --model mvp2_2 benchmarks/perf/oracle_mvp2_2.json
 uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --logical benchmarks/perf/oracle_mvp2_2_logical.json
-
-# 5. candidate MVP 2.2 reference runs (same layout as baselines/mvp2_1/)
-uv run madexplorer ensemble scenarios/mvp2_2_neolithic.yaml --seeds 0:3 --years 600 --jobs 2 --out baselines/mvp2_2/neolithic_4x600
-uv run madexplorer ensemble scenarios/mvp2_2_pressure.yaml --seeds 0:3 --years 400 --jobs 2 --set mechanisms.cultivation=true --out baselines/mvp2_2/pressure_4x400_cultivation_true
-uv run madexplorer ensemble scenarios/mvp2_2_pressure.yaml --seeds 0:3 --years 400 --jobs 2 --set mechanisms.cultivation=false --out baselines/mvp2_2/pressure_4x400_cultivation_false
-
-# 6. full validation
-make check
-make test-stat
-git diff --check
+uv run python scripts/probes/fertility_version_comparison.py equivalence --jobs 2 --seeds 0 1 2 3 4 5 6 7
+uv run python scripts/probes/fertility_version_comparison.py run --jobs 2 --out runs/stage5j/paired
+uv run python scripts/probes/fertility_version_comparison.py analyse --load runs/stage5j/paired
 ```
-
-7. Then:
-   - write `baselines/mvp2_2/freeze_manifest.json` (candidate, with provenance);
-   - add §AC to the design document (draft: experiment results, baseline, Stage 5A–5J
-     decision record, closure gates);
-   - replace this runbook with the Stage 5J handoff.
 
 Never run `make golden`, and never overwrite any `*mvp2_1*` artifact.
 
----
-
-**Completed:** Stage 5I, food-energy semantics and nutritional fertility, with a
-controlled demographic branch (design §AB). **PAUSE FOR SCIENTIFIC REVIEW.**
-
-**Starting commit:** `7f54c09` (Stage 5H), clean worktree. The Stage 5H files and results
-remain part of the scientific history (§AA).
-
-**Files changed:**
-- New: `src/madexplorer/population/dietary_intake.py` (NOT ACTIVE).
-- New: `scripts/probes/fertility_intake_experiment.py` (EXPERIMENTAL / OPT-IN / NOT
-  CANONICAL).
-- New: `tests/test_dietary_intake.py` (12 tests).
-- Updated: the design document (§AB) and this file.
-
-**Production default:** unchanged.
-- No production file, rule, RNG stream, fixture or baseline was modified.
-- The branch replaces subsystem *instances* in one `Simulator`, never classes or the
-  default pipeline.
-
-**Food-energy semantics:**
-- `food_ratio = H/N` (harvest after trade) is harvest adequacy.
-- Dietary intake is `(min(H, N) + X)/N`, where `X` is stores eaten.
-- Physiological sufficiency is `1 − deficit`, which includes reserve drawdown.
-- All three are exactly reconstructible from the energetics inputs.
-- Readers of `food_ratio`:
-  - fertility: the documented mechanism is intake, so intake is needed;
-  - innovation need and surplus: production and economic quantities, so H0 is coherent;
-  - fission food stress: ambiguous;
-  - telemetry.
-  - Migration uses its own function.
-
-**H0 / H1:**
-- H0 = `fertility_multiplier(food_ratio)`.
-- H1 = `fertility_multiplier(dietary_intake_ratio)`.
-- Same function and parameters, no new state, no RNG. H1 excludes body reserves; H2 =
-  `1 − deficit` is a diagnostic only.
-- **Source invariance:** equal intake from harvest or stores gives an equal H1 multiplier
-  (H0: 1.0 vs 0.135).
-
-**Same-state diagnostic** (neolithic · pressure, 8 seeds):
-- H0 reconstruction is exact.
-- The multiplier changes by more than 0.01 in 3.2 % · 5.3 % of unit-years, and by more
-  than 0.10 in 1.4 % · 1.5 %. These are concentrated on recipients (33 % · 12 %) and on
-  store-using non-traders under pressure.
-- Expected births on fixed states: +0.38 % · +0.42 %.
-- §AA reconciliation: its strict figure undercounted stores that close the gap exactly.
-  With a 1e-12 tolerance it is 4.0 % · 4.4 %; the rest of the 4.4 % · 9.0 % is reserve
-  compensation.
-
-**Branched simulation** (8 paired seeds per scenario):
-- Experimental H0 is bit-identical to canonical in 16 / 16 runs (digest, per-year
-  component hashes, metric rows).
-- H1's first divergence is always a birth difference in a unit whose multiplier changed,
-  with identical energetics in that year.
-  - Neolithic: years 142–262. Pressure: years 3–41.
-
-**Downstream demographic effects:**
-- Neolithic: none detectable (final population ratio median 0.99, range 0.90–1.12, mixed
-  signs).
-- Pressure: year-400 population +5.9 % median, positive in 8 / 8 seeds (+0.5 % to +52 %).
-  - Outliers are seeds reaching granaries (H1 3 / 8 vs H0 1 / 8; unresolved, p ≈ 0.57).
-  - Seeds in the same storage regime under both inputs: +2.5 % median, all positive.
-- Births and deaths rise together; deficits show no consistent change.
-- Fission, trade and innovation change only through population.
-
-**Raw / logical oracles:** IDENTICAL (default mode).
-
-**Scientific decision: A.** H1 is the better implementation of the stated mechanism.
-- Recommend a separate, versioned change of the fertility input only, with the ten
-  requirements in §AB.8.
-- Not activated; no baseline created.
-
 **Physical-feedback gate:** closed.
-
-**Next recommended stage:** the versioned fertility-input change (e.g. MVP 2.2), if
-approved:
-- an explicit dietary-intake quantity computed in energetics;
-- tests for source invariance and reserve exclusion;
-- 16–32 seeds per scenario, including the granaries-regime frequency;
-- new oracles and goldens under the new version;
-- MVP 2.1 kept unchanged.
-
-Outstanding and separate: dust transfers (§AA) and fission food-stress semantics.
 
 **Next:** PAUSE FOR SCIENTIFIC REVIEW.
 
@@ -221,6 +147,7 @@ Outstanding and separate: dust transfers (§AA) and fission food-stress semantic
 | 5G | Causal-structure review: no within-unit initiator has substrate; between-unit provisioning is grounded and consequential (recipients' fertility and starvation), with reliance on the local pool rather than partners (ties unread by trade); compartments are the exact finite representation, mixtures miss threshold tails, marginals miss correlation; A (review + read-only audit + benchmark) | §Z |
 | 5H | Provisioning: exact replay; donor choice exists but competition halves substitutability under pressure; ties add no allocation information beyond recurring material configuration; tie routing relabels donors with ≤ 0.5 % change in delivered food; food_ratio excludes store consumption despite an intake rationale; B (+ D) (audit + counterfactual matching) | §AA |
 | 5I | Food-energy semantics: fertility's documented mechanism is intake but its input is harvest adequacy; dietary intake (H1) is exactly reconstructible, source-invariant, excludes reserves; experimental H0 branch bit-identical; H1 neutral in neolithic, +5.9 % population under pressure (granaries-regime outliers); A: separate versioned fertility-input change recommended (audit + controlled branch) | §AB |
+| 5J | Versioned correction: MVP 2.2 candidate (`mechanisms.dietary_intake_fertility`); MVP 2.1 exact; production = H1 (32 / 32); 32-seed paired: pressure +7.1 % [2.2, 13.8], neolithic +3.3 % [−1.8, 5.7]; granaries unchanged; candidate oracles reproduce; Stage 5 technically complete, pending approval | §AC |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
@@ -243,10 +170,13 @@ Outstanding and separate: dust transfers (§AA) and fission food-stress semantic
 
 **Do not forget:**
 - `strata_access.py`, `store_release.py`, `field_control.py`, `practice_concentration.py`,
-  `entry_cost.py`, `knowledge_exposure.py`, `fusion_competence.py`,
-  `economy/provisioning_counterfactual.py` and `dietary_intake.py` are NOT ACTIVE; the 5I
-  branch (`scripts/probes/fertility_intake_experiment.py`) is experimental and opt-in.
-  Nothing in the simulator calls them, and their parameters are not scenario settings.
+  `entry_cost.py`, `knowledge_exposure.py`, `fusion_competence.py` and
+  `economy/provisioning_counterfactual.py` are NOT ACTIVE: nothing in the simulator calls
+  them, and their parameters are not scenario settings.
+- `dietary_intake.py` is active only in the MVP 2.2 candidate
+  (`mechanisms.dietary_intake_fertility`). The Stage 5I branch
+  (`scripts/probes/fertility_intake_experiment.py`) remains its independent experimental
+  reference.
 - Capacity coalescence is numerical, and its equal-weight metric is mechanism-agnostic.
   Revisit it (§M6) before anything reads claims.
 - Never use strata to brake population growth (§4 below).

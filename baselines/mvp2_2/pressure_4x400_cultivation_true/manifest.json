@@ -1,0 +1,25 @@
+{
+  "scenario_name": "mvp2_2_pressure",
+  "world_seed": 3,
+  "config_hash": "9b1f4eb52384a84718e0e90a5d976a280e5a3931f827c477bf8ff87617385f55",
+  "model_version": "0.1.0",
+  "git_commit": "d44d44f0aded72333912b1d65a82f9c1c3b572d4",
+  "git_dirty": true,
+  "source_tree_sha256": "1d3b5daed5e86317f19f5038aa24328ec4e35e9d878ca199cda1a00b79ffe7d4",
+  "dependency_lock_hash": "1e36635809b3d830e81c27771c85b49a6983f47be75e59edbe981add159ddcfd",
+  "python_version": "3.13.16",
+  "numpy_version": "2.5.3",
+  "timestamp_utc": "2026-10-14T22:05:10+00:00",
+  "belief_backend": "sparse",
+  "seeds": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "settings": {
+    "mechanisms.cultivation": true
+  },
+  "wall_seconds": 21.63270647399986,
+  "n_runs": 4
+}

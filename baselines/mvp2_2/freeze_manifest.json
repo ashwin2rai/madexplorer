@@ -1,0 +1,195 @@
+{
+  "milestone": "MVP 2.2 candidate: dietary-intake nutritional fertility",
+  "status": "CANDIDATE - pending scientific approval (MVP 3 Stage 5J). Not the default; MVP 2.1 remains the reference.",
+  "date": "2026-10-14",
+  "meaning": "MVP 2.1 with exactly one biological correction: nutritional fertility reads dietary intake ((min(H,N)+X)/N; X = stores withdrawn for consumption; body reserves excluded) instead of harvest adequacy (food_ratio = H/N). Fertility function and parameters unchanged; food_ratio unchanged for fission, innovation and telemetry.",
+  "previous_reference": "baselines/mvp2_1/ (unchanged; benchmarks/perf/oracle_mvp2_1*.json remain IDENTICAL)",
+  "semantic_changes_from_mvp2_1": [
+    "nutritional fertility input: dietary intake (mechanisms.dietary_intake_fertility = true)"
+  ],
+  "version_selector": "mechanisms.dietary_intake_fertility (default false = MVP 2.1); scenarios/mvp2_2_neolithic.yaml, scenarios/mvp2_2_pressure.yaml",
+  "design": "objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md \u00a7AB (Stage 5I), \u00a7AC (Stage 5J)",
+  "model_version": "0.1.0",
+  "stage_start_commit": "7177e57fc68c53f658f93411314ed124b9851861",
+  "source_commit": "d44d44f0aded72333912b1d65a82f9c1c3b572d4",
+  "working_tree_dirty": true,
+  "source_tree_sha256": "1d3b5daed5e86317f19f5038aa24328ec4e35e9d878ca199cda1a00b79ffe7d4",
+  "numeric_platform": "numpy=2.5.3 machine=x86_64 baseline=X86_V2 dispatch=X86_V3",
+  "belief_backend": {
+    "raw oracle": "dense",
+    "logical oracle and reference runs": "sparse (default)"
+  },
+  "exactness_oracles": {
+    "raw (dense)": "benchmarks/perf/oracle_mvp2_2.json",
+    "logical (any backend)": "benchmarks/perf/oracle_mvp2_2_logical.json",
+    "cases": "mvp2_2_neolithic seed 0, 400 y; mvp2_2_pressure seed 1, 300 y; 200-unit synthetic state from mvp2_2_neolithic, 15 ticks",
+    "record": [
+      "uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --record benchmarks/perf/oracle_mvp2_2.json",
+      "uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --logical --record benchmarks/perf/oracle_mvp2_2_logical.json"
+    ],
+    "verify": [
+      "uv run python scripts/perf/exactness_oracle.py --model mvp2_2 benchmarks/perf/oracle_mvp2_2.json",
+      "uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --logical benchmarks/perf/oracle_mvp2_2_logical.json"
+    ],
+    "independent_reproduction": "both verified IDENTICAL in fresh processes after recording; MVP 2.2 checked against the MVP 2.1 raw oracle: DIFFERENT (expected)"
+  },
+  "golden_fixtures": "unchanged (tests/regression/golden runs under MVP 2.1 defaults); no MVP 2.2 golden recorded",
+  "reference_runs": {
+    "neolithic_4x600": {
+      "scenario": "scenarios/mvp2_2_neolithic.yaml",
+      "seeds": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "years": 600,
+      "per_seed": {
+        "0": {
+          "final_population": 33152.0,
+          "first_cultivation_year": 158.0,
+          "first_granaries_year": 591.0,
+          "final_farm_share": 0.4717803681133181,
+          "final_sedentary_share": 0.7979143668250827,
+          "migration_rate": 0.06371403319257586
+        },
+        "1": {
+          "final_population": 21953.0,
+          "first_cultivation_year": 209.0,
+          "first_granaries_year": null,
+          "final_farm_share": 0.4185220545077402,
+          "final_sedentary_share": 0.7789595209507492,
+          "migration_rate": 0.06755505823711917
+        },
+        "2": {
+          "final_population": 14966.0,
+          "first_cultivation_year": 166.0,
+          "first_granaries_year": 539.0,
+          "final_farm_share": 0.4045218493239875,
+          "final_sedentary_share": 0.7330008950797564,
+          "migration_rate": 0.06733366069236435
+        },
+        "3": {
+          "final_population": 17026.0,
+          "first_cultivation_year": 162.0,
+          "first_granaries_year": null,
+          "final_farm_share": 0.440581320267875,
+          "final_sedentary_share": 0.7929372566084727,
+          "migration_rate": 0.05037704825083631
+        }
+      },
+      "command": "uv run madexplorer ensemble scenarios/mvp2_2_neolithic.yaml --seeds 0:3 --years 600 --jobs 2 --out baselines/mvp2_2/neolithic_4x600"
+    },
+    "pressure_4x400_cultivation_true": {
+      "scenario": "scenarios/mvp2_2_pressure.yaml",
+      "settings": {
+        "mechanisms.cultivation": true
+      },
+      "seeds": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "years": 400,
+      "per_seed": {
+        "0": {
+          "final_population": 4192.0,
+          "first_cultivation_year": 91.0,
+          "first_granaries_year": null,
+          "final_farm_share": 0.6522446760245217,
+          "final_sedentary_share": 0.860094072917441,
+          "migration_rate": 0.05914322250639386
+        },
+        "1": {
+          "final_population": 4156.0,
+          "first_cultivation_year": 80.0,
+          "first_granaries_year": null,
+          "final_farm_share": 0.6609597357968017,
+          "final_sedentary_share": 0.8391100308596332,
+          "migration_rate": 0.05666582342524665
+        },
+        "2": {
+          "final_population": 6267.0,
+          "first_cultivation_year": 55.0,
+          "first_granaries_year": 164.0,
+          "final_farm_share": 0.7506440717506699,
+          "final_sedentary_share": 0.8540671664496362,
+          "migration_rate": 0.04472414171328288
+        },
+        "3": {
+          "final_population": 4495.0,
+          "first_cultivation_year": 81.0,
+          "first_granaries_year": null,
+          "final_farm_share": 0.6581234162941049,
+          "final_sedentary_share": 0.8735017534142905,
+          "migration_rate": 0.059230986711902744
+        }
+      },
+      "command": "uv run madexplorer ensemble scenarios/mvp2_2_pressure.yaml --seeds 0:3 --years 400 --jobs 2 --set mechanisms.cultivation=true --out baselines/mvp2_2/pressure_4x400_cultivation_true"
+    },
+    "pressure_4x400_cultivation_false": {
+      "scenario": "scenarios/mvp2_2_pressure.yaml",
+      "settings": {
+        "mechanisms.cultivation": false
+      },
+      "seeds": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "years": 400,
+      "per_seed": {
+        "0": {
+          "final_population": 1096.0,
+          "first_cultivation_year": null,
+          "first_granaries_year": null,
+          "final_farm_share": 0.0,
+          "final_sedentary_share": 0.31153543714184645,
+          "migration_rate": 0.20215693984159974
+        },
+        "1": {
+          "final_population": 1264.0,
+          "first_cultivation_year": null,
+          "first_granaries_year": null,
+          "final_farm_share": 0.0,
+          "final_sedentary_share": 0.3577694625581518,
+          "migration_rate": 0.1984659635666347
+        },
+        "2": {
+          "final_population": 1311.0,
+          "first_cultivation_year": null,
+          "first_granaries_year": null,
+          "final_farm_share": 0.0,
+          "final_sedentary_share": 0.2961007514406655,
+          "migration_rate": 0.20215678605352852
+        },
+        "3": {
+          "final_population": 1082.0,
+          "first_cultivation_year": null,
+          "first_granaries_year": null,
+          "final_farm_share": 0.0,
+          "final_sedentary_share": 0.33523308894674136,
+          "migration_rate": 0.22429365446966187
+        }
+      },
+      "command": "uv run madexplorer ensemble scenarios/mvp2_2_pressure.yaml --seeds 0:3 --years 400 --jobs 2 --set mechanisms.cultivation=false --out baselines/mvp2_2/pressure_4x400_cultivation_false"
+    }
+  },
+  "validation": {
+    "MVP 2.1 legacy gate": "benchmarks/perf/oracle_mvp2_1.json and oracle_mvp2_1_logical.json IDENTICAL with the versioned code",
+    "implementation equivalence": "production MVP 2.1 = Stage 5I experimental H0 and production MVP 2.2 = experimental H1: per-year component hashes and final digests identical, 32/32 (seeds 0-7, neolithic 600 y, pressure+cultivation 400 y); scripts/probes/fertility_version_comparison.py equivalence",
+    "prespecified paired experiment (seeds 0-31, 128 runs)": {
+      "pressure+cultivation 400 y": "final population H1/H0 median 1.071 [bootstrap 95% 1.022, 1.138], H1>H0 in 81% of seeds; births 1.047 [1.021, 1.094]",
+      "neolithic 600 y": "final population 1.033 [0.982, 1.057], 59% of seeds; births 1.029 [0.994, 1.065]",
+      "granaries": "neolithic 14 vs 12 of 32 (exact McNemar p = 0.79); pressure 8 vs 10 (p = 0.75): no evidence of a change",
+      "commands": [
+        "uv run python scripts/probes/fertility_version_comparison.py run --jobs 2 --out runs/stage5j/paired",
+        "uv run python scripts/probes/fertility_version_comparison.py analyse --load runs/stage5j/paired"
+      ]
+    },
+    "mechanism tests": "tests/test_model_versions.py, tests/test_dietary_intake.py"
+  },
+  "platform_assumptions": "hashes are numeric-platform specific, like the MVP 2.1 oracles and golden fixtures; re-record with --record on a new platform"
+}
