@@ -2,7 +2,7 @@
 
 **Status:** current contract plus findings register (rewritten 2026-10-07; the full
 stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 5A (§T). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
+stage: 5F (§Y). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
 is closed.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
 (`PopulationStore`, `population/fields.py`).
@@ -1810,6 +1810,393 @@ activity under model-consistent transmission.**
   stays closed.
 - Pending scientific review.
 
+### §Y. Stage 5F — fusion-born knowledge heterogeneity (2026-10-14)
+
+**AUDIT + COUNTERFACTUAL / NOT ACTIVE.**
+- Pure functions in `population/fusion_competence.py`. No simulator path calls them, no
+  model rule is registered, and there is no scenario setting.
+- Probe: `scripts/probes/fusion_competence_counterfactual.py` (`controlled`, `record`,
+  `replay`). Tests: `tests/test_fusion_competence.py` (15).
+- Starting point `61cf0bd` (Stage 5E). Knowledge, crop output, strata and RNG are
+  unchanged.
+
+**Question.** Different units already accumulate different agricultural knowledge `K`
+through their own activities, places and histories. When two of them fuse, the simulator
+keeps only their population-weighted mean. Does that erase heterogeneity that would matter?
+This stage looks for differences the model already generates. It does not invent a new
+source of differences.
+
+**Answer.** Fusion does erase real differences, and under the existing learning rule they
+would decay only slowly (a 34-year half-life in `K`). But the differences that are large
+enough to matter come from fusions that rarely bear on cultivation. Their static
+productive consequence is two to three orders of magnitude below the practice-concentration
+effects of §U/§V. **Recommendation: B.**
+
+#### Ontology of domain knowledge `K`
+
+Read from code and documents (`knowledge/learning.py`, `knowledge/diffusion.py`,
+`knowledge/system.py`, `population/fields.py`, objective §2.7 and §8):
+
+| Aspect | What the code does | Reading it supports |
+|---|---|---|
+| Accumulation | gain `∝ s · log1p(N s / n)`: grows with the *number of practitioners* ("Henrich-style population-size effect on cumulative culture") | collective stock |
+| Practice | "all members practice in proportion to labor"; no specialists | unit-wide average practice |
+| Demographic turnover | births, deaths and aging never change `K` | collective stock (a newborn does not dilute it) |
+| Fission | the daughter copies `K` | either reading (representative split) |
+| Fusion | population-weighted mean | **average competence** (a shared stock would arguably be unioned, not averaged) |
+| Diffusion | units learn from more knowledgeable contacts down gradients | between-unit teaching |
+| Use | one `E(K)` multiplies the yield of every hectare a unit farms | unit-level (collective or average) |
+| Objective | "learned competence or understanding in domains"; §2.7 lists "knowledge or competence: skill in agriculture as a domain" | competence, not specified as personal or shared |
+
+**`K` is a mixture, and the code does not resolve it.** Accumulation and turnover treat
+`K` as a collective stock that the group holds. Fusion treats it as an average over
+people. Fission is consistent with both. Retaining separate post-fusion `K` values is
+therefore a counterfactual reinterpretation, not a reading of the existing semantics.
+Under the collective reading, instant pooling (or something stronger) is the natural
+fusion. Under the individual-competence reading, retention plus turnover is the natural
+fusion. Both are tested below. The answer does not depend on which reading holds (see
+Recommendation).
+
+#### Knowledge lifecycle (verified in code)
+
+Annual order: `farming (E used) → … → learning → diffusion → innovation → fission → fusion
+→ migration`. For domain `d` (agriculture: `learning_rate 0.35`, `decay_rate δ = 0.02`,
+`practitioner_scale n = 2`, `half_efficiency_level h = 2`, `initial_level 0`; human
+`learning_speed = knowledge_retention = teaching_efficiency = 1`):
+
+```text
+learning      K ← max(K + v·r·s·log1p(N·s/n) − (δ/ρ)·K, 0)          (learning.py)
+              s = farming share + 0.15 · plant-foraging share;  N = unit population
+diffusion     K ← K + min(θ·T·Σ_j c_ij·max(K_j − K, 0),  max_j (K_j − K)⁺)   (T = transmissibility 0.05)
+innovation    K ← K + knowledge_bonus of the invented technology (0.5 for plant_cultivation)
+adoption      needs K ≥ 0.5 × min_knowledge; loss when K < 0.25 × min_knowledge
+fission       daughter copies K
+fusion        K_t ← (K_t·n_t + K_s·n_s) / (n_t + n_s)                   (lifecycle.merge_units)
+              n_t, n_s = population counts of target and source *before* the cohorts are summed
+efficiency    E(K) = K / (K + h);  crop yield/ha = potential × crop_yield × E(K)
+```
+
+- **Fusion equation confirmed** in all 10,044 recorded fusions. The post-fusion vector
+  equals `(K_t n_t + K_s n_s)/(n_t + n_s)` bit for bit, using the pre-merge populations
+  (`table.population` read before `set_cohorts`). The object engine (`composition.absorb`)
+  uses the same equation.
+- **`E = K/(K+2)` confirmed** (`crop_yield_columns`, `KnowledgeModel.efficiency`).
+  `E' = h/(K+h)²` and `E'' = −2h/(K+h)³ < 0`, so `E` is concave on `K ≥ 0`.
+- **The learning step is affine in `K` with a common slope.** The gain does not depend on
+  `K`, and the clip at 0 never binds (`gain ≥ 0`, `δ/ρ < 1`). Components that share the
+  unit's year therefore evolve as `K_i ← (1 − λ) K_i + g` with `λ = δ/ρ = 0.02`.
+  - Their weighted mean follows the authoritative `K` exactly. The shadow reproduces it to
+    a relative error of ≤ 3.4e-15 in every run.
+  - Their deviations shrink by `(1 − λ)` a year *whatever the practice*: a half-life of
+    `ln 2 / −ln 0.98 = 34.3 y`, with 36 % of a gap left after 50 years.
+  - Diffusion and innovation add the unit's common increment, so they leave deviations
+    unchanged.
+- **The gap in `E` is not the gap in `K`.** With practice, `K` rises toward `K* = g/λ`
+  and `E` saturates, so the `E` gap closes faster than the `K` gap. Without practice, `K`
+  falls toward 0, where `E` is steepest, so the `E` gap barely closes (controlled cases
+  10–12).
+
+#### Pre-fusion differences (real runs; neolithic 600 y · pressure + cultivation 400 y, seeds 0–3)
+
+All 8 recorder runs reached their horizon and were observer-neutral by physical digest.
+
+| | neolithic | pressure |
+|---|---|---|
+| fusions | 6,393 | 3,651 |
+| people in the smaller unit | 82,592 | 50,869 |
+| minority weight p50 / p90 | 0.34 / 0.46 | 0.32 / 0.45 |
+| identical levels (all are fission daughters re-fusing in their split year) | 28.8 % | 11.5 % |
+| `ΔK` p50 / p90 / p99 / max | 0.11 / 1.56 / 5.55 / 15.2 | 0.35 / 1.77 / 5.71 / 10.6 |
+| `ΔE` p50 / p90 / p99 / max | 0.0004 / 0.0068 / 0.047 / 0.22 | 0.0007 / 0.0059 / 0.053 / 0.20 |
+| weighted `sd(E) = √(w_A w_B)·ΔE` p50 / p90 / p99 / max | 0.0002 / 0.0031 / 0.018 / 0.11 | 0.0003 / 0.0027 / 0.024 / 0.084 |
+| `K` variance removed `w_A w_B ΔK²` p50 / p90 / p99 | 0.002 / 0.49 / 5.0 | 0.025 / 0.61 / 6.5 |
+| Jensen gap `E(K̄) − Σ w E(K)` p50 / p90 / p99 / max | 4e-7 / 1e-4 / 0.0017 / 0.041 | 1.5e-6 / 9e-5 / 0.0019 / 0.019 |
+| ... relative to `E(K̄)`, p99 / max | 0.21 % / 5.0 % | 0.30 % / 2.5 % |
+
+*Share of fusions at or above a threshold* (`ΔE` / weighted `sd(E)`), neolithic · pressure:
+
+| threshold | 0.005 | 0.01 | 0.02 | 0.05 | 0.1 |
+|---|---|---|---|---|---|
+| `ΔE` | 0.118 · 0.114 | 0.076 · 0.064 | 0.035 · 0.033 | 0.009 · 0.011 | 0.004 · 0.002 |
+| weighted `sd(E)` | 0.070 · 0.060 | 0.027 · 0.031 | 0.008 · 0.013 | 0.001 · 0.001 | 0.0002 · 0 |
+
+- No single threshold is load-bearing. At every threshold, potentially meaningful gaps are
+  a small minority, and population weighting halves to quarters them.
+- `ΔK` overstates consequence. Large `K` gaps occur mostly at high `K`, where `E` is
+  flat: a `ΔK` p99 of 5.6 corresponds to a `ΔE` p99 of 0.05.
+
+*Where the differences come from* (share of fusions; share with `ΔE ≥ 0.01`), neolithic ·
+pressure:
+
+| context | share | `ΔE ≥ 0.01` | `ΔE` p99 |
+|---|---|---|---|
+| both units cultivating | 0.81 · 0.77 | 0.015 · 0.010 | 0.012 · 0.010 |
+| one cultivating | 0.07 · 0.08 | 0.49 · 0.18 | 0.078 · 0.035 |
+| neither cultivating | 0.12 · 0.16 | 0.25 · 0.27 | 0.16 · 0.10 |
+| `plant_cultivation` held by only one | 7 · 17 fusions | 0.71 · 0.77 | — |
+| kin, split this year | 0.29 · 0.12 | 0 | 0 |
+| kin, split 1–10 y ago | 0.37 · 0.27 | 0.003 · 0.004 | 0.005 · 0.006 |
+| kin, split > 10 y ago | 0.34 · 0.25 | 0.22 · 0.03 | 0.11 · 0.022 |
+| unrelated founders | 0.005 · 0.37 | 0.30 · 0.15 | 0.036 · 0.074 |
+| minority weight < 0.1 | 0.016 · 0.012 | 0.51 · 0.05 | 0.19 · 0.05 |
+| target farms within the next 10 y | 0.94 · 0.94 | 0.075 · 0.056 | 0.040 · 0.037 |
+
+- **Fusions between cultivating units are nearly homogeneous.** They are about 80 % of all
+  fusions, with a `ΔE` p99 of about 0.01. Shared practice drives `K` toward similar
+  `K* = g/λ` at levels where `E` is flat.
+- **Meaningful gaps come from different productive histories:**
+  - one unit cultivating and the other not;
+  - lineages separated for more than a decade (neolithic);
+  - unrelated founders (pressure seeds 37 % of its fusions from independent founders);
+  - a large unit absorbing a tiny different group, which is weighted out.
+- **Technology rarely differs at fusion.** `plant_cultivation` is held by only one side in
+  7 / 17 fusions, consistent with 5D's fusion-union count.
+- **Other domains:** `ecology` gaps are as large in `K`, but `E_ecology` (half 0.05) is
+  saturated. `storage` and `construction` gaps are an order of magnitude smaller.
+
+**Decision gate.** The gaps are not negligible: about 7 % of fusions have `ΔE ≥ 0.01`,
+with a tail to 0.2. A narrow shadow was justified to measure persistence and productive
+relevance. Under the existing learning law, persistence follows from the algebra (see
+above). The replay adds where the gaps land: in which units, in farming years, and for how
+long.
+
+#### Shadow methodology (COUNTERFACTUAL / NOT ACTIVE)
+
+- **State:** for each heterogeneous unit, components `(w_i, K_i)`. These are mixture
+  weights and agriculture levels, i.e. inherited historical knowledge positions.
+  - Every other unit is one component at its authoritative `K`.
+  - Components are not strata. They are not attached to `stratum_id`s: nothing maps the
+    people who brought a history to a field or store claim. No occupation is inferred.
+- **Replay:** one read-only recorder run per scenario and seed records:
+  - the agriculture `K` before and after learning, and after diffusion and innovation;
+  - each fusion's pre-fusion state (both units' `K` vectors, populations, fields,
+    cultivation, technology, founding, parent) and post-fusion `K`;
+  - the farming inputs (hours, harvest, capability, labor-force entry `τ`);
+  - the event stream (fission, fusion, extinction).
+
+  Every setting replays the same history.
+- **Common environment (primary, Model B):** every component gets the unit's learning
+  gain `g = K_after − (1 − λ) K_before` and its diffusion and innovation increment. No
+  component uses its own smaller population in the log term: that would be a new
+  mechanism, under which smaller groups learn less.
+- **Fission:** representative. The daughter copies the distribution (expected value;
+  rare components are duplicated in expectation on both sides). **Fusion:** concatenate
+  and weight by pre-fusion populations. The shadow mean is checked against the recorded
+  authoritative pre- and post-fusion `K` (relative error ≤ 2.4e-15).
+- **Settings:**
+  - A, instant pooling (= authoritative);
+  - B, retention;
+  - B + turnover: new workers learn the unit mean, `K_i ← (1 − τ) K_i + τ K̄`, with `τ`
+    from the cohort history (median 0.032);
+  - delayed pooling after D = 1, 2, 5, 10, 25 years (from the unit's latest fusion);
+  - capacity 4 / 16 / 32 with K, slope-weighted and exact-efficiency merge metrics,
+    against unlimited exact compaction.
+- **Pair tracers:** for each fusion with `ΔK > 0`, the two incoming groups' levels are
+  followed in the target under the same updates until 50 years, extinction or the run's
+  end. They are censored at extinction and follow the target when it is absorbed. Age
+  `a` is the farming check `a` years after the fusion, so `a − 1` learning years have
+  passed.
+- **Static relevance:** `E_pooled / E_separate − 1` with `E_pooled = E(K̄)` and
+  `E_separate = Σ w_i E(K_i)`. This equals the crop-output change only if output were the
+  participation-weighted sum of each participant's own efficiency. That is a hypothesis.
+  The alternatives (knowledge shared at once, collaborative work, teaching, a collective
+  stock) give 0. Never applied.
+
+#### Controlled cases (`controlled`)
+
+Static cases (pooled vs separate at fusion):
+- Equal `K`, or both 0: one component, Jensen 0.
+- 0.4 and 9 at equal size: Jensen 0.21, `E_pool/E_sep − 1` = 42 %.
+- The same pair with 5 % at 0.4: 3.2 %.
+- Cultivator 6 with forager 0.4: 34 %.
+- Different `K` under the same technology (2.2, 4): 2.1 %. Technology plays no role in
+  the shadow.
+- Repeated fusion: three components. The mean equals the authoritative two-step mean.
+  Input order changes nothing (difference 0).
+
+Trajectories after an equal-size fusion of 0.4 and 9 (`K` gap / `E` gap at 0, 10, 50 y):
+
+| case | 0 y | 10 y | 50 y |
+|---|---|---|---|
+| no cultivation afterwards | 8.6 / 0.65 | 7.0 / 0.65 | 3.1 / 0.55 |
+| identical ongoing practice (`K* = 9`) | 8.6 / 0.65 | 7.0 / 0.32 | 3.1 / 0.07 |
+| practice 10 y, then cessation | 8.6 / 0.65 | 7.0 / 0.32 | 3.1 / 0.36 |
+| turnover pooling, `τ = 0.032`, `K* = 9` | 8.6 / 0.65 | 5.1 / 0.21 | 0.6 / 0.01 |
+
+- Replayed synthetic histories, covering fusion then fission and repeated fusion:
+  - pooling gives no heterogeneous unit-years;
+  - retention keeps the daughter's copy;
+  - delayed pooling at 5 y truncates;
+  - every mean error is ≤ 1.1e-15.
+- Turnover half-life: 13.1 y.
+- Jensen ≥ 0 on 10,000 random distributions (minimum 3e-10). The second-order
+  approximation `h/(K̄+h)³ · Var(K)` gives 0.5–1.5× the exact gap.
+- Capacity on 40 random components, `E_sep` error p50: 2.4e-4 (K) vs 1.2e-4 (slope or E)
+  at capacity 16; 0.014 vs 0.008 vs 0.008 at capacity 4.
+
+#### Real runs: static relevance and sharing sensitivity
+
+Over farming unit-years (cultivation hours > 0 and `plant_cultivation` held), neolithic ·
+pressure:
+
+| setting | farming unit-years heterogeneous | harvest-weighted `E_pool/E_sep − 1` | relative gap p50 / p90 / p99 / max (heterogeneous) |
+|---|---|---|---|
+| A, pooling at fusion (authoritative) | 0 · 0 | 0 · 0 | — |
+| B, retention | 0.91 · 0.97 | 4.2e-5 · 3.1e-5 | 3e-7 / 5e-5 / 8e-4 / 0.053 · 5e-6 / 6e-5 / 8e-4 / 0.026 |
+| B + turnover (pooled teaching) | 0.91 · 0.97 | 1.8e-5 · 1.7e-5 | 5e-9 / 8e-6 / 4e-4 / 0.052 · 8e-7 / 2e-5 / 5e-4 / 0.025 |
+| pooling after 1 y | 0.013 · 0.030 | 1.3e-6 · 1.4e-6 | |
+| pooling after 5 y | 0.069 · 0.158 | 9.9e-6 · 9.6e-6 | |
+| pooling after 10 y | 0.136 · 0.311 | 1.9e-5 · 1.7e-5 | |
+| pooling after 25 y | 0.30 · 0.63 | 3.4e-5 · 2.8e-5 | |
+
+- **Retention makes almost every farming unit heterogeneous, by a negligible amount.**
+  Fusion is frequent, so nearly every farming unit descends from some fusion. But the
+  harvest-weighted static consequence is 0.004 % · 0.003 %.
+- Farming unit-years with a relative gap ≥ 0.1 %: 0.62 % · 0.73 %. ≥ 1 %: 0.016 % ·
+  0.016 %. ≥ 5 %: 0.001 % · 0.
+- **Within-unit spread of `E`** under retention, p50 / p90: 0.0002 / 0.0021 · 0.0005 /
+  0.0022. By comparison:
+  - between farming units in the same year (authoritative), the spread of `E` is
+    0.045 / 0.069 · 0.010 / 0.045;
+  - a farming unit's own year-to-year change in `E` is p50 0.0004 · 0.0002.
+
+  Fusion-born dispersion is 20–200× smaller than ordinary between-unit differences, and
+  comparable to one year of a unit's own drift.
+- **Sharing assumptions move the result monotonically and boundedly.** The consequence
+  grows with the pooling delay up to the retention bound. Pooled teaching of new workers
+  halves it. No sharing assumption makes it material.
+
+#### Persistence of fusion-born gaps (pair tracers)
+
+`K` gap / initial gap (median) and the share with an `E` gap ≥ 0.01, by age:
+
+| | n | 5 y | 10 y | 25 y | 50 y | `K` halved (p50) | `E` gap < 0.01 reached (p50) |
+|---|---|---|---|---|---|---|---|
+| retention, all `ΔK > 0` | 4,555 · 3,232 | 0.92 | 0.83 | 0.62 | 0.37 | 36 y | 95 % · 99 % (1 y) |
+| retention, `ΔE₀ ≥ 0.01` | 485 · 234 | 0.92 / 92 % · 86 % | 0.83 / 80 % · 76 % | 0.62 / 47 % · 43 % | 0.37 / 22 % · 10 % | 36 y | 67 % (17 y) · 88 % (19 y) |
+| retention, `ΔE₀ ≥ 0.05` | 58 · 41 | 100 % | 100 % | 98 % · 95 % | 78 % · 41 % | 36 y | 19 % (43 y) · 59 % (44 y) |
+| + turnover, `ΔE₀ ≥ 0.01` | | 0.81 / 84 % · 78 % | 0.62 / 56 % · 58 % | 0.28 / 16 % | 0.07 / 0 % | 14 · 16 y | 89 % (11 y) · 99 % (13 y) |
+| pooling after 5 y | | 0.92 | 0 | 0 | 0 | 6 y | ≈ 6 y |
+
+- **Attribution:**
+  - Under retention the `K` gap between the two incoming groups follows `(1 − λ)^(a−1)`
+    exactly, by the learning law alone.
+  - Demographic mixing removes it only in the turnover sensitivity (14–16 y half-life).
+  - Pooling removes it at the stated delay.
+  - The gap in `E` also closes as practice saturates `K`. Of gaps that start at
+    `ΔE ≥ 0.01`, 67 % · 88 % fall below 0.01 within 50 years under retention alone.
+- **Later fusions dilute but do not erase.** 53 % · 78 % of the larger gaps see another
+  fusion into the same unit within 50 years. The unit's `sd(K)` falls from 1.43 · 1.30 at
+  1 y to 0.57 · 0.56 at 50 y. Nothing was censored before 50 y.
+- **Do the gaps land on farming?** Of the larger gaps, 95 % · 89 % sit in a unit that
+  farms while the pair `E` gap is still ≥ 0.01 (p50 15 · 11 farming years within 50 y).
+  They do coincide with cultivation. The weights and the second-order size of the Jensen
+  term keep their consequence small.
+- **Consistent with §U:** the "c = 0 (fusion only)" column there found 57 · 58 stop
+  episodes with a spread ≥ 0.05.
+
+#### Demographic turnover and inheritance
+
+- **Retention (B)** treats an incoming group's `K` as attached to that group indefinitely.
+  Under the individual-competence reading, that makes the advantage hereditary *by
+  representation*: children of the fused-in people would keep their parents' experience
+  (5C's caution).
+  - It is an upper persistence bound, not endogenous multigenerational differentiation.
+- **B + turnover** lets new workers learn the unit mean. That is the representation-
+  consistent individual reading, and it halves the consequence.
+- A third option, new workers entering untaught (`K = 0`), is not a fusion question. It
+  makes every unit heterogeneous whatever its fusion history: 5E's life-course gap.
+- **What is not supported:** none of these settings gives multigenerational skill
+  differentiation with a transmission mechanism. A claim of heritable competence would
+  need one: teaching that favors one's own children.
+
+#### Resolution
+
+- **Unlimited retention grows combinatorially.** Components reach a max of 298,368 ·
+  2,323,138 per unit, with p50 / p99 over heterogeneous unit-years of 8 / 7,180 ·
+  204 / 219,000. The 265,151 · 4,083,700 exact merges do not contain it.
+  - Cause: when fission kin re-fuse, two copies of the same distribution are concatenated,
+    offset by the gap that opened between the units. The distribution becomes a
+    cross-product of every historical gap.
+  - This is a representational property of retention, not evidence of meaningful variety.
+    Almost all of the components are near-duplicates.
+- **Capacity costs nothing measurable:**
+
+| | at capacity (share of heterogeneous unit-years) | `|E_sep − unlimited|` p99 / max | harvest-weighted gap vs unlimited |
+|---|---|---|---|
+| 32 | 0.26 · 0.66 | 5e-9 / 6e-8 · 2e-8 / 7e-8 | identical to 4 digits |
+| 16 | 0.38 · 0.73 | 3e-8 / 4e-7 · 1e-7 / 4e-7 | 4.151e-5 vs 4.152e-5 · 3.139e-5 vs 3.141e-5 |
+| 4 | 0.77 · 0.90 | 1e-6 / 2e-5 · 3e-6 / 4–7e-5 | −0.3 % · −1.5 % |
+
+- **16 vs 32 agree** to < 5e-7 in any unit's `E_separate`. Even capacity 4 changes the
+  aggregate by ≤ 1.5 % of an already negligible quantity.
+- **Merge metric.** At capacity 16 / 32, the K, slope-weighted and exact-efficiency metrics
+  give identical results (the merged pairs are near-duplicates). At capacity 4 the
+  slope-weighted metric's maximum error is lower (3.9e-5 vs 6.6e-5, pressure). On the
+  fusion gaps themselves, the slope-weighted distance `|ΔK|·E'(K̄)` reproduces `|ΔE|`
+  (ratio p10 / p50 / p90 0.97 / 0.998 / 1.00; Spearman 1.000 · 1.000), while plain `|ΔK|`
+  does not (Spearman 0.88 · 0.84; 82 % · 63 % of top-decile `ΔE` fusions are top-decile
+  `ΔK`). This confirms §U/§V in the fusion setting.
+- **Objectives differ:**
+  - Merging into the weighted mean always preserves mean `K`, which is the authoritative
+    quantity.
+  - The slope-weighted metric best preserves predicted efficiency (`E_separate`).
+  - Preserving dispersion or source histories would forbid merging near-duplicates. That
+    is what makes unlimited retention explode.
+  - None of these choices matters at the observed magnitudes.
+
+#### Comparison with earlier candidates
+
+| candidate (stage) | consequence measure | neolithic · pressure |
+|---|---|---|
+| practice concentration, c = 1, continuity (§U) | practitioner `E` ÷ unit `E` − 1, median | 1.2 % · 0.2 % |
+| entry-cost continuity, decaying memory (§V) | same | 2.9 % · 0.4 % |
+| fusion-born retention (this stage, upper bound) | `E_pool / E_sep − 1`, harvest-weighted (median over farming unit-years) | 0.004 % · 0.003 % (≈ 0) |
+
+The measures differ (participants vs the unit, against pooled vs separate), so this is not
+an equivalence. But even the upper persistence bound of the fusion route is two to three
+orders of magnitude below the effects 5B/5C already judged too small to activate.
+
+#### Limitations
+
+- `K`'s individual-versus-collective meaning is unresolved in the code (see the ontology
+  table). Retention is a reinterpretation.
+- The static consequence assumes output aggregates over each participant's own `E`.
+  Collaborative or shared-knowledge production gives zero.
+- Expected-value fission duplicates rare components on both sides. A finite partition was
+  not replayed. It could concentrate a minority history in one daughter. Because the term
+  is second-order in the weights, that would raise the gap there, but the probe does not
+  measure it.
+- Component-resolved diffusion (each component learns from contacts by its own gap) was
+  not replayed. It would only add contraction: transmissibility 0.05 × contact strength
+  per year.
+- The pooling delay is measured from a unit's latest fusion. Repeated fusions restart it.
+- Only agriculture is replayed. The other domains' gaps are smaller or saturated in `E`.
+
+**Recommendation: B. Fusion differences are real but too small in consequence to justify
+per-stratum competence.**
+- **Real:** about 7 % of fusions bring `ΔE ≥ 0.01`, from units with different productive
+  histories (one cultivating, long-separated or unrelated lineages). Under the existing
+  law they would decay in `K` with a 34-year half-life (14–16 y with pooled teaching).
+- **Small:** even with indefinite retention, the static consequence is 0.004 % · 0.003 %
+  of harvest. Within-unit `E` spread is 20–200× below ordinary between-unit differences.
+  Population weighting and the second-order Jensen term suppress it.
+- **Not C:** the ontology is genuinely ambiguous, but both readings give a negligible
+  consequence. The collective reading gives 0; the individual reading gives the bounds
+  above.
+- Keep unit-level averaging. Do not add a `[U,S]` competence field, a sharing delay or a
+  competence merge rule.
+- **Separate from strata (for review, not proposed):** if `K` is a collective stock, the
+  authoritative *mean* on fusion is itself the less consistent rule. A union or max would
+  match the accumulation and turnover semantics. Changing it would be an MVP 2.1
+  scientific change with a new baseline. It is recorded as an ontology question only.
+- **Next (for review):** the fusion route is closed. Of 5D's ranking, selective fission
+  (E) remains the only candidate with existing substrate. Otherwise a representation
+  change (subset contacts, within-unit places) is needed.
+- No activation, no splitting, no new canonical parameter. The physical-feedback gate
+  stays closed.
+- Pending scientific review.
+
 ---
 
 ## 3. Open questions
@@ -1825,7 +2212,11 @@ activity under model-consistent transmission.**
   origin is partial exposure at technique acquisition, which timing suggests is transient;
   a falsification test is proposed. Stage 5E (§X): under model-consistent within-unit
   transmission (T50 ≲ 5 y) partial knowledge almost never constrains cultivation; uneven
-  cultivation knowledge is rejected as the leading splitter.
+  cultivation knowledge is rejected as the leading splitter. Stage 5F (§Y): fusion erases
+  real knowledge differences between units with different productive histories, but even
+  indefinite retention changes static crop efficiency by ≈ 0.004 % of harvest; unit-level
+  averaging stays. Open: whether `K` is a collective stock or average competence (fusion
+  averages it; accumulation and turnover treat it as collective).
 
 - **Cause of differentiated clearing or plot extension.** Whether new land follows labor
   (H1/H2) or control (H3) needs a named lower-level cause (plot extension,

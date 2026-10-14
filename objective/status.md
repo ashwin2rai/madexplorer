@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-09 (MVP 3 Stage 5E, awaiting review)\
+**Updated:** 2026-10-14 (MVP 3 Stage 5F, awaiting review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,60 +13,91 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**Completed:** Stage 5E, partial knowledge exposure falsification (design §X), a
-counterfactual. **PAUSE FOR SCIENTIFIC REVIEW.**
+**Completed:** Stage 5F, fusion-born competence heterogeneity audit (design §Y), an audit
+plus counterfactual. **PAUSE FOR SCIENTIFIC REVIEW.**
 
-**Production behavior:** unchanged. `population/knowledge_exposure.py` is not called by the
-simulator, has no scenario setting and registers no model rule. The probe records with a
-read-only farming hook and replays the event stream. Both MVP 2.1 oracles are identical.
+**Production behavior:** unchanged. `population/fusion_competence.py` is not called by the
+simulator, has no scenario setting and registers no model rule. The probe records with
+read-only hooks (farming, learning, fission, fusion) and replays the event stream. Both
+MVP 2.1 oracles are identical.
 
-**Starting HEAD:** `d674105` (Stage 5D).
+**Starting commit:** `61cf0bd` (Stage 5E), clean worktree.
 
 **Done:**
-- **Pure module** `population/knowledge_exposure.py` (NOT ACTIVE): exposure,
-  mass-action transmission and calibration, turnover, expected and finite-knower fission,
-  fusion, `f_min` and the knowledge constraint.
-- **Tests:** `tests/test_knowledge_exposure.py`, 19 passing, including replay ordering,
-  conservation and observer neutrality.
-- **Probe:** `scripts/probes/knowledge_exposure_counterfactual.py`.
+- **Pure module** `population/fusion_competence.py` (NOT ACTIVE): efficiency and slope,
+  fusion by concatenation, common-environment learning, turnover pooling, pooling, exact
+  compaction, capacity coalescence (K, slope-weighted, exact-efficiency metrics), Jensen
+  gap.
+- **Tests:** `tests/test_fusion_competence.py`, 15 passing, including mean reproduction,
+  the `(1 − λ)` decay of a tracer gap, input-order invariance and inactivity.
+- **Probe:** `scripts/probes/fusion_competence_counterfactual.py`.
   - `record`: 8 runs, about 2 minutes with 2 jobs.
-  - `replay`: 84 settings × 8 histories, about 3 minutes.
+  - `replay`: 16 settings × 8 histories, about 11 minutes. Unlimited retention dominates.
   - `controlled`.
 
-**Event ordering:** invention and adoption come after that year's farming and field
-planning. The earliest effect is the next year's field plan, and the first cultivation
-hours come the year after. 5D's "no same-year start" is scheduling.
+**Knowledge ontology:** `K` is a mixture, and the code does not resolve it.
+- Accumulation (practitioner-count effect) and turnover (births never dilute it) treat it
+  as a collective stock.
+- Fusion (population-weighted mean) treats it as average competence.
+- Fission (copy) fits both.
 
-**Earliest consequential use:** `plant_cultivation` acts only through `crop_yield`. It is
-first consequential at the first field plan that sets fields above 0. Invention lineages
-plan fields a median 2–3 years after invention; adoption lineages 10–20 years after.
+Keeping separate post-fusion values is a reinterpretation, tested both ways.
 
-**Key results** (k = 1, turnover):
-- **Partial knowledge exists at every acquisition, but rarely matters.** Material
-  shortfall (≥ 5 % of planned hours) occurs in under 0.2 % (neolithic) and 1 % (pressure)
-  of farming unit-years. Constrained hours stay under 0.1 % and 0.4 % while within-unit
-  spread reaches 50 % in 5 years or less.
-- **Initial exposure matters only near invention.** Farming years in inventing units
-  within 10 years of invention are 0.06 % / 0.13 % of all cultivation, and 22–33 % of them
-  bind at T50 = 5 y. This depends strongly on `k`.
-- **Slow spread (T50 ≥ 10 y)** gives broad constraints (up to 22 % of pressure farming
-  unit-years at 20 y). These come from untaught new workers in fission descendants, almost
-  independent of `k`, and nearly vanish without turnover.
-- **Finite-knower fission** raises constrained hours 1.2–9× at slow rates and leaves
-  1–3 % of holder unit-years with no knowers.
-- **Model-internal bound:** between co-resident units, adoption is 0.2 a year (50 %
-  within about 3–4 years), consistent with within-unit T50 ≲ 5 y.
+**Fusion equation:** `K_t ← (K_t n_t + K_s n_s)/(n_t + n_s)` with pre-merge populations.
+Bit-exact in all 10,044 recorded fusions. `E = K/(K+2)` confirmed. Learning is affine in
+`K` with a common slope, so a retained gap decays by `(1 − 0.02)` a year whatever the
+practice (half-life 34.3 y).
 
-**Scientific recommendation: B.** Partial knowledge almost always disappears before
-consequential activity. Reject uneven cultivation knowledge as the leading splitter; do
-not add a slow transmission parameter. This would change to C only with independent
-evidence for T50 ≥ 10 y, in which case the operative mechanism is teaching new workers.
+**Observed fusion differences** (neolithic · pressure):
+- 6,393 · 3,651 fusions; 29 % · 12 % have identical `K` (daughters re-fusing in their
+  split year).
+- `ΔE` p50 / p90 / p99: 0.0004 / 0.007 / 0.047 · 0.0007 / 0.006 / 0.053.
+- `ΔE ≥ 0.01` in 7.6 % · 6.4 %; population-weighted, 2.7 % · 3.1 %.
+- Meaningful gaps come from different productive histories: one unit cultivating and the
+  other not, lineages separated for more than 10 years, unrelated founders. Fusions
+  between two cultivating units (about 80 %) have `ΔE` p99 ≈ 0.01.
 
-**Next:** PAUSE FOR SCIENTIFIC REVIEW. Candidate for review: selective fission (5D family
-E) as the remaining opportunity mechanism with existing substrate, or a representation
-change (subset contacts, within-unit places). Do not begin the next stage without review.
+**Information lost by averaging:** `K` variance `w_A w_B ΔK²` p90 0.5 · 0.6. The static
+Jensen gap `E(K̄) − Σ w E(K)` ≥ 0 (concavity) is p99 0.2 % · 0.3 % of `E` at fusion,
+max 5 % · 2.5 %.
+
+**Static productive relevance** (only if output aggregates each participant's own `E`):
+- Indefinite retention: harvest-weighted 0.004 % · 0.003 %.
+- Farming unit-years with a gap ≥ 1 %: 0.016 % · 0.016 %.
+- Within-unit `E` spread p50 0.0002 · 0.0005, against 0.045 · 0.010 between farming units.
+- For comparison, §U/§V found 1.2–2.9 % · 0.2–0.4 %.
+
+**Shadow persistence:**
+- `K` gaps halve in 36 farming years (35 learning years) under retention.
+- Of gaps starting at `ΔE ≥ 0.01`, 47 % · 43 % are still ≥ 0.01 at 25 y and 22 % · 10 % at
+  50 y.
+- They do land in farming units (p50 15 · 11 farming years with `ΔE ≥ 0.01`), but their
+  consequence stays second-order.
+
+**Sharing and turnover sensitivity:**
+- Pooled teaching of new workers: half-life 14–16 y; consequence halved.
+- Delayed pooling at 1 / 5 / 10 / 25 y: monotone, from 1.3e-6 to 3.4e-5 of harvest, never
+  above retention.
+- Untaught entrants are 5E's life-course gap, not a fusion effect.
+
+**Resolution 16 vs 32:** unlimited retention grows combinatorially (max 3e5 · 2.3e6 components;
+kin re-fusing concatenates offset copies). Capacity 16 and 32 agree with unlimited to
+< 5e-7 in any unit's `E_separate` (at capacity in 38 % / 26 % · 73 % / 66 % of
+heterogeneous unit-years). The merge metric is irrelevant at these magnitudes. The
+slope-weighted distance reproduces `ΔE` (Spearman 1.000); plain `ΔK` does not (0.88 ·
+0.84).
+
+**Scientific recommendation: B.** Fusion differences are real but too small in consequence.
+Keep unit-level averaging, with no `[U,S]` competence, no sharing delay and no merge rule.
+- Not C: both ontology readings give a negligible consequence.
+- Recorded for review only: if `K` is collective, the authoritative mean is the less
+  consistent fusion rule. Changing it would be an MVP 2.1 scientific change.
 
 **Physical-feedback gate:** closed.
+
+**Next:** PAUSE FOR SCIENTIFIC REVIEW. The fusion route is closed. Remaining candidates:
+selective fission (5D family E), or a representation change (subset contacts, within-unit
+places). Do not begin the next stage without review.
 
 ## 2. MVP 3 so far
 
@@ -86,6 +117,7 @@ change (subset contacts, within-unit places). Do not begin the next stage withou
 | 5C | Entry costs: initiation is the same corner; incumbents before newcomers explains continuity relative to rotation; how many to keep is indifferent; one-year memory reproduces 5B; turnover makes long incumbency hereditary by representation; B (counterfactual) | §V |
 | 5D | Opportunity audit: no within-unit opportunity differentiation exists; best-grounded origin is partial exposure at technique acquisition, but knowing precedes practice by 8–16 y (p50); D, falsification test proposed (design only) | §W |
 | 5E | Partial knowledge exposure: exists at every acquisition but binds cultivation materially in < 1 % of farming unit-years under model-consistent spread (T50 ≲ 5 y); only near rare inventions or with slow spread (then untaught new workers); B (counterfactual) | §X |
+| 5F | Fusion-born knowledge heterogeneity: real (≈ 7 % of fusions ΔE ≥ 0.01, from different productive histories), slow to decay in K (34 y), but static consequence ≈ 0.004 % of harvest even with indefinite retention; K's ontology is mixed; B (audit + counterfactual) | §Y |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
@@ -108,8 +140,8 @@ change (subset contacts, within-unit places). Do not begin the next stage withou
 
 **Do not forget:**
 - `strata_access.py`, `store_release.py`, `field_control.py`, `practice_concentration.py`,
-  `entry_cost.py` and `knowledge_exposure.py` are NOT ACTIVE. Nothing in the simulator
-  calls them, and their parameters are not scenario settings.
+  `entry_cost.py`, `knowledge_exposure.py` and `fusion_competence.py` are NOT ACTIVE.
+  Nothing in the simulator calls them, and their parameters are not scenario settings.
 - Capacity coalescence is numerical, and its equal-weight metric is mechanism-agnostic.
   Revisit it (§M6) before anything reads claims.
 - Never use strata to brake population growth (§4 below).
