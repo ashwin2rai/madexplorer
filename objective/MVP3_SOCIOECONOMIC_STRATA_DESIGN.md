@@ -2,7 +2,7 @@
 
 **Status:** current contract plus findings register (rewritten 2026-10-07; the full
 stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 5F (§Y). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
+stage: 5G (§Z). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
 is closed.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
 (`PopulationStore`, `population/fields.py`).
@@ -2197,6 +2197,340 @@ per-stratum competence.**
   stays closed.
 - Pending scientific review.
 
+### §Z. Stage 5G — causal structure and statistical representation review (2026-10-14)
+
+**REVIEW + READ-ONLY AUDIT + METHODOLOGICAL BENCHMARK. NOT ACTIVE.**
+- Probes:
+  - `scripts/probes/trade_dependency_audit.py` (read-only hook on `TradeSubsystem.evaluate`);
+  - `scripts/probes/representation_benchmark.py` (standalone; isolated RNG).
+- Tests: `tests/test_representation_benchmark.py` (6).
+- Starting point `0e9ae52` (Stage 5F). No production file, rule, RNG stream or fixture
+  changed.
+
+**Question.** Stages 5A–5F looked for one route only: uneven practice → uneven competence →
+persistent within-unit differentiation. Every variant was either ungrounded or
+inconsequential. Which consequential interaction should come next, and what is the least
+population state it needs?
+
+**Answer.** Between-unit food provisioning is the strongest causal substrate. It already
+exists, already differs between units for grounded reasons (ecology, history, location),
+and already changes recipients' fertility, starvation hazard and fission hazard. It needs
+no finer within-unit state. **Decision: A.**
+
+#### 1. What the simulator represents (verified in code)
+
+- **Units:**
+  - integer `[U, sex, age]` cohorts, with binomial deaths, births and newborn sex from
+    one `DEMOGRAPHY` stream (`demography.py:104-114`);
+  - group-shared hot state in `UnitTable` (`population/fields.py`);
+  - sparse beliefs;
+  - passive `[U,S]` strata `share / field_claim / store_claim`, `max_strata = 16`,
+    513 B/row (`strata.py:75-85`, `config/schema.py:115-124`).
+- **Between-unit relations:** `trade_ties` (sparse dict per unit; `unit.py:312`) are the
+  only persistent pairwise state.
+- **Subset events:** the only event that touches a subset of a unit's people is
+  representative fission (binomial per cohort, `groups.py:93-102`). Every other event,
+  including perception, information exchange, diffusion, adoption, invention, migration,
+  foraging and farming, acts on the whole unit (5D audit, reconfirmed). There are no
+  scouts or trips (`exploration.py:1, 55-122`). Moves are whole-group ("selective
+  emigration arrives with distributional units", `migration.py:172`). Invention is "a
+  property of the whole group" (`innovation.py:75`).
+
+#### 2. Social-assumption audit
+
+Assumption types:
+- **P** physical / ecological
+- **Bio** biological
+- **I** information
+- **H** behavioral hypothesis
+- **C** coordination
+- **A** accounting convention
+- **N** numerical
+
+| Mechanism | Existing rule (code) | Type | Collective / differentiated | Consequence | Classification |
+|---|---|---|---|---|---|
+| Food pooling | `pooled_energy_balance`: one `food_ratio = H/need`, one deficit and one reserve per unit; "Equal sharing assumed" (`energetics.py:104-155`) | C, Bio, A | collective; equal | every member has the same nutrition, so no within-unit nutritional or demographic risk difference can exist | reasonable abstraction with known limitations; **suppresses within-unit risk heterogeneity by construction** |
+| Need | adult-equivalent energy table × climate costs + travel debt (`energetics.py:39-77`) | Bio, P | age-structured, unit total | drives every food decision | retain |
+| Labor | `L = Σ count·cap(age)·hours`; farming first (`max_farm_labor_share` 0.9), clearing debt off the top, foraging the remainder (`agriculture.py:223-338`; `foraging.py:314-320`) | C, A | unit aggregate, no headcount, no assignment | unit hours only; who works is unrepresented | **aggregate accounting device that implies coordination**. Consequential only if a mechanism needs who works (5B/5C: none grounded) |
+| Field planning | deterministic return comparison against the unit's own last forage marginal; tenure-amortized clearing; per-cell arable scaled pro rata to desired area (`agriculture_kernel.py:47-164`) | H, I, P | unit-level decision | when and how much a unit cultivates | reasonable abstraction (myopic, local information) |
+| Foraging competition | same-species units in a cell forage one pool; stop at the combined target; each unit gets harvest ∝ effective effort (`foraging_kernel.py:301-327`) | P, C | between units: cooperative stopping rule | no unit can over-harvest at another's expense; no exclusion or territoriality | **important unresolved behavioral hypothesis** (implicit between-unit cooperation in shared patches) |
+| Trade | surplus `H + stores − need`, offer `0.3 × surplus`; deficits served most-severe-first from the nearest donors; transport `exp(−cost/60 km)`; no refusal, price or reciprocity accounting; deterministic (`trade.py:106-151`) | H, P | between-unit, differentiated by location and balance | 4.8 % · 14.5 % of unit-years receive (this stage); recipients' fertility and starvation hazard change materially | **important unresolved behavioral hypothesis**; currently the only consequential between-unit material relation |
+| Trade ties | `strength = received/need`, added to both sides; decay `×0.7` a year, dropped below 1e-3 (`trade.py:55-84`). Read only by diffusion contacts (`diffusion.py:44, 342`) and innovation connectivity (`innovation.py:226`), **never by trade itself**. Fusion rewires them to the target (`composition.py:144-160`); a fission daughter starts with none (`lifecycle.py:132`); migration keeps them by id | A, H | pairwise | knowledge contacts; no effect on who gives to whom | **possibly suppresses consequential relational structure**: a relation is recorded but has no material consequence |
+| Knowledge | unit `K`; practice-learning with practitioner-count effect, gradient diffusion, population-weighted fusion (§Y) | H, A | collective / average (ontology unresolved, §Y) | crop yield, invention and adoption | needs evidence before reconsideration (§Y: inconsequential at fusion) |
+| Information | perception of nearby cells with lognormal noise; directed unit-pair encounters pass 8 salience-ranked reports (`exploration.py:55-122, 686-778`) | I, H | unit-level | migration choices | retain (local and imperfect) |
+| Fission / fusion | logistic hazards on size and food stress; representative binomial cohort split; the smallest unit in a cell joins the largest (`groups.py:50-300`) | H, Bio | unit-level; representative subset draw | between-unit differentiation; strata inheritance | reasonable abstraction; selective fission is an untested hypothesis (5D E) |
+| Migration | belief-based utility (food, water, distance, uncertainty, crop flow, abandonment); argmax destination; logistic move draw; whole unit; fields zeroed (`migration.py:111-430`) | H, I, P | unit-level | settlement pattern | retain |
+| Demography | binomial deaths with starvation, crowding and age hazards; fertility × logistic(`food_ratio`) using last year's ratio (`demography.py:39-205`) | Bio | cohort-level; identical within a cohort | population dynamics | retain |
+| Strata claims | passive `field_claim / store_claim`; accrual ∝ share (`w = 0`); pooling transfers recorded only (`strata_accounting.py`) | A, N | `[U,S]` but read by no mechanism | none (sidecar) | retain as passive; attributed control ≠ operational authority (no decision reads claims) |
+| Coalescence | equal-weight Euclidean over claim positions (`strata.py:250-320`) | N | — | none (passive) | needs a mechanism-aware metric before any reader (§M6; benchmark below) |
+
+- **Implicit cooperation and coordination**, in order of consequence:
+  1. equal intra-unit food sharing;
+  2. a cooperative stopping rule in shared foraging patches;
+  3. unconditional provisioning to the most severe nearby deficits;
+  4. unit-level labor coordination.
+- **Attributed versus operational control:**
+  - Claims attribute shares of stocks.
+  - Nothing grants any part of a unit authority over a decision. Field planning, store
+    withdrawal (`X = min(D, K)`), trade offers and migration are unit decisions.
+  - No consequence of control is executable today.
+- **A side effect found in the audit:** `food_ratio = H/need` counts harvest only, not
+  stores. A donor that sends from harvest and covers its own need from stores therefore
+  shows a lower `food_ratio`, which lowers its fertility multiplier and raises its fission
+  food-stress term. Measured fertility loss: p99 0.14 · 0.02; > 0.01 in 6.8 % · 2.0 % of
+  donor-years. This is an existing accounting consequence, recorded and not changed.
+
+#### 3. Candidate causal routes
+
+**A. Between-unit resource dependency (real runs, neolithic 600 y · pressure + cultivation
+400 y, seeds 0–3).**
+- The re-run matching reproduced the authoritative transfers exactly in every year.
+- All runs were observer-neutral.
+
+| | neolithic | pressure |
+|---|---|---|
+| unit-years in deficit before trade / receiving | 5.7 % / 4.8 % | 30.3 % / 14.5 % |
+| trade volume / total need | 1.1 % | 3.7 % |
+| dependency `received / need`, p50 / p90 / p99 | 0.10 / 0.31 / 0.58 | 0.11 / 0.35 / 0.66 |
+| share of own deficit covered, p10 / p50 | 0.64 / 1.0 | 0.17 / 1.0 |
+| donors per recipient-year p50 / p90; top-donor share p50 | 2 / 7; 0.67 | 3 / 9; 0.54 |
+| top donor in the same cell | 15 % | 6 % |
+| received the year before; same top donor as the year before | 57 %; 36 % | 58 %; 37 % |
+| chronic receipt (≥ 3 of the last 5 years) | 45 % | 53 % |
+| donor–recipient pair duration p50 / p90 / p99; pairs ≥ 5 y | 1 / 4 / 12 y; 7 % | 1 / 5 / 14 y; 12 % |
+| received from a direct fission parent or daughter | 5.9 % | 4.3 % |
+| units ever recipient / also donor in some year | 3,342 / 2,778 | 1,990 / 1,693 |
+| top donor withheld: its part fully replaced by others / not at all | 80 % / 16 % | 40 % / 50 % |
+
+*Static energy accounting for recipients* (the production `energy_balance` on the
+recorded inputs; not a simulation):
+
+| | neolithic | pressure |
+|---|---|---|
+| recipient-years with a deficit without trade / lifted to 0 by trade | 41 % / 32 % | 78 % / 40 % |
+| deficit p90: none → actual → top donor withheld | 0.22 → 0 → 0.036 | 0.46 → 0.24 → 0.29 |
+| fertility multiplier gain from trade, p50 / p90 | 0.18 / 0.71 | 0.20 / 0.75 |
+| adult starvation hazard ratio without / with trade, p50 / p90 / p99 | 1.0 / 1.7 / 4.3 | 1.2 / 2.5 / 6.7 |
+
+- **Consequential:** a transfer changes a recipient's fertility, starvation and fission
+  inputs substantially. A large share of recipients would be in deficit without it.
+- **Repeated, but not relational:**
+  - About half of recipients are chronically supported, but by a changing set of nearby
+    donors. Only 36–37 % have the same top donor in consecutive years, and pairs last a
+    median of one year.
+  - This follows from the rule: donor choice is nearest-first and does not read ties, so
+    any partner persistence is geographic.
+- **Asymmetry is temporal, not fixed:** 83–85 % of units that ever receive also give in
+  other years.
+- **Substitutability depends on scarcity:** in neolithic, a withheld top donor is fully
+  replaced 80 % of the time; under pressure, only 40 %, and in half of the cases not at
+  all, because offers in range are exhausted.
+- **Not power:** the model has no refusal, conditionality, obligation, bargaining or
+  withholding. `dependency(i ← j)` measures material reliance in one year. It is
+  meaningful as reliance on the local supply pool, not on a partner. Influence over
+  decisions and institutionalized authority would both need new behavioral hypotheses.
+
+**B. Finite encounters and partial exposure.**
+- No executed event involves fewer than all members of a unit, except representative
+  fission.
+- Encounters are unit–unit, with no headcount (`exploration.py:723-733`). Contacts carry
+  no participants (`diffusion.py:30-47`).
+- 5D/5E: partial exposure at acquisition exists as an event but is transient (T50 ≲ 5 y).
+- A finite affected group would need a new modeled event (trips, expeditions, subset
+  contacts). **No substrate.**
+
+**C. Productive-asset access and investment.**
+- The physical asset (`fields_ha`, per unit) and the return (`E` × yield, unit-wide)
+  exist.
+- Attributed control (`field_claim`) exists but is passive.
+- Contribution to creating land (clearing hours) is a unit total, so contributors cannot
+  be distinguished (§S, 5D).
+- Operational control does not exist. Arable land is shared pro rata within a cell.
+- Between units, access already differs (cell, soil, arable scaling), and that difference
+  feeds trade balances, i.e. route A.
+- Within a unit, a contributor-distinguishing event is missing. **Substrate only between
+  units.**
+
+**D. Differential exposure to risk.**
+- Within a unit, demographic stochasticity differs only by age and sex. Food, reserves,
+  deficit and crowding exposure are identical for all members (`energetics.py:104-155`;
+  `health.py`).
+- Equal pooling removes any within-unit risk difference by construction. Creating one
+  would need unequal access (an allocation hypothesis) or subset hazards.
+- Between units, risk differs strongly (deficit 5.7 % vs 30 % of unit-years across
+  scenarios; chronic recipients) and is already buffered by route A.
+- **Within units: no substrate. Between units: same as A.**
+
+| Criterion | A dependency | B encounters | C asset access | D risk |
+|---|---|---|---|---|
+| Existing substrate | **yes**: transfers, ties, deficits | no (fission only) | between units only | between units only |
+| Initial differentiation | yes, grounded in ecology and history | — | between units | between units |
+| Consequential interaction | **yes**: fertility, starvation, fission inputs | — | via A | via A |
+| Persistence | chronic need; partners transient (nearest-first) | — | fields persist; claims passive | chronic deficits |
+| New behavioral assumptions | partner choice, if relations are to persist | a subset event | contributor process, control | allocation rule |
+| Representation need | none (unit + sparse pairs) | compartments | `[U,S]` claims plus an event | `[U,S]` access plus demography |
+| Epoch generality | high (provisioning, credit, aid, trade) | high | high | high |
+| Observability | high (exact replay) | — | medium | medium |
+| Numerical cost | sparse edges (existing) | new state | new state | stratified demography |
+| Risk of forced outcomes | low if dependency is not read as power | high | medium (property by stealth) | high (unequal consumption by fiat) |
+
+**Ranking: A > C ≈ D (both reduce to A between units) > B.**
+
+#### 4. Statistical representation
+
+- **R1, aggregate unit:** sufficient for every *existing* mechanism. Each reads unit
+  totals, and pooling makes members interchangeable.
+- **R2, finite-count compartments:** exact for discrete-state mechanisms with finite
+  counts. The cost grows with the number of causal cells, not with N.
+- **R3, bounded weighted mixture (current strata):** keeps joint shares and means. Its
+  expected-value fission drops the integer split variance.
+- **R4, moments:** exact for pairwise means. Closure fails for higher-order conjunctions
+  and approximates thresholds.
+- **R5, individuals:** the reference only.
+
+**Minimal-sufficient-state test.**
+- *Example of sufficiency:* take two units with identical totals (population, cohorts,
+  harvest, stores, cell) but different within-unit configurations (any strata, any
+  knowledge × access correlation). Under every current mechanism they make identical
+  transitions. For trade in particular, the matching reads only unit balances, cells and
+  propensity.
+- *Example of insufficiency:* under a mechanism in which partners matter, two units with
+  identical totals but different exchange histories would transition differently. The
+  needed state is the pairwise relation, which exists (`trade_ties`), not finer within-unit
+  state.
+- So for route A the aggregate unit plus sparse pair state is sufficient. Within-unit
+  resolution is justified only when a mechanism's decision depends on a within-unit
+  conjunction or threshold. No such grounded mechanism exists today.
+
+#### 5. Representation benchmark (METHODOLOGICAL BENCHMARK — NOT A SOCIOLOGICAL MECHANISM)
+
+**Setup:**
+- Event: the production's representative fission, each member leaving with `f = 0.4`.
+- Hypothetical attributes: a quarter know `K`, a quarter have access `A`.
+- Activity: possible on a side with ≥ 2 members having both.
+- Exact enumeration for R2; 200,000 repetitions otherwise (s.e. ≤ 0.0011).
+
+*One fission, N = 40* (configurations with identical marginals; `P(both sides can)`):
+
+| overlap | R2 exact | R5 individuals | R2 compartments | R3 mixture (EV) | marginals | R4 moments |
+|---|---|---|---|---|---|---|
+| aligned (10) | 0.952 | 0.952 | 0.952 | 0.998 | 0.000 | 0.945 |
+| independent (2) | 0.000 (P daughter 0.160) | 0.000 (0.161) | 0.000 (0.159) | 0.000 (0.000) | 0.000 (0.000) | 0.000 (0.156) |
+| disjoint (0) | 0 | 0 | 0 | 0 | 0 | 0 |
+
+- At N = 80 with independent overlap (5): exact `P(both)` 0.576 against R3 0.542 and R4
+  0.591. The aligned case is 0.9995.
+- Every representation except marginals keeps the mean of the capable count. Marginals
+  give the *same* mean (1.0 at N = 40) for overlaps 10, 2 and 0.
+- R3 keeps the mean but cuts the split variance to a quarter (0.60 vs 2.40). Threshold
+  tails are then off by 0.03–0.16.
+- R4 matches mean and variance; tails are within ≈ 0.015.
+
+Further results:
+- **Integer conservation:** R2 conserves integers in every draw (asserted). R3 conserves
+  only expected mass, so the capable people on each side are fractional.
+- **Fusion:** unit 1 with 10 `K`-only people and unit 2 with 10 `A`-only people have no
+  one capable. Compartments and joint mixture shares give 0; marginals predict 2.5 capable
+  people (spurious).
+- **Moment closure:** two populations with identical means and second moments have
+  three-way overlaps of 0 vs N/4 (N = 20, 40, 80). An activity needing three attributes
+  is indistinguishable under R4.
+- **Approximate merging** (N = 80; experience and access; capable = experience ≥ 10 and
+  access; 100 populations):
+
+| components | equal-weight (experience, access) | capability class only | decision-partition cells |
+|---|---|---|---|
+| 1 | 19 / 23 | 19 / 23 | 19 / 23 |
+| 2 | 12 / 18 | 0 / 1 | 15 / 21 |
+| 4 | 6 / 12 | 0 / 5 | **0 / 0** |
+| 8 | 3.5 / 6 | 0 / 3.1 | 0 / 0 |
+| 16 | 1 / 3.1 | 0 / 1 | 0 / 0 |
+| 32 | 0 / 1 | 0 / 0 | 0 / 0 |
+
+(Capable-count error in people of 80, p50 / p90. Every population occupies 4 decision cells.)
+
+  - **Equal-weight metric:** the production-style equal Euclidean metric over the
+    attributes needs about 32 components to be exact.
+  - **Capability-class-only metric:** non-monotone. Averaging two incapable components
+    (high experience without access, low experience with access) can create spurious
+    capability. Conjunctive thresholds are not closed under averaging.
+  - **Decision-partition metric:** merges only within a cell of (experience side ×
+    access). It is exact whenever the capacity covers the occupied cells, and wrong below
+    that. The required size is set by the mechanism's decision partition, not by 16 or 32.
+
+- **Cost** (100,000 fissions, N = 80, two attributes): individuals 230–290 ns and 160 B per
+  unit; compartments ≈ 400 ns and 32 B; mixture or marginals 80–110 ns and 40 B (two runs).
+  - Scaling with `d` binary attributes: individuals `N·d`; compartments `2^d` counts;
+    mixtures at most `M(d+1)` floats; moments `d + d(d+1)/2`.
+
+**Scientific versus numerical validity.** The benchmark shows which representations
+reproduce a finite-population event. Exact compartments do; expected-value mixtures miss
+threshold tails; marginals miss correlation; moments miss higher-order conjunctions.
+It says nothing about whether knowledge × access is a real social mechanism. It is not
+one in the simulator.
+
+#### 6. Roadmap reassessment
+
+- The implicit sequence (internal specialization → socioeconomic differences →
+  relationships → institutions) was unnecessarily restrictive.
+  - Five stages found no grounded within-unit initiator.
+  - Meanwhile, a consequential between-unit relation already runs every year.
+- The alternative (consequential interaction → minimum state → model → measure → infer)
+  fits the objective (§2.1, §2.7) and the architecture (unit-level state, sparse
+  relations, passive strata) better. It is adopted for planning.
+- It does not abandon within-unit structure. That structure enters when a mechanism's
+  decision needs it, with the representation the benchmark identifies:
+  - compartments over the mechanism's causal states;
+  - a mixture only for continuous attributes inside a decision cell;
+  - a merge metric that respects the decision partition.
+- **Strata:** do not extend `StrataTable`. The next mechanism needs no new `[U,S]`
+  attribute and no selective flows between strata.
+
+#### 7. Recommended next investigation: partner memory in provisioning
+
+| # | Question | Answer |
+|---|---|---|
+| 1 | Event | the existing annual food transfer from a surplus unit to a deficit unit |
+| 2 | Substrate | `TradeSubsystem` matching; `trade_ties` (already recorded, decayed, split and merged) |
+| 3 | Actors | units with a surplus (offer) and units in deficit (draw), as today |
+| 4 | Participation | unchanged: balances `H + stores − need`; reachability within one relocation range |
+| 5 | Information | each unit's own ties (past exchange with that partner) plus current offers in range, i.e. information the unit plausibly has |
+| 6 | Decision rule (hypothesis H-tie) | a recipient draws from tied donors first, ordered by tie strength, then nearest-first as today. Alternative H-tie′: a donor with an oversubscribed offer serves tied recipients first. Neutral limit: tie weight 0 = MVP 2.1 |
+| 7 | State change | none new: transfers and ties as today |
+| 8 | Why persistence | repeated exchange reinforces ties (`+received/need`) and ties steer the next transfer: a positive feedback |
+| 9 | What dissolves it | tie decay (0.7 a year); the donor's surplus vanishing; leaving range; fission (daughters start untied); the partner's extinction |
+| 10 | Measurable consequence | pair duration and concentration (HHI), chronic dependence on a specific partner, net provisioning balance per pair, recipient substitutability, and recipients' and donors' food security (deficit, `food_ratio`) |
+| 11 | Representation | R1 units plus existing sparse ties; no strata or compartments |
+| 12 | Unidentified assumptions | whether partner preference exists; its form (strict priority vs weighting); whether donors or recipients choose; tie decay 0.7 (existing heuristic) |
+| 13 | Falsification | if partner priority leaves pair duration, concentration, substitutability and recipients' food security essentially unchanged from nearest-first, relational memory is inconsequential and should not be added. The same holds if its effect only re-routes food among substitutes |
+| 14 | Smallest safe stage | **5H: static counterfactual matching.** Re-run each recorded year's matching under H-tie / H-tie′ on the authoritative inputs (as this stage's probe does): no feedback, no production change. Only if consequential: a branched, opt-in, off-by-default mechanism with a neutral limit identical to MVP 2.1, to measure dynamic feedback (ties ↔ transfers ↔ demography). That would be a versioned scientific change with its own baseline |
+
+**Rejected or deferred alternatives:**
+- New within-unit events (B: scouts, subset contacts): no substrate; deferred until a
+  question needs them.
+- Productive-control consequences (C): need a contributor process; `field_claim_continuity`
+  stays off.
+- Unequal intra-unit consumption (D): would script inequality.
+- Individual agents in production: the benchmark shows compartments reproduce
+  finite-population events exactly at lower cost. Individuals are a reference only.
+- A generic social-network framework: the needed relation (ties) exists.
+- Reading dependency as power: no refusal or obligation is modeled.
+
+**Open questions:**
+- Is the cooperative stopping rule in shared foraging patches defensible, or is it a
+  hidden coordination assumption that suppresses competition?
+- Should `food_ratio` (fertility, fission) count stores? The donor-penalty side effect is
+  recorded above, not changed.
+- §Y's `K` ontology (collective vs average).
+- Whether unconditional provisioning (fixed 0.3 of surplus) should become a hypothesis
+  with alternatives (reciprocity accounting, refusal). These are later behavioral
+  hypotheses, not part of 5H.
+
+**Decision: A.** Existing between-unit interactions are the strongest foundation. The
+next experiment is a bounded counterfactual on one consequential relationship, partner
+memory in provisioning, using current units and existing ties. No new population
+representation. The physical-feedback gate stays closed. Pending scientific review.
+
 ---
 
 ## 3. Open questions
@@ -2216,7 +2550,14 @@ per-stratum competence.**
   real knowledge differences between units with different productive histories, but even
   indefinite retention changes static crop efficiency by ≈ 0.004 % of harvest; unit-level
   averaging stays. Open: whether `K` is a collective stock or average competence (fusion
-  averages it; accumulation and turnover treat it as collective).
+  averages it; accumulation and turnover treat it as collective). Stage 5G (§Z): the
+  within-unit-first sequence is set aside for planning; the strongest grounded and
+  consequential interaction is between-unit food provisioning, whose partner persistence is
+  currently only geographic (ties are recorded but not read by trade). Next candidate:
+  partner memory in provisioning, as a static matching counterfactual (5H).
+- **Hidden coordination assumptions (§Z).** Cooperative stopping in shared foraging patches;
+  unconditional provisioning (fixed share of surplus); equal intra-unit sharing. Whether
+  `food_ratio` should count stores (donor fertility side effect).
 
 - **Cause of differentiated clearing or plot extension.** Whether new land follows labor
   (H1/H2) or control (H3) needs a named lower-level cause (plot extension,

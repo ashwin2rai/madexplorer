@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-14 (MVP 3 Stage 5F, awaiting review)\
+**Updated:** 2026-10-14 (MVP 3 Stage 5G, awaiting review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,91 +13,82 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**Completed:** Stage 5F, fusion-born competence heterogeneity audit (design §Y), an audit
-plus counterfactual. **PAUSE FOR SCIENTIFIC REVIEW.**
+**Completed:** Stage 5G, causal structure and statistical representation review (design
+§Z). **PAUSE FOR SCIENTIFIC REVIEW.**
 
-**Production behavior:** unchanged. `population/fusion_competence.py` is not called by the
-simulator, has no scenario setting and registers no model rule. The probe records with
-read-only hooks (farming, learning, fission, fusion) and replays the event stream. Both
-MVP 2.1 oracles are identical.
+**Production behavior:** unchanged. There are no production files, model rules, RNG streams
+or fixtures in the diff.
+- New: a read-only probe `scripts/probes/trade_dependency_audit.py` (hook on
+  `TradeSubsystem.evaluate`; about 3 minutes for 8 runs).
+- New: a standalone `scripts/probes/representation_benchmark.py` (METHODOLOGICAL
+  BENCHMARK, isolated RNG), with `tests/test_representation_benchmark.py` (6 tests).
 
-**Starting commit:** `61cf0bd` (Stage 5E), clean worktree.
+**Starting commit:** `0e9ae52` (Stage 5F), clean worktree.
 
-**Done:**
-- **Pure module** `population/fusion_competence.py` (NOT ACTIVE): efficiency and slope,
-  fusion by concatenation, common-environment learning, turnover pooling, pooling, exact
-  compaction, capacity coalescence (K, slope-weighted, exact-efficiency metrics), Jensen
-  gap.
-- **Tests:** `tests/test_fusion_competence.py`, 15 passing, including mean reproduction,
-  the `(1 − λ)` decay of a tracer gap, input-order invariance and inactivity.
-- **Probe:** `scripts/probes/fusion_competence_counterfactual.py`.
-  - `record`: 8 runs, about 2 minutes with 2 jobs.
-  - `replay`: 16 settings × 8 histories, about 11 minutes. Unlimited retention dominates.
-  - `controlled`.
+**Existing social assumptions** (code-cited table in §Z.2):
+- Equal intra-unit food pooling (`pooled_energy_balance`).
+- Unit-level labor coordination.
+- A cooperative stopping rule in shared foraging patches.
+- Unconditional provisioning: 0.3 of surplus to the most severe nearby deficits,
+  nearest donor first.
+- Trade ties recorded but read only by diffusion and innovation, never by trade.
+- Passive claims; no operational control.
+- Side effect: `food_ratio` counts harvest, not stores, so donors can lose fertility.
 
-**Knowledge ontology:** `K` is a mixture, and the code does not resolve it.
-- Accumulation (practitioner-count effect) and turnover (births never dilute it) treat it
-  as a collective stock.
-- Fusion (population-weighted mean) treats it as average competence.
-- Fission (copy) fits both.
+**Candidate mechanisms compared:**
+- A, between-unit dependency.
+- B, finite encounters: no substrate.
+- C, asset access: between units only.
+- D, risk exposure: within-unit risk is equal by construction.
 
-Keeping separate post-fusion values is a reinterpretation, tested both ways.
+Ranking: A > C ≈ D > B.
 
-**Fusion equation:** `K_t ← (K_t n_t + K_s n_s)/(n_t + n_s)` with pre-merge populations.
-Bit-exact in all 10,044 recorded fusions. `E = K/(K+2)` confirmed. Learning is affine in
-`K` with a common slope, so a retained gap decays by `(1 − 0.02)` a year whatever the
-practice (half-life 34.3 y).
+**Strongest causal pathway:** between-unit food provisioning (neolithic · pressure):
+- 4.8 % · 14.5 % of unit-years receive. Dependency `received/need` p90 0.31 · 0.35.
+- 41 % · 78 % of recipient-years would be in deficit without trade.
+- Fertility multiplier gain p50 0.18 · 0.20. Starvation hazard ratio p90 1.7 · 2.5.
+- Chronic receipt in 45 % · 53 % of recipient-years. But the same top donor recurs in
+  only 36–37 %, pairs last a median of 1 year, and 83–85 % of recipients also give in
+  other years.
+- Withholding the top donor: fully replaced in 80 % · 40 % of cases.
 
-**Observed fusion differences** (neolithic · pressure):
-- 6,393 · 3,651 fusions; 29 % · 12 % have identical `K` (daughters re-fusing in their
-  split year).
-- `ΔE` p50 / p90 / p99: 0.0004 / 0.007 / 0.047 · 0.0007 / 0.006 / 0.053.
-- `ΔE ≥ 0.01` in 7.6 % · 6.4 %; population-weighted, 2.7 % · 3.1 %.
-- Meaningful gaps come from different productive histories: one unit cultivating and the
-  other not, lineages separated for more than 10 years, unrelated founders. Fusions
-  between two cultivating units (about 80 %) have `ΔE` p99 ≈ 0.01.
+So reliance is real and consequential, but on the local supply pool, not on a partner.
+Partner persistence is geographic because donor choice ignores ties.
 
-**Information lost by averaging:** `K` variance `w_A w_B ΔK²` p90 0.5 · 0.6. The static
-Jensen gap `E(K̄) − Σ w E(K)` ≥ 0 (concavity) is p99 0.2 % · 0.3 % of `E` at fusion,
-max 5 % · 2.5 %.
+**Statistical representation findings** (benchmark: representative fission, hypothetical
+knowledge × access, threshold ≥ 2):
+- Compartments reproduce the individual reference exactly.
+- Expected-value mixtures keep means but quarter the split variance. Threshold tails are
+  off by 0.03–0.16.
+- Independent marginals cannot distinguish overlap 10 / 2 / 0, and create capability on
+  fusion (2.5 vs 0).
+- Second moments recover pairwise overlap; tails are within ≈ 0.015. They fail for
+  three-way conjunctions.
+- Merging: equal-weight needs about 32 components; merging within decision-partition
+  cells is exact once capacity covers the occupied cells (4). Capability-class-only
+  merging is non-monotone, because averaging creates spurious capability.
 
-**Static productive relevance** (only if output aggregates each participant's own `E`):
-- Indefinite retention: harvest-weighted 0.004 % · 0.003 %.
-- Farming unit-years with a gap ≥ 1 %: 0.016 % · 0.016 %.
-- Within-unit `E` spread p50 0.0002 · 0.0005, against 0.045 · 0.010 between farming units.
-- For comparison, §U/§V found 1.2–2.9 % · 0.2–0.4 %.
+**Minimal sufficient population state:** for every existing mechanism and for the
+recommended one, unit aggregates plus the existing sparse pair state (`trade_ties`).
+Within-unit resolution is justified only for a mechanism whose decision depends on a
+within-unit conjunction or threshold. It would then use compartments over that
+mechanism's causal cells.
 
-**Shadow persistence:**
-- `K` gaps halve in 36 farming years (35 learning years) under retention.
-- Of gaps starting at `ΔE ≥ 0.01`, 47 % · 43 % are still ≥ 0.01 at 25 y and 22 % · 10 % at
-  50 y.
-- They do land in farming units (p50 15 · 11 farming years with `ΔE ≥ 0.01`), but their
-  consequence stays second-order.
+**Recommended next mechanism:** partner memory in provisioning (hypothesis H-tie):
+- recipients draw from tied donors first, by tie strength, then nearest-first;
+- neutral limit = MVP 2.1;
+- falsified if pair duration, concentration, substitutability and food security are
+  unchanged.
 
-**Sharing and turnover sensitivity:**
-- Pooled teaching of new workers: half-life 14–16 y; consequence halved.
-- Delayed pooling at 1 / 5 / 10 / 25 y: monotone, from 1.3e-6 to 3.4e-5 of harvest, never
-  above retention.
-- Untaught entrants are 5E's life-course gap, not a fusion effect.
+First step (5H): a static counterfactual matching on recorded inputs, with no feedback.
 
-**Resolution 16 vs 32:** unlimited retention grows combinatorially (max 3e5 · 2.3e6 components;
-kin re-fusing concatenates offset copies). Capacity 16 and 32 agree with unlimited to
-< 5e-7 in any unit's `E_separate` (at capacity in 38 % / 26 % · 73 % / 66 % of
-heterogeneous unit-years). The merge metric is irrelevant at these magnitudes. The
-slope-weighted distance reproduces `ΔE` (Spearman 1.000); plain `ΔK` does not (0.88 ·
-0.84).
-
-**Scientific recommendation: B.** Fusion differences are real but too small in consequence.
-Keep unit-level averaging, with no `[U,S]` competence, no sharing delay and no merge rule.
-- Not C: both ontology readings give a negligible consequence.
-- Recorded for review only: if `K` is collective, the authoritative mean is the less
-  consistent fusion rule. Changing it would be an MVP 2.1 scientific change.
+**Representation change required:** no.
 
 **Physical-feedback gate:** closed.
 
-**Next:** PAUSE FOR SCIENTIFIC REVIEW. The fusion route is closed. Remaining candidates:
-selective fission (5D family E), or a representation change (subset contacts, within-unit
-places). Do not begin the next stage without review.
+**Scientific decision: A.**
+
+**Next:** PAUSE FOR SCIENTIFIC REVIEW. Do not begin 5H without review.
 
 ## 2. MVP 3 so far
 
@@ -118,6 +109,7 @@ places). Do not begin the next stage without review.
 | 5D | Opportunity audit: no within-unit opportunity differentiation exists; best-grounded origin is partial exposure at technique acquisition, but knowing precedes practice by 8–16 y (p50); D, falsification test proposed (design only) | §W |
 | 5E | Partial knowledge exposure: exists at every acquisition but binds cultivation materially in < 1 % of farming unit-years under model-consistent spread (T50 ≲ 5 y); only near rare inventions or with slow spread (then untaught new workers); B (counterfactual) | §X |
 | 5F | Fusion-born knowledge heterogeneity: real (≈ 7 % of fusions ΔE ≥ 0.01, from different productive histories), slow to decay in K (34 y), but static consequence ≈ 0.004 % of harvest even with indefinite retention; K's ontology is mixed; B (audit + counterfactual) | §Y |
+| 5G | Causal-structure review: no within-unit initiator has substrate; between-unit provisioning is grounded and consequential (recipients' fertility and starvation), with reliance on the local pool rather than partners (ties unread by trade); compartments are the exact finite representation, mixtures miss threshold tails, marginals miss correlation; A (review + read-only audit + benchmark) | §Z |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
