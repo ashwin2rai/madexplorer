@@ -173,6 +173,11 @@ class MechanismsConfig(FrozenModel):
     # unknown-cell level on the memory timescale, and merges average it by population instead
     # of keeping the maximum. Off = the pre-reform rules exactly (permanent, max-merged).
     familiarity_decay: bool = True
+    # MVP 2.2 candidate (Stage 5J, pending scientific approval): nutritional fertility reads
+    # dietary intake (harvest eaten + stores eaten, capped at need, body reserves excluded)
+    # instead of harvest adequacy (food_ratio). Off = MVP 2.1 exactly; versioned scenarios
+    # (scenarios/mvp2_2_*.yaml) turn it on. food_ratio and its other readers are unchanged.
+    dietary_intake_fertility: bool = False
 
 
 class OutputConfig(FrozenModel):

@@ -1,7 +1,9 @@
-"""MVP 3 Stage 5I: fertility input, harvest adequacy (H0) vs dietary intake (H1).
+"""MVP 3 Stage 5I/5J: fertility input, harvest adequacy (H0) vs dietary intake (H1).
 
-``madexplorer.population.dietary_intake`` is NOT ACTIVE; the branch in
-``scripts/probes/fertility_intake_experiment.py`` is EXPERIMENTAL / OPT-IN / NOT CANONICAL.
+``madexplorer.population.dietary_intake`` is used only by MVP 2.2 energetics
+(``mechanisms.dietary_intake_fertility``, Stage 5J); the Stage 5I branch in
+``scripts/probes/fertility_intake_experiment.py`` stays EXPERIMENTAL / OPT-IN and is the
+independent reference the production MVP 2.2 path is checked against.
 """
 
 import importlib.util
@@ -116,14 +118,15 @@ def test_pure_functions_draw_no_random_numbers() -> None:
     assert np.array_equal(np.random.get_state()[1], state)
 
 
-def test_not_active_and_not_registered() -> None:
+def test_only_energetics_imports_the_intake_rule_and_it_is_registered() -> None:
     hits = subprocess.run(
-        ["grep", "-rl", "--include=*.py", "dietary_intake", str(ROOT / "src")],
+        ["grep", "-rl", "--include=*.py", "population.dietary_intake import", str(ROOT / "src")],
         capture_output=True, text=True, check=False,
     ).stdout.split()  # fmt: skip
-    assert [h for h in hits if not h.endswith("dietary_intake.py")] == []
-    assert not any("dietary_intake" in r.qualname for r in RULES.values())
-    assert not any("intake" in name for name in RULES)
+    assert [h.split("/src/")[-1] for h in hits] == ["madexplorer/population/energetics.py"]
+    rule = RULES["dietary_intake"]
+    assert rule.qualname.endswith("dietary_intake.dietary_intake_ratio")
+    assert "MVP 2.2" in rule.rationale
 
 
 # ---------------------------------------------------------------- experimental branch

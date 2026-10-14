@@ -9,6 +9,7 @@ import numpy as np
 from madexplorer.core.governance import model_rule
 from madexplorer.core.state import SimulationState, StepContext
 from madexplorer.core.types import BoolArray, FloatArray
+from madexplorer.population.dietary_intake import dietary_intake_ratio
 from madexplorer.population.strata_accounting import FoodAccounts
 from madexplorer.population.unit import PopulationUnit
 from madexplorer.species.life_history import LifeTables
@@ -208,12 +209,17 @@ class EnergyUpdates:
     stored_kcal: FloatArray
     spoiled_kcal: FloatArray
     retention: FloatArray
+    dietary_intake: FloatArray | None = None  # MVP 2.2 fertility input (None in MVP 2.1)
 
     def apply(self, state: SimulationState, ctx: StepContext) -> None:
         """Commit every row's energy state; stores spoil at the end of the year."""
         cols = self.cols
         n = cols.population()
         opening = cols.get("stores_kcal")  # after trade: K0
+        if self.dietary_intake is not None:  # MVP 2.2: the fertility input of this step only
+            ctx.dietary_intake = dict(
+                zip([u.id for u in cols.units], self.dietary_intake.tolist(), strict=True)
+            )
         cols.set("food_ratio", self.food_ratio)
         cols.set("energy_deficit", self.deficit)
         cols.set("reserve_kcal_per_capita", self.reserve_kcal / n)
@@ -272,15 +278,22 @@ class EnergeticsSubsystem:
         cap = people.astype(np.float64) * p("metabolism.reserve_days_max")[species] * daily
         reserve = cols.get("reserve_kcal_per_capita") * people
         retention = capability_column(cols, ctx, "storage_retention")
+        harvest, stores = cols.get("harvest_kcal"), cols.get("stores_kcal")
         outcome = energy_balance_batch(
             need,
-            cols.get("harvest_kcal"),
+            harvest,
             reserve,  # type: ignore[arg-type]
             cap,
-            cols.get("stores_kcal"),
+            stores,
             retention > 0,
         )
-        return [EnergyUpdates(cols, need, *outcome, retention)]
+        # MVP 2.2: what was eaten (harvest and stores, the same inputs) for nutritional fertility.
+        intake = (
+            dietary_intake_ratio(need, harvest, stores)
+            if ctx.mechanisms.dietary_intake_fertility
+            else None
+        )
+        return [EnergyUpdates(cols, need, *outcome, retention, intake)]
 
 
 def capability_column(cols: "UnitColumns", ctx: StepContext, name: str) -> FloatArray:

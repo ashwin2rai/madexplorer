@@ -13,6 +13,107 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
+### Stage 5J: IN PROGRESS (re-deployment runbook)
+
+Stage 5J is not finished. This block records what has been done and the exact commands to
+reproduce or resume it if the codespace stops. The Stage 5I handoff below is still the
+last completed stage.
+
+**Starting commit:** `7177e57` (Stage 5I), clean worktree. Changes are uncommitted.
+
+**Code changes made so far (uncommitted):**
+- `src/madexplorer/config/schema.py`: `mechanisms.dietary_intake_fertility: bool = False`.
+  The default is MVP 2.1; MVP 2.2 switches it on.
+- `src/madexplorer/core/state.py`: transient `StepContext.dietary_intake`, a dict from
+  unit id to ratio.
+- `src/madexplorer/population/energetics.py`: when the switch is on, computes
+  `dietary_intake_ratio(need, harvest, stores)` and puts it on `ctx.dietary_intake`.
+- `src/madexplorer/population/demography.py`: `fertility_input()` returns `food_ratio`
+  for MVP 2.1 and the intake for MVP 2.2. It raises if MVP 2.2 has no intake for a
+  populated unit.
+- `src/madexplorer/population/dietary_intake.py`: registers the rule `dietary_intake`
+  (MVP 2.2 candidate).
+- `scenarios/mvp2_2_neolithic.yaml`, `scenarios/mvp2_2_pressure.yaml`: copies of the MVP 2.1
+  files with only the name and the switch changed.
+- `scripts/perf/exactness_oracle.py`: `--model mvp2_2` selects the MVP 2.2 scenarios. The
+  default is unchanged (MVP 2.1).
+- `scripts/probes/fertility_version_comparison.py`: equivalence, paired runs, analysis.
+- `tests/test_model_versions.py` (new); `tests/test_dietary_intake.py` (inactivity test
+  updated).
+
+**Results obtained so far:**
+- MVP 2.1 raw and logical oracles: **IDENTICAL** with the change in place.
+- Equivalence: production MVP 2.1 equals experimental H0, and production MVP 2.2 equals
+  experimental H1, **bit-identical every year** in 32 / 32 comparisons (seeds 0–7, both
+  scenarios; about 8 min).
+- New and updated tests: 23 passed.
+
+**Prespecified paired experiment** (defined before results; do not change):
+- Seeds 0–31.
+- Neolithic `scenarios/mvp2_neolithic.yaml` vs `scenarios/mvp2_2_neolithic.yaml`, 600 years.
+- Pressure + cultivation `scenarios/mvp2_pressure.yaml` vs `scenarios/mvp2_2_pressure.yaml`
+  with `mechanisms.cultivation=true`, 400 years.
+- Production code only. 128 runs in total.
+- Outcomes:
+  - population, births, deaths, reproductive-age females, extinctions, units;
+  - fissions, fusions, migrations;
+  - cultivated ha, food production, harvest/need, stores, energy deficit, trade volume;
+  - inventions, adoptions, technology first years (granaries), ecological stocks.
+- Statistics: paired median/mean/IQR/range, share H1 > H0, bootstrap 95 % intervals over
+  seed pairs, exact McNemar for granaries; outliers kept.
+- Status when written: running (about 54 of 128 runs done). Its output is in
+  `/tmp/claude-1000/...` (the session scratchpad), which does **not** survive a codespace
+  restart.
+
+**To resume or re-run** (use `runs/`, which is gitignored and survives restarts; finished
+runs are skipped automatically):
+
+```bash
+# 0. sanity: unit tests for the version boundary and intake rule
+uv run pytest tests/test_model_versions.py tests/test_dietary_intake.py -q
+
+# 1. MVP 2.1 must stay exact (legacy gate)
+uv run python scripts/perf/exactness_oracle.py benchmarks/perf/oracle_mvp2_1.json
+uv run python scripts/perf/exactness_oracle.py --logical benchmarks/perf/oracle_mvp2_1_logical.json
+
+# 2. production versions vs the Stage 5I experimental branch (expect EQUIVALENCE IDENTICAL)
+uv run python scripts/probes/fertility_version_comparison.py equivalence --jobs 2 --seeds 0 1 2 3 4 5 6 7
+
+# 3. prespecified paired experiment, 128 runs (~25-30 min with 2 jobs; resumable)
+uv run python scripts/probes/fertility_version_comparison.py run --jobs 2 --out runs/stage5j/paired
+uv run python scripts/probes/fertility_version_comparison.py analyse --load runs/stage5j/paired > runs/stage5j/analyse.txt
+```
+
+**Remaining Stage 5J steps (not yet done):**
+
+```bash
+# 4. candidate MVP 2.2 oracles (record once, then reproduce in a fresh process)
+uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --record benchmarks/perf/oracle_mvp2_2.json
+uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --logical --record benchmarks/perf/oracle_mvp2_2_logical.json
+uv run python scripts/perf/exactness_oracle.py --model mvp2_2 benchmarks/perf/oracle_mvp2_2.json
+uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --logical benchmarks/perf/oracle_mvp2_2_logical.json
+
+# 5. candidate MVP 2.2 reference runs (same layout as baselines/mvp2_1/)
+uv run madexplorer ensemble scenarios/mvp2_2_neolithic.yaml --seeds 0:3 --years 600 --jobs 2 --out baselines/mvp2_2/neolithic_4x600
+uv run madexplorer ensemble scenarios/mvp2_2_pressure.yaml --seeds 0:3 --years 400 --jobs 2 --set mechanisms.cultivation=true --out baselines/mvp2_2/pressure_4x400_cultivation_true
+uv run madexplorer ensemble scenarios/mvp2_2_pressure.yaml --seeds 0:3 --years 400 --jobs 2 --set mechanisms.cultivation=false --out baselines/mvp2_2/pressure_4x400_cultivation_false
+
+# 6. full validation
+make check
+make test-stat
+git diff --check
+```
+
+7. Then:
+   - write `baselines/mvp2_2/freeze_manifest.json` (candidate, with provenance);
+   - add §AC to the design document (draft: experiment results, baseline, Stage 5A–5J
+     decision record, closure gates);
+   - replace this runbook with the Stage 5J handoff.
+
+Never run `make golden`, and never overwrite any `*mvp2_1*` artifact.
+
+---
+
 **Completed:** Stage 5I, food-energy semantics and nutritional fertility, with a
 controlled demographic branch (design §AB). **PAUSE FOR SCIENTIFIC REVIEW.**
 

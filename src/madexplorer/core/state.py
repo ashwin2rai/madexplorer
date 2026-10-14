@@ -156,6 +156,9 @@ class StepContext:
     # population.strata_accounting.account_strata after the recording subsystem).
     food_accounts: "FoodAccounts | None" = None
     field_accounts: "FieldAccounts | None" = None
+    # This step's dietary-intake ratio per unit id, from energetics to nutritional fertility
+    # (transient; set only when mechanisms.dietary_intake_fertility is on, MVP 2.2).
+    dietary_intake: dict[str, float] | None = None
     _crop_potential: FloatArray | None = None
     _spatial: "SpatialIndex | None" = None
     _columns: "UnitColumns | None" = None

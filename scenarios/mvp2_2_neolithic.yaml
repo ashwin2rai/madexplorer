@@ -1,0 +1,54 @@
+# MVP 2.2 candidate (Stage 5J, pending scientific approval): identical to
+# scenarios/mvp2_neolithic.yaml except the name and one switch, nutritional fertility reads
+# dietary intake (mechanisms.dietary_intake_fertility). The MVP 2.1 file stays the
+# frozen reference; tests/test_model_versions.py checks the two differ only there.
+# MVP 2: agriculture, storage, technology, innovation, diffusion, trade.
+# Two forager bands with no cultivation knowledge colonize a 400 x 400 km world.
+# Nothing here says where or whether farming or sedentism appear.
+name: mvp2_2_neolithic
+description: Forager colonization with endogenous knowledge, cultivation, storage, and exchange.
+
+simulation:
+  start_year: 0
+  n_years: 1000
+  seed: 0
+
+world:
+  topology:
+    seed: 7
+    width: 40
+    height: 40
+    cell_size_km: 10.0
+    sea_fraction: 0.25
+
+knowledge_system: ../technologies/neolithic.yaml
+
+species:
+  - id: human
+    profile: ../species/human.yaml
+
+initial_populations:
+  - species: human
+    cell: [10, 16]
+    population: 30
+  - species: human
+    cell: [22, 12]
+    population: 30
+
+resolution:
+  max_units_per_cell: 3
+  max_knowledge_distance: 1.0
+
+# Canonical reference mode: no computational aggregation (also the default; kept explicit
+# because the frozen baselines depend on it). Coarsening is experimental and not
+# scientifically neutral: at 3 units per cell it changed population (-11%), migration (-7%)
+# and inventions (+24%) over 600 years, and no setting is known to reproduce this reference
+# (the coarsening statistical check is a strict xfail). `resolution:` only matters with
+# aggregation on.
+mechanisms:
+  aggregation: false
+  dietary_intake_fertility: true  # MVP 2.2
+
+output:
+  spatial_snapshot_interval_years: 25
+  log_migrations: false

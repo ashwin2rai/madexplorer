@@ -33,11 +33,14 @@ if TYPE_CHECKING:
     parameters=("fertility_food_midpoint", "fertility_food_scale"),
     expected_domain="multiplier in [0, 1], equal to 1 at food_ratio >= 1",
     known_limitations=(
-        "Uses intake relative to need only; body condition and lactation not tracked."
+        "Uses intake relative to need only; body condition and lactation not tracked. Input: "
+        "MVP 2.1 harvest adequacy (food_ratio, excludes stores eaten); MVP 2.2 candidate "
+        "dietary intake (mechanisms.dietary_intake_fertility; see fertility_input)."
     ),
 )
 def fertility_multiplier(food_ratio: FloatArray, midpoint: float, scale: float) -> FloatArray:
-    """Multiplier on age-specific fertility from last year's food ratio."""
+    """Multiplier on age-specific fertility from this year's food input (set by energetics
+    just before demography; see :func:`fertility_input`)."""
 
     def logistic(x: FloatArray | float) -> FloatArray:
         return np.asarray(
@@ -154,6 +157,26 @@ def mate_available(
     return available
 
 
+def fertility_input(cols: "UnitColumns", ctx: StepContext) -> FloatArray:
+    """The food quantity nutritional fertility responds to, for the rows of ``cols``.
+
+    MVP 2.1: harvest adequacy, ``food_ratio`` (harvest after trade / need). MVP 2.2
+    (``mechanisms.dietary_intake_fertility``): dietary intake from this step's energetics
+    (``ctx.dietary_intake``); a unit energetics skipped (no members) keeps ``food_ratio``,
+    which cannot affect births. Never mixes the two within a run.
+    """
+    food: FloatArray = cols.get("food_ratio")
+    if not ctx.mechanisms.dietary_intake_fertility:
+        return food
+    intake = ctx.dietary_intake
+    if intake is None:
+        if (cols.population() > 0).any():
+            raise RuntimeError("dietary-intake fertility needs this step's energetics")
+        return food
+    values = [intake.get(u.id, f) for u, f in zip(cols.units, food.tolist(), strict=True)]
+    return np.array(values, dtype=np.float64)
+
+
 class DemographySubsystem:
     """Mortality, fertility, and aging for all units, batched per species."""
 
@@ -193,7 +216,7 @@ class DemographySubsystem:
             sensitivity = metabolism.starvation_mortality_sensitivity
             if not ctx.mechanisms.starvation_mortality:
                 sensitivity = 0.0
-            food = cols.get("food_ratio")
+            food = fertility_input(cols, ctx)
             females, males = cols.cohorts(tables.need_fraction.size)
             cells = cols.get("cell")
             fert = fertility_multiplier(

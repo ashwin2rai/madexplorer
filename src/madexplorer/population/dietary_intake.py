@@ -1,8 +1,10 @@
-"""Food-energy quantities for the fertility-input review (MVP 3 Stage 5I). NOT ACTIVE.
+"""Food-energy quantities: harvest adequacy, dietary intake, net sufficiency.
 
-Design: ``objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`` §AB. No simulator path calls this
-module, it registers no model rule, and nothing here is a scenario setting. The
-authoritative ``food_ratio`` and fertility rule are unchanged.
+Design: ``objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`` §AB (Stage 5I review) and §AC
+(Stage 5J versioned correction). Only :func:`dietary_intake_ratio` is used by the simulator,
+and only in MVP 2.2 (``mechanisms.dietary_intake_fertility``): energetics computes it from
+its own inputs and nutritional fertility reads it. MVP 2.1 (the switch off) never calls it.
+``food_ratio`` (harvest adequacy) is unchanged for every reader.
 
 One unit-year of the production energy balance (``energetics.energy_balance_batch``), with
 ``H`` the harvest after trade (own crop + forage + received - shipped from harvest), ``S``
@@ -22,6 +24,7 @@ the stores left after trade, ``R`` the body reserve and ``N`` the requirement:
 
 import numpy as np
 
+from madexplorer.core.governance import model_rule
 from madexplorer.core.types import FloatArray
 
 
@@ -48,6 +51,21 @@ def reserve_drawdown(
     return drawn
 
 
+@model_rule(
+    name="dietary_intake",
+    version="1.0",
+    rationale=(
+        "MVP 2.2 candidate (mechanisms.dietary_intake_fertility): the fertility input is food "
+        "actually eaten relative to need, i.e. harvest after trade plus stores withdrawn for "
+        "consumption, capped at need; body-reserve drawdown is not food intake."
+    ),
+    source_type="theoretical",
+    expected_domain="ratio in [0, 1]; 1 when need is 0",
+    known_limitations=(
+        "Annual intake only: body condition, duration of shortfall, lactation and age-specific "
+        "sensitivity are not represented. Pending scientific approval (Stage 5J)."
+    ),
+)
 def dietary_intake_ratio(need: FloatArray, harvest: FloatArray, stores: FloatArray) -> FloatArray:
     """H1: ``(min(H, N) + X) / N``, at most 1; 1 when ``N = 0``.
 

@@ -9,6 +9,10 @@ Usage:
     uv run python scripts/perf/exactness_oracle.py benchmarks/perf/oracle_ph0.json
     uv run python scripts/perf/exactness_oracle.py --record <file>   # on a new platform
 
+``--model mvp2_2`` runs the same cases on the MVP 2.2 candidate scenarios
+(``scenarios/mvp2_2_*.yaml``: dietary-intake fertility) for
+``benchmarks/perf/oracle_mvp2_2*.json``; without it the MVP 2.1 scenarios run, unchanged.
+
 Raw mode hashes raw belief rows and therefore always runs on the dense reference store
 (the production default is sparse). ``--logical`` hashes beliefs in their logical form
 (each unit's current entries only) on the default backend (or ``$MADEXPLORER_BELIEFS``):
@@ -28,6 +32,11 @@ from madexplorer.core.simulation import Simulator
 from madexplorer.experiments.benchmark import synthetic_simulator, warm_up_beliefs
 from madexplorer.population.unit import belief_slot
 
+MODEL = "mvp2"  # scenario prefix: mvp2 (MVP 2.1 reference) or mvp2_2 (candidate)
+if "--model" in sys.argv:
+    i = sys.argv.index("--model")
+    MODEL = {"mvp2_1": "mvp2", "mvp2_2": "mvp2_2"}[sys.argv[i + 1]]
+    del sys.argv[i : i + 2]
 LOGICAL = "--logical" in sys.argv
 if LOGICAL:
     sys.argv.remove("--logical")
@@ -86,13 +95,13 @@ def digest(sim, metrics):
 
 out = {}
 for name, path, seed, years in [
-    ("neolithic_s0_400", "scenarios/mvp2_neolithic.yaml", 0, 400),
-    ("pressure_s1_300", "scenarios/mvp2_pressure.yaml", 1, 300),
+    ("neolithic_s0_400", f"scenarios/{MODEL}_neolithic.yaml", 0, 400),
+    ("pressure_s1_300", f"scenarios/{MODEL}_pressure.yaml", 1, 300),
 ]:
     sim = Simulator(Scenario.from_yaml(path).with_overrides(seed=seed, n_years=years))
     r = sim.run()
     out[name] = (digest(sim, r.metrics), r.metrics[-1]["population"], len(sim.state.units))
-s = Scenario.from_yaml("scenarios/mvp2_neolithic.yaml")
+s = Scenario.from_yaml(f"scenarios/{MODEL}_neolithic.yaml")
 sim = synthetic_simulator(s, 200)
 warm_up_beliefs(sim, 10)
 rows = []
