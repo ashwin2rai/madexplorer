@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-14 (MVP 3 Stage 5G, awaiting review)\
+**Updated:** 2026-10-14 (MVP 3 Stage 5H, awaiting review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`)\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
@@ -13,82 +13,96 @@ per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening 
 
 ## 1. Current handoff
 
-**Completed:** Stage 5G, causal structure and statistical representation review (design
-§Z). **PAUSE FOR SCIENTIFIC REVIEW.**
+**Completed:** Stage 5H, material provisioning, donor choice and dependency validation
+(design §AA). **PAUSE FOR SCIENTIFIC REVIEW.**
 
-**Production behavior:** unchanged. There are no production files, model rules, RNG streams
-or fixtures in the diff.
-- New: a read-only probe `scripts/probes/trade_dependency_audit.py` (hook on
-  `TradeSubsystem.evaluate`; about 3 minutes for 8 runs).
-- New: a standalone `scripts/probes/representation_benchmark.py` (METHODOLOGICAL
-  BENCHMARK, isolated RNG), with `tests/test_representation_benchmark.py` (6 tests).
+**Production behavior:** unchanged.
+- `economy/provisioning_counterfactual.py` (NOT ACTIVE) is not called by the simulator,
+  registers no rule and has no setting.
+- Probe `scripts/probes/provisioning_counterfactual.py` (`record` about 2 min for 8 runs,
+  `analyse` about 1 min, `controlled`).
+- Tests `tests/test_provisioning_counterfactual.py` (11).
 
-**Starting commit:** `0e9ae52` (Stage 5F), clean worktree.
+**Starting commit:** `babc078` (Stage 5G), clean worktree.
 
-**Existing social assumptions** (code-cited table in §Z.2):
-- Equal intra-unit food pooling (`pooled_energy_balance`).
-- Unit-level labor coordination.
-- A cooperative stopping rule in shared foraging patches.
-- Unconditional provisioning: 0.3 of surplus to the most severe nearby deficits,
-  nearest donor first.
-- Trade ties recorded but read only by diffusion and innovation, never by trade.
-- Passive claims; no operational control.
-- Side effect: `food_ratio` counts harvest, not stores, so donors can lose fertility.
+**Trade allocation audit** (`economy/trade.py`):
+- Surplus is `H + stores − need`; the offer is 0.3 × surplus (a behavioral hypothesis).
+- Deficit units are served by ascending `(balance/need, id)`; donors in range by ascending
+  `(path cost, id)`. Both orders are deterministic and break ties by unit id.
+- Transport: `exp(−cost/60 km)`. Donors pay from harvest, then stores.
+- Ties are symmetric `+received/need`, decay × 0.7, are pruned ≤ 1e-3, rewired on fusion,
+  and absent in daughters.
+- Ties are read by diffusion and innovation only, never by trade.
+- Newly recorded: floating-point dust transfers (0.7–1.5 % of transfers, ~1e-7 kcal)
+  create transient near-zero ties.
 
-**Candidate mechanisms compared:**
-- A, between-unit dependency.
-- B, finite encounters: no substrate.
-- C, asset access: between units only.
-- D, risk exposure: within-unit risk is equal by construction.
+**Baseline replay:** exact.
+- Every authoritative transfer is reproduced bit for bit in 4,000 / 4,000 trade years
+  (131,400 transfers).
+- The energetics recomputation is exact, and the shadow ties at weight 0 are exact.
+- All runs are observer-neutral.
 
-Ranking: A > C ≈ D > B.
+**Meaningful donor choice** (neolithic · pressure):
+- Nominal choice in 0.96 · 0.89 of served recipient-years.
+- ≥ 2 donors able to deliver ≥ 25 % of the deficit: 0.79 · 0.46.
+- ≥ 2 donors that could each cover the whole deficit: 0.43 · 0.13.
+- Unserved deficit units always had no candidate left (exhausted supply).
 
-**Strongest causal pathway:** between-unit food provisioning (neolithic · pressure):
-- 4.8 % · 14.5 % of unit-years receive. Dependency `received/need` p90 0.31 · 0.35.
-- 41 % · 78 % of recipient-years would be in deficit without trade.
-- Fertility multiplier gain p50 0.18 · 0.20. Starvation hazard ratio p90 1.7 · 2.5.
-- Chronic receipt in 45 % · 53 % of recipient-years. But the same top donor recurs in
-  only 36–37 %, pairs last a median of 1 year, and 83–85 % of recipients also give in
-  other years.
-- Withholding the top donor: fully replaced in 80 % · 40 % of cases.
+**Donor substitutability:**
+- Local replacement of the primary donor: full 0.90 · 0.72.
+- Network rematch (competition respected): full 0.80 · 0.40, none 0.16 · 0.50.
+- Under pressure, competition halves real replaceability.
 
-So reliance is real and consequential, but on the local supply pool, not on a partner.
-Partner persistence is geographic because donor choice ignores ties.
+**Trade ties beyond geography:**
+- Lagged ties predict transfers (+0.08 · +0.11 within rank × cover × adequacy strata).
+- But H0 never reads them, and the decision state determines the donor set (99.5–99.9 %;
+  the rest are dust residues).
+- The predictive power is the recurrence of geography, surplus, need and competition, not
+  preference.
+- Pairs are rarely two-way (9 %). A past reverse flow has no consistent effect.
 
-**Statistical representation findings** (benchmark: representative fission, hypothetical
-knowledge × access, threshold ≥ 2):
-- Compartments reproduce the individual reference exactly.
-- Expected-value mixtures keep means but quarter the split variance. Threshold tails are
-  off by 0.03–0.16.
-- Independent marginals cannot distinguish overlap 10 / 2 / 0, and create capability on
-  fusion (2.5 vs 0).
-- Second moments recover pairwise overlap; tails are within ≈ 0.015. They fail for
-  three-way conjunctions.
-- Merging: equal-weight needs about 32 components; merging within decision-partition
-  cells is exact once capacity covers the occupied cells (4). Capability-class-only
-  merging is non-monotone, because averaging creates spurious capability.
+**Static alternative routing** (H1 = tie first; H2 interpolates; λ = 0 equals H0 exactly):
+- H1 changes the primary donor for 31 % · 15 % of recipients.
+- Delivered food +0.4 % · −0.5 %; shipped +4.8 % · +1.5 %; loss share +2.5 · +1.1 points;
+  unmet deficit −1.0 % · +0.3 %.
+- It relabels donors and raises transport loss and donor burden. Welfare proxies move in
+  the third decimal.
+- Shadow tie history (physical history conditioned): recurrence 0.38 → 0.57 · 0.37 → 0.45;
+  pairs ≥ 5 y 1.6 → 2.5 %.
+  - The feedback is mechanical and weak, and insensitive to decay and initial ties.
 
-**Minimal sufficient population state:** for every existing mechanism and for the
-recommended one, unit aggregates plus the existing sparse pair state (`trade_ties`).
-Within-unit resolution is justified only for a mechanism whose decision depends on a
-within-unit conjunction or threshold. It would then use compartments over that
-mechanism's causal cells.
+**Material provisioning consequences:** reliance is real (§Z). Partner-specific
+dependency is rare in neolithic and common under pressure (50 % irreplaceable after
+rematching), caused by scarcity and competition, not by relationships.
 
-**Recommended next mechanism:** partner memory in provisioning (hypothesis H-tie):
-- recipients draw from tied donors first, by tie strength, then nearest-first;
-- neutral limit = MVP 2.1;
-- falsified if pair duration, concentration, substitutability and food security are
-  unchanged.
+**Food-ratio / fertility accounting:**
+- `food_ratio = H/need` (harvest after trade) excludes store consumption.
+- `nutritional_fertility` states an intake mechanism: "food intake falls below
+  requirement".
+- The same intake can give fertility 1.0 (all harvest) or 0.135 (60 % harvest + 40 %
+  stores). Abundant stores with a poor harvest give 0.008.
+- In real runs, `food_ratio` < 1 with no deficit occurs in 4.4 % · 9.0 % of unit-years
+  (recipients 42 % · 21 %; donors 9 % · 4 %; non-traders 1.5 % · 12.5 %). Fertility gap
+  p90 0.17 · 0.12.
+- This is a property of the rule, not of trade. It is an unresolved semantic mismatch with
+  strong evidence for interpretation A.
+- Readers: fertility, fission and innovation. Nothing changed.
 
-First step (5H): a static counterfactual matching on recorded inputs, with no feedback.
+**Scientific decision: B primary, D secondary.**
+- Do not introduce tie preference.
+- Review the food-ratio semantics in a separate, versioned stage before any provisioning
+  behavior.
 
-**Representation change required:** no.
+**Population representation:** unchanged.
 
 **Physical-feedback gate:** closed.
 
-**Scientific decision: A.**
+**Recommended next stage:** a food-accounting and fertility semantics review. It would
+decide per reader (fertility, fission, innovation) between intake and production-stress
+semantics, run a branched comparison against MVP 2.1, and set a new invariant and baseline
+if approved.
 
-**Next:** PAUSE FOR SCIENTIFIC REVIEW. Do not begin 5H without review.
+**Next:** PAUSE FOR SCIENTIFIC REVIEW.
 
 ## 2. MVP 3 so far
 
@@ -110,6 +124,7 @@ First step (5H): a static counterfactual matching on recorded inputs, with no fe
 | 5E | Partial knowledge exposure: exists at every acquisition but binds cultivation materially in < 1 % of farming unit-years under model-consistent spread (T50 ≲ 5 y); only near rare inventions or with slow spread (then untaught new workers); B (counterfactual) | §X |
 | 5F | Fusion-born knowledge heterogeneity: real (≈ 7 % of fusions ΔE ≥ 0.01, from different productive histories), slow to decay in K (34 y), but static consequence ≈ 0.004 % of harvest even with indefinite retention; K's ontology is mixed; B (audit + counterfactual) | §Y |
 | 5G | Causal-structure review: no within-unit initiator has substrate; between-unit provisioning is grounded and consequential (recipients' fertility and starvation), with reliance on the local pool rather than partners (ties unread by trade); compartments are the exact finite representation, mixtures miss threshold tails, marginals miss correlation; A (review + read-only audit + benchmark) | §Z |
+| 5H | Provisioning: exact replay; donor choice exists but competition halves substitutability under pressure; ties add no allocation information beyond recurring material configuration; tie routing relabels donors with ≤ 0.5 % change in delivered food; food_ratio excludes store consumption despite an intake rationale; B (+ D) (audit + counterfactual matching) | §AA |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
@@ -132,7 +147,8 @@ First step (5H): a static counterfactual matching on recorded inputs, with no fe
 
 **Do not forget:**
 - `strata_access.py`, `store_release.py`, `field_control.py`, `practice_concentration.py`,
-  `entry_cost.py`, `knowledge_exposure.py` and `fusion_competence.py` are NOT ACTIVE.
+  `entry_cost.py`, `knowledge_exposure.py`, `fusion_competence.py` and
+  `economy/provisioning_counterfactual.py` are NOT ACTIVE.
   Nothing in the simulator calls them, and their parameters are not scenario settings.
 - Capacity coalescence is numerical, and its equal-weight metric is mechanism-agnostic.
   Revisit it (§M6) before anything reads claims.

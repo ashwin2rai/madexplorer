@@ -2,7 +2,7 @@
 
 **Status:** current contract plus findings register (rewritten 2026-10-07; the full
 stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 5G (§Z). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
+stage: 5H (§AA). Strata are a passive accounting overlay; the physical-feedback gate (§N7)
 is closed.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
 (`PopulationStore`, `population/fields.py`).
@@ -2531,6 +2531,392 @@ next experiment is a bounded counterfactual on one consequential relationship, p
 memory in provisioning, using current units and existing ties. No new population
 representation. The physical-feedback gate stays closed. Pending scientific review.
 
+### §AA. Stage 5H — material provisioning, donor choice and dependency validation (2026-10-14)
+
+**AUDIT + READ-ONLY OBSERVATION + COUNTERFACTUAL MATCHING. NOT ACTIVE.**
+- Pure helpers in `economy/provisioning_counterfactual.py`. No simulator path calls them,
+  no model rule is registered, and there is no scenario setting.
+- Probe: `scripts/probes/provisioning_counterfactual.py` (`record`, `analyse`,
+  `controlled`).
+- Tests: `tests/test_provisioning_counterfactual.py` (11).
+- Starting point `babc078` (Stage 5G). Trade, ties, food, fertility, strata and RNG are
+  unchanged.
+
+**Questions.**
+- Q1: Is donor choice meaningful?
+- Q2: Do trade ties carry information beyond geography?
+- Q3: Would other donor routing change provisioning materially?
+- Q4: Is the food → fertility accounting consistent with its stated mechanism?
+
+**Answers.**
+- Q1: Donor choice exists: nominal choice in 89–96 % of served recipient-years. It is often
+  effective. But under pressure, competition among recipients halves real
+  substitutability.
+- Q2: Ties add no allocation information. Given the decision state, the donor set is
+  determined. They predict future transfers only because the material and geographic
+  configuration recurs.
+- Q3: Tie-priority routing relabels donors (primary changed for 15–31 % of recipients) but
+  moves delivered food by ≤ 0.5 % and unmet deficit by ≤ 1 %. It raises transport loss and
+  donor burden. Persistence rises mechanically through the feedback, and only modestly.
+- Q4: The fertility rule's stated mechanism is intake ("food intake falls below
+  requirement"), but it is computed from harvest after trade, ignoring store withdrawals.
+  This affects donors, recipients and non-traders alike. It is a property of the rule,
+  not of trade.
+
+**Decision: B primary, D secondary.**
+
+#### 1. Trade pipeline (verified at `babc078`)
+
+Annual order (`core/simulation.py` `build_pipeline`):
+
+```text
+farming → foraging (harvest_kcal = farm + forage, foraging.py:265-270) → TRADE → energetics
+→ demography (fertility, starvation) → … → diffusion (reads ties) → innovation (reads ties)
+```
+
+| Step | Rule (`economy/trade.py`) | Classification |
+|---|---|---|
+| 1 production | `harvest_kcal` = own crop + own forage, before trade | physical / ecological |
+| 2 surplus | `balance = harvest + stores − need` (`:116`); `need` = adult-equivalent energy × climate + travel debt (`energetics.py:54-77`) | accounting + biological |
+| 3 deficit | `balance < 0` and `need > 0` (`:129-131`) | accounting |
+| 4 donors | `balance > 0`, same species, offering cell within one relocation range of the recipient (`:135-141`; `movement.reachable`, a friction-weighted shortest-path cost ≤ 60 km) | physical reach + information (implicit knowledge of all offers in range) |
+| 5 offer | `offer = food_sharing_propensity (0.3) × balance` (`:126-128`) | **behavioral hypothesis** |
+| 6 recipient priority | ascending `(balance/need, unit id, deficit, need)`: most severe relative deficit first; equal severity by unit id (`:133`) | **prioritization rule** + numerical tie-break (id order) |
+| 7 donor order | ascending `(path cost, donor id)`: nearest first; equal cost by id (`:136-141`) | **allocation rule** (geography) + numerical tie-break |
+| 8 limits | `sent = min(offer_remaining, remaining / f)`; a donor appears once per recipient; offers deplete across recipients (`:143-150`) | material constraint + sequential convention |
+| 9 transport | `f = exp(−cost / 60 km)`; `received = sent · f` (`:30-32`) | physical (heuristic) |
+| 10 recipient | `harvest += received` (`:76, 81`) | accounting |
+| 11 donor | pays from harvest first, then stores (`:72-75, 78-80`) | accounting convention (consequential: §6) |
+| 12 ties | decay all ties `× tie_persistence (0.7)`, drop dead partners and ties ≤ 1e-3; then for each transfer add `received / recipient_need` to *both* units (`:55-63, 82-84`) | relationship memory (symmetric) |
+| 13 consequences | energetics: `food_ratio = H/need` with H after trade; shortfall from stores, then reserves; `deficit` = the remainder (`energetics.py:118-155`). Demography: fertility × logistic(`food_ratio`); starvation hazard × `exp(3 × deficit × vulnerability)`. Fission: food stress `max(0, 1 − food_ratio)`. Innovation: need and surplus terms (`demography.py:39-205`; `groups.py:58`; `innovation.py:44, 234`) | biological + behavioral |
+
+- **Verified 5G statements:** 30 % of surplus, most severe first, nearest first, ties not
+  read by trade. All hold.
+- **Additional facts the 5G summary omitted:**
+  - Recipient order uses *relative* deficit, with unit id as tie-break. Donor ties at equal
+    cost use donor id. Both orders are deterministic id conventions, documented here, not
+    hidden.
+  - The algorithm is deterministic and draws no random numbers.
+  - The matching is *recipient-driven* and centrally sequenced. It represents no actor
+    (chief, market, negotiation). It is not socially neutral either: it embodies need
+    priority, proximity and unconditional giving.
+  - **Floating-point dust transfers.** After a deficit is covered, `remaining` can stay a
+    rounding residue above 0. The next donor then ships a few 1e-15–1e-7 kcal.
+    - Frequency: 1.5 % of transfers in neolithic (912 of 58,018), 0.7 % under pressure
+      (477 of 73,382).
+    - Each creates a near-zero tie (~1e-10) that sits in the pre-trade state for one year
+      and is a diffusion contact (`trade_contact × tie`). The adoption draw for such a
+      contact consumes the `TECHNOLOGY_ADOPTION` stream.
+    - Physically negligible; recorded, not repaired (it is MVP 2.1 behavior and in the
+      oracles).
+
+#### 2. Trade-tie semantics
+
+- **Created** by a transfer.
+- **Symmetric:** both sides add the same `received/need`. Rewiring and pruning preserve
+  symmetry (`composition.py:141-160`).
+- **Increased** by every transfer between the pair.
+- **Decay:** × 0.7 a year, removed at ≤ 1e-3 or when the partner no longer exists. A tie
+  of strength `s` lasts about `ln(1e-3/s)/ln 0.7` years (≈ 13 y for `s` = 0.1).
+- **Life events:**
+  - migration: kept, by id;
+  - fission: the daughter starts untied (`lifecycle.py:132`); the parent keeps its ties;
+  - fusion: the source's ties are added to the target, and partners' ties to the source
+    are redirected (`rewire_ties`);
+  - extinction: pruned at the next decay.
+- **Readers:**
+  - diffusion contacts (`diffusion.py:44, 342`, weight `trade_contact × tie`);
+  - innovation connectivity (`innovation.py:226`).
+  - Not trade.
+- **Distinctions:**
+  - Observed exchange history: exists (the transfers).
+  - Relationship memory: exists (ties).
+  - Behavioral preference (a decision that reads the tie): **does not exist** in trade.
+
+#### 3. Exact baseline replay
+
+- `match()` received the recorded pre-trade inputs and reproduced every authoritative
+  transfer (donor, recipient, shipped, delivered; tuple equality of floats) in
+  **4,000 / 4,000** trade years. This covers 131,400 transfers, so donor totals, recipient
+  totals and transport losses match as well.
+- Energetics recomputed from the recorded inputs reproduced the authoritative `food_ratio`
+  and deficit exactly (max difference 0).
+- The shadow tie history at weight 0 reproduced the authoritative pre-trade ties exactly
+  (max difference 0).
+- All 8 recorder runs were observer-neutral by physical digest.
+
+#### 4. Donor choice (at the recipient's decision; candidates still holding offer)
+
+Values are neolithic · pressure (18,375 · 17,717 served recipient-years).
+
+| | unit-year | population-weighted | kcal-weighted |
+|---|---|---|---|
+| candidates p50 / p90 (at year start: 19 / 36 · 13 / 27) | 13 / 29 · 5 / 15 | | |
+| nominal (≥ 2 candidates) | 0.955 · 0.885 | 0.952 · 0.892 | 0.990 · 0.980 |
+| effective, ≥ 2 can deliver ≥ 10 % of the deficit | 0.913 · 0.714 | 0.903 · 0.706 | 0.940 · 0.802 |
+| effective, ≥ 25 % | 0.789 · 0.458 | 0.759 · 0.432 | 0.664 · 0.369 |
+| effective, ≥ 50 % | 0.623 · 0.259 | 0.579 · 0.239 | 0.392 · 0.122 |
+| full: ≥ 2 could each cover the whole deficit | 0.429 · 0.132 | 0.385 · 0.123 | 0.183 · 0.032 |
+
+- **Local replacement:** the primary donor's delivery from the other candidates' remaining
+  offers, with every other allocation unchanged. Full 0.90 · 0.72; partial 0.05 · 0.17;
+  none 0.05 · 0.12.
+- **Network rematching** (same year, primary donor withheld, all recipients re-matched):
+  full 0.80 · 0.40; partial 0.04 · 0.10; none 0.16 · 0.50.
+  - The recipient keeps a median of 1.0 · 0.78 of its receipts.
+  - Static deficit increase p90 0.015 · 0.072. Fertility multiplier loss p90 0.06 · 0.17.
+- **Competition:** each candidate is reachable by 3 · 6 recipients (median; p90 8.5 · 12.5).
+  - Under pressure, independent per-recipient substitution overstates replaceability by a
+    factor of about 2 (72 % vs 40 % full).
+  - Unserved deficit units always had zero candidates left (3,345 · 19,380): exhausted
+    supply, not choice.
+- **Spread among candidates:** path cost 36 · 23 km (p50), up to 60. Offer CV 0.52 · 0.55.
+
+**Q1:** Choice is common and usually effective in neolithic. Under pressure it is real but
+thin: the network replaces a missing primary donor fully only 40 % of the time. Effective
+choice is a necessary condition for partner routing to matter, and it is met. Whether
+routing then matters is Q3.
+
+#### 5. Tie information beyond geography (lagged pre-trade ties)
+
+Opportunities are offering donors in range of a deficit unit at the start of the year:
+435,751 · 523,827. A tie counts as present when its strength is above 1e-6, which excludes
+dust ties. 23 % · 32 % of opportunities have a prior tie.
+
+| comparison | neolithic | pressure |
+|---|---|---|
+| transfer rate with / without a prior tie (raw) | 0.274 / 0.092 | 0.242 / 0.093 |
+| ... within year-start cost rank (weighted difference) | +0.124 | +0.139 |
+| ... within rank × nearer-donor cover × own adequacy (20 · 21 strata) | +0.081 (range +0.02..+0.14) | +0.108 (+0.03..+0.20) |
+| P(transfer \| transferred last year) vs P(transfer \| opportunity, no transfer last year), rank 0 | 0.73 vs 0.24 | 0.59 vs 0.13 |
+| decisions with tied and untied candidates: tied candidate is the nearest / tied share of candidates | 0.66 / 0.31 | 0.67 / 0.49 |
+| decision-state predictor ("nearest candidates still holding offer until the deficit is covered") exact | 99.5 % of 21,720 | 99.85 % of 37,097 (the rest are dust residues) |
+
+- **Circularity:** a tie records past transfers by definition. Lagged ties are taken before
+  the year's decay and update, so the current transfer never contaminates its predictor.
+- **Ties do predict future transfers beyond simple geographic controls.** The association
+  survives stratification by rank, cover and adequacy.
+- **They carry no information about the allocation itself.** H0 never reads them, and given
+  the decision state (order plus the remaining offers of nearer candidates and the recipient
+  deficit), the donor set is determined.
+- The residual association is the recurrence of the material configuration:
+  - the same recipient in deficit again;
+  - the same nearby donors with surplus again;
+  - the same competitors exhausting the same nearer offers.
+
+  The coarse year-start strata do not fully capture this recurrence.
+- **Conclusion:** prior exchange mainly records that two units repeatedly occupy favorable
+  positions for transferring food. It is evidence of neither trust nor preference, and
+  current data cannot reveal a preference, because none is modeled.
+
+#### 6. Routing counterfactuals (COUNTERFACTUAL / NOT ACTIVE)
+
+**Definitions** (only the donor order changes; eligibility, offers, deficits, transport and
+recipient order are unchanged):
+- **H0:** `(cost, id)`, the production order.
+- **H1:** `(−tie, cost, id)`, with the stronger pre-trade tie first.
+- **H2(λ):** `((1−λ)·cost/60 km − λ·t/(1+t), cost, id)` for λ ∈ {0.25, 0.5, 0.75}.
+  λ = 0 is H0 exactly (tested). λ = 1 is H1.
+
+*Same-year static rerouting over all recorded years* (ratios to H0; neolithic ·
+pressure):
+
+| | H2 0.25 | H2 0.5 | H2 0.75 | H1 |
+|---|---|---|---|---|
+| years with changed assignments | 0.20 · 0.48 | 0.24 · 0.55 | 0.27 · 0.64 | 0.35 · 0.80 |
+| recipients whose primary donor changes | 0.063 · 0.039 | 0.093 · 0.052 | 0.153 · 0.074 | **0.314 · 0.148** |
+| food shipped | 1.000 · 1.000 | 1.001 · 1.000 | 1.006 · 1.001 | **1.048 · 1.015** |
+| food delivered | 1.001 · 1.000 | 1.001 · 1.000 | 1.002 · 0.9995 | **1.004 · 0.995** |
+| transport loss share (H0: 0.400 · 0.476) | 0.400 · 0.476 | 0.400 · 0.477 | 0.403 · 0.477 | **0.425 · 0.487** |
+| unmet deficit | 0.999 · 1.000 | 0.998 · 1.000 | 0.996 · 1.000 | 0.990 · 1.003 |
+| recipients still in deficit (H0: 0.204 · 0.594) | 0.203 · 0.594 | 0.204 · 0.593 | 0.202 · 0.595 | 0.199 · 0.596 |
+| mean recipient fertility multiplier (H0: 0.886 · 0.779) | 0.886 · 0.779 | 0.886 · 0.779 | 0.886 · 0.779 | 0.886 · 0.778 |
+| recipients gaining / losing > 1 % of need | 0.003/0.001 · 0.002/0.002 | 0.006/0.003 · 0.006/0.005 | 0.011/0.006 · 0.011/0.011 | 0.023/0.012 · 0.026/0.029 |
+| donors shipping more / less (> 1 % of need) | 0.023/0.027 · 0.009/0.010 | 0.034/0.040 · 0.012/0.014 | 0.055/0.065 · 0.017/0.019 | 0.138/0.145 · 0.041/0.038 |
+| pairs; donors per recipient (H0 1.43 · 3.93) | 0.993; 1.42 · 0.996; 3.91 | 0.991; 1.42 · 0.996; 3.91 | 0.986; 1.41 · 0.994; 3.90 | 0.983; 1.41 · 0.996; 3.89 |
+
+- **Network structure changes; material welfare barely does.**
+  - H1 changes the primary donor for 31 % · 15 % of recipients.
+  - It changes delivered food by +0.4 % · −0.5 %.
+  - It changes unmet deficit by −1.0 % · +0.3 %.
+  - The share of recipients in deficit and their mean fertility multiplier move in the
+    third decimal.
+- **Partner substitution, not aggregate gain:**
+  - Tied donors are on average farther than the nearest available. Shipping rises
+    (+4.8 % · +1.5 %) and so does transport loss (loss share +2.5 · +1.1 points).
+  - In neolithic the extra shipping comes from donors with spare offer, slightly reducing
+    unmet deficit. Under pressure, offers are exhausted and the higher losses slightly
+    increase it.
+  - Winners and losers are few and roughly balanced (2–3 % of recipients each).
+  - Donor burden is redistributed: 14 % · 4 % of donors ship more, and about as many ship
+    less.
+- **Donor costs** (via the production energetics on the post-trade harvest and stores):
+  donors' mean fertility-multiplier loss from shipping is 0.005 · 0.0006 under every rule.
+  It arises entirely from the food-ratio accounting (§7), not from hunger. Donors never
+  enter a deficit through giving, since the offer is 30 % of a surplus.
+
+*PHYSICAL-HISTORY-CONDITIONED SHADOW REPLAY.* Ties evolve from shadow transfers with the
+production update. Food, population, places and events stay authoritative, so this is not
+a branched simulation. Per run, neolithic · pressure:
+
+| | delivered | unmet | primary donor recurs next year | pairs ≥ 5 y | per-recipient donor HHI |
+|---|---|---|---|---|---|
+| H0 (= authoritative ties; error 0) | 1 · 1 | 1 · 1 | 0.38 · 0.37 | 0.016 · 0.029 | 0.45 · 0.28 |
+| H2 0.5 | 1.001 · 1.000 | 0.997 · 1.000 | 0.44 · 0.40 | 0.017 · 0.029 | 0.46 · 0.28 |
+| H1 | 1.005 · 0.995 | 0.986 · 1.004 | **0.57 · 0.45** | 0.025 · 0.032 | 0.48 · 0.29 |
+| H1, tie persistence 0.5 / 0.9 | 1.005 · 0.996 / 1.005 · 0.993 | ≈ H1 | 0.59 · 0.45 / 0.55 · 0.42 | ≈ H1 | ≈ H1 |
+| H0 → H1 at midpoint, ties kept / emptied | identical | identical | 0.57 · 0.41 (both) | 0.024 · 0.030 | 0.48 · 0.28 |
+
+- **The feedback loop exists and is weak:** past transfer → tie → priority → transfer.
+  - It raises primary-donor recurrence from 0.38 to 0.57 (neolithic) and from 0.37 to 0.45
+    (pressure).
+  - Pair duration stays a median of 1 year (p90 2.2 → 2.5). Pairs lasting ≥ 5 years go
+    from 1.6 % to 2.5 %.
+- It is insensitive to tie decay and to initial ties: emptying all ties at the switch
+  gives the same result within a year.
+- The persistence it adds is a property of the routing rule, not emergent trust or
+  obligation. The material effect matches the static result.
+
+#### 7. Food ratio and fertility
+
+**Lifecycle** (per unit-year, after trade):
+- `H` = harvest + received − shipped-from-harvest (stores pay the remainder of a
+  shipment).
+- `food_ratio = H/need`. Store withdrawal `X = min(max(need − H, 0), stores)`, then body
+  reserves.
+- `deficit` = what is left / need.
+- Fertility multiplier `min(L(food_ratio)/L(1), 1)` with `L` logistic (midpoint 0.8, scale
+  0.1). It uses the current year's `food_ratio`, which energetics sets just before
+  demography (the docstring's "last year's" refers to the year just accounted).
+- Starvation hazard `× exp(3 · deficit · vulnerability)`.
+- `food_ratio` is also read by fission (food stress) and innovation (need and surplus
+  terms).
+
+**Stated intent.**
+- `nutritional_fertility`: "Fecundity declines logistically as food **intake** falls below
+  requirement (energetic constraint on ovulation)"; limitation: "Uses intake relative to
+  need only".
+- `unit.food_ratio`: "acquired / required".
+- The rule therefore claims a nutritional mechanism (interpretation A), but implements
+  acquisition. Store consumption is intake but is excluded.
+- No document states an environmental-stress proxy (interpretation B) for fertility.
+  Innovation's "need" signal (`food_stress`) is plausibly a production-stress proxy, and
+  there B is natural.
+
+*Controlled cases* (need 100, reserve cap 30; production `energy_balance` and fertility):
+
+| case | `food_ratio` | available (H + stores used) / need | deficit | fertility (`food_ratio`) | fertility (available) |
+|---|---|---|---|---|---|
+| 1 harvest covers | 1.10 | 1.10 | 0 | 1.000 | 1.000 |
+| 2 harvest short, stores cover | 0.70 | 1.00 | 0 | 0.305 | 1.000 |
+| 3 harvest short, reserves cover | 0.85 | 0.85 | 0 | 0.707 | 0.707 |
+| 4 donor ships 30 of 120, stores cover | 0.90 | 1.00 | 0 | 0.830 | 1.000 |
+| 5 donor ships, genuine deficit | 0.70 | 0.75 | 0.20 | 0.305 | 0.429 |
+| 6 recipient receives 30, no deficit | 1.00 | 1.00 | 0 | 1.000 | 1.000 |
+| 7 recipient receives 30, still short | 0.70 | 0.70 | 0.25 | 0.305 | 0.305 |
+| 8a same intake, all harvest | 1.00 | 1.00 | 0 | 1.000 | 1.000 |
+| 8b same intake, 60 harvest + 40 stores | 0.60 | 1.00 | 0 | **0.135** | 1.000 |
+| 9 trade moves 20 from harvest, stores cover | 0.80 | 1.00 | 0 | 0.568 | 1.000 |
+| 10 abundant stores, low harvest | 0.30 | 1.00 | 0 | **0.008** | 1.000 |
+
+Two groups eating exactly their need get fertility 1.0 and 0.135 depending only on whether
+the food came from this year's harvest or from stores. That is not an "energetic constraint
+on ovulation".
+
+*Real runs* (authoritative energetics; harvest-based `food_ratio` < 1 although energy was
+available):
+
+| | neolithic donor / recipient / no trade | pressure donor / recipient / no trade |
+|---|---|---|
+| unit-years | 52,191 / 18,375 / 313,508 | 67,006 / 17,717 / 37,603 |
+| `food_ratio` < 1 with zero deficit | 0.090 / 0.416 / 0.015 | 0.039 / 0.209 / 0.125 |
+| ... with harvest + stores ≥ need | 0.090 / 0.302 / 0.012 | 0.039 / 0.082 / 0.007 |
+| fertility(available) − fertility(`food_ratio`) > 0.01 | 0.076 / 0.315 / 0.012 | 0.028 / 0.118 / 0.057 |
+| mean fertility-multiplier loss | 0.008 / 0.035 / 0.001 | 0.001 / 0.011 / 0.004 |
+
+- Across all unit-years, `food_ratio` < 1 with no deficit occurs in 4.4 % · 9.0 %.
+- Size when it occurs: fertility gap p50 / p90 / p99 0.055 / 0.17 / 0.44 · 0.010 / 0.12 /
+  0.23. Store withdrawal p50 / p90 is 3.9 % / 9.8 % · 0.8 % / 6.7 % of need.
+- **Not specific to trade.** In neolithic it concentrates on recipients, whose received
+  food plus stores feed them. Under pressure it is spread across non-traders drawing on
+  stores. Donors are affected in 3–8 % of donor-years.
+- **Classification:** an **unresolved semantic mismatch with strong evidence for
+  interpretation A**. The stated mechanism is intake; the computed quantity is acquisition.
+  - It is not demonstrated to be a coding bug, because "acquired / required" is also
+    written in the code.
+  - It is not an intended proxy either: no document says so.
+  - It affects fertility, fission and innovation, and therefore every MVP 2.1 trajectory.
+  - Any change is an MVP 2.1 scientific change with a new baseline. Nothing is changed
+    here.
+
+**Attribution for provisioning.** In the routing counterfactuals, changes in welfare
+proxies come from three sources:
+- different calorie availability (small, as shown);
+- transport losses (H1 higher);
+- reallocation among recipients.
+
+The donors' fertility "cost" of giving comes entirely from the food-ratio definition. No
+routing result relies on a demographic projection.
+
+#### 8. Dependency is not authority
+
+| concept | status under current mechanics |
+|---|---|
+| material reliance | observed (4.8 % · 14.5 % of unit-years receive; §Z) |
+| dependency (cannot meet needs without support) | observed (41 % · 78 % of recipient-years would be in deficit; §Z) |
+| partner-specific dependency | rare in neolithic (16 % of recipients cannot replace the primary donor after network rematching); **common under pressure (50 %)**, from scarcity, not relationship |
+| bargaining advantage | not modeled (no refusal, conditions or alternatives considered by any actor) |
+| authority / hierarchy | not modeled |
+
+*Direction.*
+- Of unordered pairs with any transfer, only 8.9 % · 9.4 % ever exchanged in both directions
+  over the run. 16.5 % · 22.6 % are one-directional with ≥ 3 transfers. (§Z's
+  observation that most recipients also give refers to units with different partners, not
+  pairs.)
+- Given an opportunity at a cost rank and no past flow j → i, a past reverse flow i → j
+  changes the transfer rate in opposite directions in the two scenarios:
+  - rank 0: 0.35 vs 0.46 (neolithic), 0.17 vs 0.15 (pressure);
+  - ranks 1–2: within ±0.04.
+- **Pair directionality adds no consistent information beyond resource conditions.** The
+  alternation that exists is unit-level role switching driven by fluctuating surplus and
+  deficit, not reciprocity. Sustained unilateral provision is more common than two-way
+  pairs and follows persistent surplus and deficit geography.
+
+**Recommendation.**
+- **B (primary): donor choice exists, but trade ties add little.**
+  - Given the decision state, ties carry no allocation information.
+  - Their predictive power for future transfers is the recurrence of geography, surplus,
+    need and competition.
+  - Tie-priority routing relabels donors at a small material cost (higher transport loss
+    and donor burden). Its extra persistence is mechanical.
+  - No actor-level reason to prefer past partners is modeled: no information, risk or
+    reciprocity calculus would read the tie.
+  - Do not introduce tie preference. Partner memory loses near-term priority under the
+    §Z falsification criteria: routing changes labels, not food, and the added
+    persistence comes from feeding ties back.
+- **D (secondary, important): the food-ratio accounting needs a separate, versioned
+  biology review** before any provisioning behavior that changes harvests is activated.
+  Every transfer moves `H` without changing what people eat when stores exist.
+- **Material finding to carry forward:** under pressure, partner-specific dependency is
+  common because supply is scarce and contested (network replacement 40 %). If
+  relationships become a target again, the relevant quantity is *which recipients compete
+  for scarce offers*, not tie memory.
+
+**Remaining questions:**
+- the food-ratio semantics (A vs B per reader: fertility, fission, innovation);
+- dust transfers (a numerical tolerance in matching would be an MVP 2.1 change);
+- whether recipient-severity priority and unconditional 30 % giving are defensible (later
+  behavioral hypotheses);
+- the implicit cooperative stopping rule in shared foraging (§Z).
+
+**Recommended next stage (for review):** a narrow, explicitly versioned **food-accounting
+and fertility semantics review**. Its tasks:
+- decide, per reader, between nutritional and production-stress semantics;
+- measure the consequence by a branched comparison against MVP 2.1;
+- define the new invariant and baseline if a change is approved.
+
+Partner preference is not pursued. Pending scientific review.
+
 ---
 
 ## 3. Open questions
@@ -2554,7 +2940,16 @@ representation. The physical-feedback gate stays closed. Pending scientific revi
   within-unit-first sequence is set aside for planning; the strongest grounded and
   consequential interaction is between-unit food provisioning, whose partner persistence is
   currently only geographic (ties are recorded but not read by trade). Next candidate:
-  partner memory in provisioning, as a static matching counterfactual (5H).
+  partner memory in provisioning, as a static matching counterfactual (5H). Stage 5H (§AA):
+  donor choice exists, but ties add no allocation information beyond the recurring material
+  configuration; tie routing relabels donors with ≤ 0.5 % change in delivered food; partner
+  memory is deprioritized.
+- **Food-ratio semantics (§AA §7).** `food_ratio = H/need` excludes store consumption while
+  `nutritional_fertility` states an intake mechanism; same intake can give fertility 1.0 or
+  0.135. Readers: fertility, fission food stress, innovation need/surplus. A versioned
+  biology review is the recommended next stage.
+- **Dust transfers (§AA §1).** Floating-point residues create ~1e-7 kcal transfers (0.7–1.5 %
+  of transfers) and transient near-zero ties that can consume adoption draws.
 - **Hidden coordination assumptions (§Z).** Cooperative stopping in shared foraging patches;
   unconditional provisioning (fixed share of surplus); equal intra-unit sharing. Whether
   `food_ratio` should count stores (donor fertility side effect).
