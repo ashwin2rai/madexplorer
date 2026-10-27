@@ -1,8 +1,9 @@
 # Implementation Status
 
-**Updated:** 2026-10-14 (MVP 3 Stage 5J; Stage 5 technically complete, pending approval)\
-**Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`). Candidate MVP 2.2
-(`baselines/mvp2_2/`, opt-in) is pending approval.\
+**Updated:** 2026-10-27 (MVP 3 Stage 6A; decision B; pause for review)\
+**Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`), still the repository default.
+MVP 2.2 (`baselines/mvp2_2/`, opt-in, manifest still CANDIDATE) is the Stage 6A scientific
+reference, selected explicitly through `scenarios/mvp2_2_*.yaml`.\
 **Current milestone:** MVP 3, staged socioeconomic differentiation
 (`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
 
@@ -10,120 +11,118 @@ How to read this file: the current handoff, then what MVP 3 has established, the
 2.1 base. Scientific intent lives in `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`; equations and
 stage evidence in the MVP 3 design document; executable truth in code, tests and model
 rules (`madexplorer rules -v`). Older stage handoffs are in git (before `aae0974` the full
-per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening logs).
+per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening logs; the
+Stage 5J handoff at `204e413`).
 
 ## 1. Current handoff
 
-**Stage 5 — technically complete; pending final scientific approval.**
+**Stage 6A — donor decisions and endogenous food provisioning. Decision B. PAUSE FOR
+SCIENTIFIC REVIEW.**
 
-**Completed:** Stage 5J, the versioned fertility correction (candidate MVP 2.2), scientific
-validation and Stage 5 consolidation (design §AC). **PAUSE FOR SCIENTIFIC REVIEW.**
+**Purpose:** can the fixed offer `0.3 × surplus` be replaced, at least partly, by a
+defensible decision made by the donor unit? Physical capacity, willingness, information
+and allocation are kept distinct.
 
-**Starting commit:** `7177e57` (Stage 5I), clean worktree. During the stage the user
-committed work in progress as `d44d44f` ("wip: socioeco experiments"). Later changes are
-uncommitted.
+**Starting commit:** `204e413`, clean worktree. Stage 5J is fully committed, and Stage 5
+closure was approved at the start of this stage. The MVP 2.2 manifest was not promoted or
+modified. All four oracles were IDENTICAL before any change.
 
-**Files changed in Stage 5J:**
-- Production (minimal):
-  - `config/schema.py`: `mechanisms.dietary_intake_fertility = False`;
-  - `core/state.py`: transient `StepContext.dietary_intake`;
-  - `population/energetics.py`: intake computed only when the switch is on;
-  - `population/demography.py`: `fertility_input()`;
-  - `population/dietary_intake.py`: rule `dietary_intake` registered; docstring.
-- Scenarios: `scenarios/mvp2_2_neolithic.yaml`, `scenarios/mvp2_2_pressure.yaml`.
-- Tooling: `scripts/perf/exactness_oracle.py --model mvp2_2`;
-  `scripts/probes/fertility_version_comparison.py`.
-- Tests: `tests/test_model_versions.py` (new), `tests/test_dietary_intake.py` (updated).
-- Candidate artifacts: `benchmarks/perf/oracle_mvp2_2.json`, `oracle_mvp2_2_logical.json`,
-  `baselines/mvp2_2/` (freeze manifest plus three reference-run directories).
-- Docs: the design document (§AC) and this file.
+**Production default:** unchanged. No production file was modified, no mechanism switch
+was added, and `config_hash` is unchanged.
 
-**Expanded stochastic experiment** (prespecified):
-- Seeds 0–31 of neolithic (600 y) and pressure + cultivation (400 y), MVP 2.1 vs MVP 2.2,
-  production code, 128 runs, none excluded.
-- Pressure: final population H1/H0 median **1.071** [bootstrap 95 % 1.022, 1.138],
-  H1 > H0 in 81 % of seeds, range 0.76–1.52; births 1.047 [1.021, 1.094].
-- Neolithic: **1.033** [0.982, 1.057], 59 % of seeds, range 0.69–1.52 (no clear effect).
-- Per-capita food (harvest/need, stores, deficit) unchanged within ±0.5 % in median.
-- Granaries not changed (14 vs 12 · 8 vs 10 of 32; McNemar p = 0.79 · 0.75), but
-  granaries discordance drives the extreme outcomes in both directions.
-- Stage 5I's conclusions survive.
+**Files added (all NOT ACTIVE, uncommitted):**
+- `src/madexplorer/economy/donor_offer.py`: pure decomposition helpers (surplus, offer,
+  offer use, sequential donor payment, static giving cost). They reuse
+  `provisioning_counterfactual.match`. No simulator path imports the module, and it has no
+  rule.
+- `scripts/probes/donor_offer_audit.py` (`record`, `analyse`).
+- `tests/test_donor_offer.py` (15 tests: the 20 required cases, D0 replay on a recorded
+  MVP 2.2 run, input timing, inactivity).
+- Docs: design §AD and this file.
 
-**H0 / H1 implementation status:**
-- MVP 2.1 (switch off, the default for every existing scenario) reads `food_ratio`.
-- MVP 2.2 (the `mvp2_2_*` scenarios) reads dietary intake `(min(H, N) + X)/N`, computed by
-  energetics from its own inputs and passed through the transient context.
-- No `food_ratio` mutation, no persistent state, no new RNG draw.
-- Fission, innovation and starvation are unchanged.
-- Production MVP 2.1 = experimental H0 and MVP 2.2 = experimental H1, bit-identical every
-  year in 32 / 32 comparisons.
+**Audited donor variables:**
+- surplus `b = H + S − N`;
+- offer `φ·b` (φ = 0.3, exogenous);
+- shipment from the recipient-driven matching;
+- delivery `× exp(−cost/60)`;
+- payment from harvest, then stores;
+- retention `r` (0.15 / 0.50 / 0.80).
 
-**MVP 2.1 exactness:** raw and logical oracles **IDENTICAL**; fixtures unchanged; no MVP 2.1
-artifact touched.
+D0, rebuilt from raw inputs, reproduces every authoritative transfer in 4,000 / 4,000 trade
+years. The static donor energetics match exactly. All recordings are observer-neutral.
 
-**MVP 2.2 candidate reference:**
-- Oracles recorded, then **reproduced IDENTICAL** in fresh processes.
-- MVP 2.2 checked against the MVP 2.1 oracle is DIFFERENT, as expected.
-- Manifest records status CANDIDATE with full provenance. Not promoted.
+**Findings** (MVP 2.2, seeds 0–3; neolithic · pressure):
+- **Offer use.**
+  - Unused offers: 85 % · 22 % of donor-years. They never coexist with an unmet recipient
+    in reach (0 of 449,344), so they are absence of demand, not withholding.
+  - The offer binds (exhausted with an unmet recipient in reach) in 6.5 % · **64 %** of
+    donor-years.
+- **Donor costs.**
+  - Same year: none. No extra deficit, and intake stays at 1 (MVP 2.2 removed the 5H
+    artifact).
+  - `food_ratio` still drops below 1 in 2–3 % of giving years; fission and innovation
+    read it.
+  - A kcal given costs ≈ `r` kcal of next year's stores: carried share 0.50 · 0.60. The
+    rest would have spoiled.
+- **Later consequences.** Only ≈ 1 % · 2 % of each shipped kcal could ever have buffered
+  a later shortage of the donor (shadow buffer, upper bound). Givers' later shortages are
+  more frequent but confounded by location.
+- **Information.**
+  - The donor's own balance predicts its own risk moderately (AUC 0.70–0.80).
+  - Recipients' needs, requests and competitors are global only.
+  - Ties are symmetric, so "whom I helped" is unrecorded.
+- **Material relevance.** Strong. Under pressure, delivered food is ≈ proportional to φ up
+  to 0.3 and rises 1.33× at 0.45, with recipient energy deficit −24 %. Changes are
+  monotone, with almost no losers. Concentration and single-donor dependence rise
+  mechanically with φ.
+- **Willingness.** No mechanism exists.
+  - Cooperation is the exogenous φ.
+  - Mutual insurance and reciprocity are missing: receipt is independent of past giving,
+    and direction is not recorded.
+  - Contact benefits (ties → diffusion, innovation) are unanticipated.
+  - Kin genealogy exists but is unread.
+  - The low cost of giving perishable food lowers the cost of a willingness; it does not
+    supply one.
+- **Self-insurance cap.** Rejected. It is informable, but its motive is worth ≈ 1–2 % and
+  its magnitude is set by unanchored conventions: worst-shortfall S1 zeroes 8 % · 32 % of
+  offers, and the result shifts strongly with how decay is counted.
 
-**Numerical invariants** (tested):
-- source invariance at equal intake;
-- reserves excluded;
-- H1 ≥ H0;
-- equal multipliers without stores;
-- bounded ratio and multiplier;
-- no silent fallback;
-- scenarios differ only by name and switch;
-- first-year energetics identical across versions;
-- divergence only through births.
+**Gates:** 1 (causal clarity) and 4 (behavioral honesty) **fail**; 5 passes strongly.
+**No candidate implemented**: no D1, no branched run, no selector.
 
-**Scientific interpretation:**
-- The correction implements the documented intake mechanism.
-- Its consequence is a modest population increase under storage-reliant pressure, and no
-  clear change in neolithic.
-- Rare technology events amplify divergence.
-- No numerical instability was found.
-- Biological limits: no body condition, duration, lactation or age sensitivity.
+**Decision: B.** Donor offers are materially consequential, but willingness remains
+unexplained.
 
-**Closure gates:** scientific, engineering and research gates all **passed** (§AC).
-Candidate approval and formal closure are the reviewer's decision.
+**Validation:**
+- `make check`: lint, format, mypy and 919 tests pass.
+  - The Stage 5H inactivity test now also allows `donor_offer.py`, which reuses `match()`
+    and is itself NOT ACTIVE.
+- `make test-stat`: 3 passed.
+- `git diff --check`: clean.
+- Oracles: MVP 2.1 raw and logical IDENTICAL; MVP 2.2 raw and logical IDENTICAL.
+- No golden regenerated, no RNG change, no default activation.
 
-**Remaining issues (prioritized register in §AC):**
-- fission food-stress semantics;
-- knowledge ontology;
-- centralized labor;
-- unconditional 30 % sharing;
-- most-severe-first priority;
-- cooperative foraging stop;
-- control without consequences;
-- dust transfers and their adoption-RNG side effect;
-- merge accuracy for future causal state.
+**Next recommended investigation** (not started; needs authorization): **Stage 6B,
+read-only falsification of "social-storage" substrate.**
+- Question: does a past recipient later hold surplus within reach of its past donor when
+  that donor is short, within the store-decay horizon?
+- Its minimal state would be a directional, decaying record of food received per partner,
+  which current symmetric ties cannot represent.
+- If such reversals are rare (5H: 9 % of pairs ever reverse), record a no-go and examine
+  kin (fission genealogy) instead.
+- Optional precondition: the versioned dust-transfer fix.
 
-**Recommended next research milestone** (not started; needs authorization):
-- Make the provisioning decision the first active socioeconomic mechanism: who offers,
-  with what information, constraints and consequences.
-- Start with an audit and counterfactual of the fixed 30 % offer under scarcity, with
-  dependency measured, not targeted.
-- Prerequisites: MVP 2.2 approval; optionally a versioned dust-transfer fix.
-
-**Reproduce Stage 5J** (`runs/` is gitignored; `run` resumes):
+**Reproduce:**
 
 ```bash
-uv run pytest tests/test_model_versions.py tests/test_dietary_intake.py -q
-uv run python scripts/perf/exactness_oracle.py benchmarks/perf/oracle_mvp2_1.json
-uv run python scripts/perf/exactness_oracle.py --logical benchmarks/perf/oracle_mvp2_1_logical.json
-uv run python scripts/perf/exactness_oracle.py --model mvp2_2 benchmarks/perf/oracle_mvp2_2.json
-uv run python scripts/perf/exactness_oracle.py --model mvp2_2 --logical benchmarks/perf/oracle_mvp2_2_logical.json
-uv run python scripts/probes/fertility_version_comparison.py equivalence --jobs 2 --seeds 0 1 2 3 4 5 6 7
-uv run python scripts/probes/fertility_version_comparison.py run --jobs 2 --out runs/stage5j/paired
-uv run python scripts/probes/fertility_version_comparison.py analyse --load runs/stage5j/paired
+uv run pytest tests/test_donor_offer.py -q
+uv run python scripts/probes/donor_offer_audit.py record --jobs 2 --out runs/stage6a/record
+uv run python scripts/probes/donor_offer_audit.py analyse --load runs/stage6a/record --jobs 2
 ```
 
-Never run `make golden`, and never overwrite any `*mvp2_1*` artifact.
+Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifact.
 
-**Physical-feedback gate:** closed.
-
-**Next:** PAUSE FOR SCIENTIFIC REVIEW.
+**Next:** PAUSE FOR SCIENTIFIC REVIEW. Leave Stage 6A uncommitted.
 
 ## 2. MVP 3 so far
 
@@ -148,6 +147,7 @@ Never run `make golden`, and never overwrite any `*mvp2_1*` artifact.
 | 5H | Provisioning: exact replay; donor choice exists but competition halves substitutability under pressure; ties add no allocation information beyond recurring material configuration; tie routing relabels donors with ≤ 0.5 % change in delivered food; food_ratio excludes store consumption despite an intake rationale; B (+ D) (audit + counterfactual matching) | §AA |
 | 5I | Food-energy semantics: fertility's documented mechanism is intake but its input is harvest adequacy; dietary intake (H1) is exactly reconstructible, source-invariant, excludes reserves; experimental H0 branch bit-identical; H1 neutral in neolithic, +5.9 % population under pressure (granaries-regime outliers); A: separate versioned fertility-input change recommended (audit + controlled branch) | §AB |
 | 5J | Versioned correction: MVP 2.2 candidate (`mechanisms.dietary_intake_fertility`); MVP 2.1 exact; production = H1 (32 / 32); 32-seed paired: pressure +7.1 % [2.2, 13.8], neolithic +3.3 % [−1.8, 5.7]; granaries unchanged; candidate oracles reproduce; Stage 5 technically complete, pending approval | §AC |
+| 6A | Donor offers: D0 exact from raw inputs (4,000 / 4,000); unused offers never withholding; offer binds in 64 % of pressure donor-years; delivered food ≈ ∝ φ; a given kcal costs ≈ `r` kcal of next year's stores, of which ≈ 1–2 % would ever buffer the donor's later shortage; willingness unexplained (φ exogenous; no reciprocity, insurance or directional memory); security cap rejected (unanchored); B, nothing implemented (audit + static counterfactual) | §AD |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
@@ -170,8 +170,8 @@ Never run `make golden`, and never overwrite any `*mvp2_1*` artifact.
 
 **Do not forget:**
 - `strata_access.py`, `store_release.py`, `field_control.py`, `practice_concentration.py`,
-  `entry_cost.py`, `knowledge_exposure.py`, `fusion_competence.py` and
-  `economy/provisioning_counterfactual.py` are NOT ACTIVE: nothing in the simulator calls
+  `entry_cost.py`, `knowledge_exposure.py`, `fusion_competence.py`,
+  `economy/provisioning_counterfactual.py` and `economy/donor_offer.py` are NOT ACTIVE: nothing in the simulator calls
   them, and their parameters are not scenario settings.
 - `dietary_intake.py` is active only in the MVP 2.2 candidate
   (`mechanisms.dietary_intake_fertility`). The Stage 5I branch

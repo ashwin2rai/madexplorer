@@ -2,11 +2,12 @@
 
 **Status:** current contract plus findings register (rewritten 2026-10-07; the full
 stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 5J (§AC); Stage 5 technically complete, pending approval. Strata are a passive
-accounting overlay; the physical-feedback gate (§N7) is closed.\
+stage: 6A (§AD, donor decisions; decision B, nothing activated); Stage 5 closed (approved
+2026-10-27). Strata are a passive accounting overlay; the physical-feedback gate (§N7) is
+closed.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
-(`PopulationStore`, `population/fields.py`). Candidate MVP 2.2 (dietary-intake fertility,
-`baselines/mvp2_2/`, opt-in) pending approval.
+(`PopulationStore`, `population/fields.py`). MVP 2.2 (dietary-intake fertility,
+`baselines/mvp2_2/`, opt-in; manifest still CANDIDATE) is the Stage 6A scientific reference.
 
 A **stratum** is one component of an adaptive mixture approximation of a unit's
 socioeconomic distribution. It has a population weight, a small vector of socioeconomic
@@ -3594,6 +3595,305 @@ the MVP 2.2 candidate and of this closure.**
     counterfactuals are not confounded by spurious ties and RNG draws.
 - No hierarchy, refusal-as-power or obligation is presupposed.
 
+### §AD. Stage 6A — donor decisions and endogenous food provisioning (2026-10-27)
+
+**AUDIT + READ-ONLY OBSERVATION + STATIC COUNTERFACTUAL MATCHING. NO CANDIDATE IMPLEMENTED.**
+- Pure helpers in `economy/donor_offer.py` (NOT ACTIVE: no simulator path calls it, no model
+  rule, no scenario setting). They reuse `provisioning_counterfactual.match`, so no
+  matching is duplicated.
+- Probe: `scripts/probes/donor_offer_audit.py` (`record`, `analyse`).
+- Tests: `tests/test_donor_offer.py` (15).
+- Production code, trade, ties, energetics, demography and RNG are unchanged.
+
+**1. Stage 5 closure handoff.**
+- Starting commit `204e413`, clean worktree. Stage 5J (`d44d44f`, `204e413`) is fully
+  committed.
+- Stage 5 closure was approved by the reviewer at the start of Stage 6A. This section
+  records that approval.
+- The MVP 2.2 manifest (`baselines/mvp2_2/freeze_manifest.json`) still says CANDIDATE.
+  Stage 6A does not promote it or touch its artifacts. Promotion is a separate decision.
+- All four oracles reproduced IDENTICAL at `204e413` before any change.
+
+**2. Scientific baseline.**
+- MVP 2.2, selected explicitly: `scenarios/mvp2_2_neolithic.yaml` (600 y) and
+  `scenarios/mvp2_2_pressure.yaml` with cultivation (400 y), seeds 0–3.
+- MVP 2.1 remains the repository default and is not used for these experiments.
+- Because fertility reads dietary intake, the Stage 5H donor "fertility cost" (an artifact
+  of harvest-based `food_ratio`) is absent here (§6).
+
+**3. Existing donor-offer rule (verified at `204e413`, `economy/trade.py`).**
+
+| quantity | definition | type |
+|---|---|---|
+| physical provisionable surplus | `b = H + S − N`: harvest before trade, stores, need including carried energy debt | accounting |
+| behavioral offer | `o = φ·b`, `φ = social.food_sharing_propensity = 0.3` (`species/human.yaml`), for every unit with `b > 0` | **behavioral hypothesis**, exogenous and unconditional |
+| realized transfer | `x ≤ o`, from the recipient-driven greedy matching (most severe relative deficit first; nearest donor first; `sent = min(o_left, left/f)`) | allocation rule (central) |
+| delivered food | `x·f`, `f = exp(−cost/60 km)` | physical (heuristic) |
+| retained food | donor pays each shipment from harvest first, then stores; energetics; year-end stores × retention `r` | accounting + physical |
+
+- Offers are computed after harvest and before energetics, every year, whether or not any
+  recipient exists.
+- Ties: decay × 0.7, then `+received/need` added symmetrically to both sides. They are
+  read only by diffusion and innovation, never by trade.
+- **Fixed behavioral assumptions:**
+  - the offer fraction (0.3);
+  - that every surplus unit offers, whatever its state or outlook;
+  - that offers are visible to every same-species deficit unit in range (implicit
+    information);
+  - need-severity priority;
+  - nearest-donor priority;
+  - payment from harvest before stores;
+  - id tie-breaks.
+- **Not physical constraints:** `φ`, the two priorities and the payment order. Physical
+  constraints: `x ≤ b`, the reach of one relocation range, and transport loss.
+- **No actor makes the offer decision.** `o = φ·b` is a formula applied to the unit, and
+  the matching is a central sequence. A unit-level actor is a modeling interpretation, not
+  something present in the code.
+
+**4. Physical versus behavioral constraints, measured (MVP 2.2, 4 seeds each; neolithic ·
+pressure).**
+- D0 replay: offers and deficits rebuilt from raw pre-trade inputs reproduce every
+  authoritative transfer bit for bit in **2,400 / 2,400 · 1,600 / 1,600** years.
+- Static energetics of the donor match the authoritative ones exactly (max error 0).
+- All 8 recordings are observer-neutral (physical digest).
+
+| donor-years (`b > 0`) | neolithic 361,206 | pressure 88,138 |
+|---|---|---|
+| offer exhausted (unit / offered kcal) | 0.122 / 0.100 | **0.737 / 0.694** |
+| partial | 0.027 / 0.032 | 0.041 / 0.063 |
+| unused (nothing shipped) | **0.852 / 0.868** | 0.222 / 0.243 |
+| no recipient in reach | 0.630 | 0.105 |
+| contested (≥ 2 recipients in reach) | 0.209 | 0.786 |
+| exhausted *and* an unmet recipient still in reach (offer binds) | 0.065 | **0.644** |
+| total shipped / offered | 0.114 | 0.724 |
+| recipient-years still short after matching | 0.335 | 0.715 |
+| unmet / pre-trade deficit | 0.374 | 0.560 |
+| years with total offers < total deficits; offered / deficit | 0.006; 9.3 | 0.348; 1.15 |
+| harvest alone covers need (donors) | 0.988 | 0.976 |
+| shipped kcal paid from stores | 0.000 | 0.000 |
+
+- **Unused offers are never withholding.** In 0 of 449,344 donor-years did a partial or
+  unused offer coexist with an unmet recipient in reach. This is structural: a recipient
+  draws every reachable offer before staying short.
+- In neolithic, offers are mostly idle: surplus is abundant overall (offered/deficit 9.3).
+  But where demand meets supply, it binds locally: a third of recipient-years stay short.
+- Under pressure, offers are the binding constraint in two thirds of donor-years.
+- Donors' own harvest covers their need in 98–99 % of donor-years. Shipments come out of
+  this year's harvest surplus (never directly from stores); the stores eaten in its place
+  are the real cost (§6).
+
+**5. Donor information audit (at the trade decision).**
+
+| information | status |
+|---|---|
+| own harvest this year, stores, cohorts → need (incl. debt), body reserve and cap | observable current |
+| own storage retention (from held techniques) | observable current |
+| last year's `food_ratio`, `energy_deficit` | historical (unit state) |
+| `harvest_history`: 10 y of per-capita harvest *after trade* | historical; contaminated by past transfers in both directions |
+| beliefs and food logs about cells; familiarity; residence | historical/observed environment, not other units' needs |
+| trade ties | historical, but **symmetric**: a tie does not record who gave to whom |
+| nearby units' deficits, the queue of requests, competing donors | **global simulator only**: no request object exists; the matcher reads them |
+| potential recipients' needs | global only |
+| next harvest, future shortages, future recipients | future: unavailable |
+
+- **Does available information predict the donor's own risk?** Among donor-years with a
+  5-year future, rank AUC for "harvest falls short within 5 y" / "intake < 1 within 5 y":
+  - `−surplus/need`: 0.70 / 0.77 · 0.70 / 0.80;
+  - `−stores/need`: 0.68 / 0.76 · 0.65 / 0.76;
+  - harvest CV of memory: 0.61 / 0.64 · 0.59 / 0.59;
+  - last year's deficit: ≈ 0.50–0.54.
+- So a donor's own current balance carries real, moderate information about its own later
+  risk. A security policy would not be blind (D is not the binding problem).
+- A donor has **no** information about recipients or competing donors, and no way to know
+  whom it helped before.
+
+**6. Donor opportunity costs.**
+
+*Same year (static, production `energy_balance` with and without the donor's shipments, paid
+in production order):*
+- No donor-year incurs an extra energy deficit, and none has intake below 1 (MVP 2.2). The
+  Stage 5H fertility cost of giving was a harvest-accounting artifact and is gone.
+- Remaining side effect: in 2.2 % · 3.3 % of giving donor-years, giving pushes `food_ratio`
+  (harvest adequacy) below 1. Fission food stress and innovation still read that quantity
+  (§AB register).
+- **What a shipped kcal costs.** The share of shipped kcal the donor would otherwise have
+  carried into the next year (body reserve plus stores after year-end spoilage) is
+  0.504 · 0.604 (reserve 0.008 · 0.026). The rest, 0.496 · 0.396, would have spoiled anyway.
+- Per retention class this equals `r` almost exactly: 0.157 / 0.504 / 0.806 for
+  `r` = 0.15 / 0.50 / 0.80. The dominant class is `storage_pits` (`r` = 0.5).
+- So the immediate cost of a kcal given is about `r` kcal of next year's stores.
+
+*Later years (descriptive, authoritative histories, units alive through the window):*
+
+| | gave: harvest short / intake < 1 / energy deficit | surplus, nothing shipped |
+|---|---|---|
+| neolithic 5 y | 0.258 / 0.092 / 0.040 | 0.099 / 0.015 / 0.004 |
+| pressure 5 y | 0.410 / 0.246 / 0.109 | 0.303 / 0.100 / 0.034 |
+
+- Givers later fall short more often than non-giving surplus units. This is confounded and
+  not causal: givers are by construction near deficit units, i.e. in poorer, more variable
+  places, and non-givers mostly had no one in reach.
+- **Shadow buffer** (an upper-bound estimate, all else equal): the donor's own carried cost
+  of all its gifts, decayed with its own retention and spent first on later intake gaps,
+  then on energy deficits.
+  - Of carried cost 3.7e10 · 6.3e10 kcal, it would later have covered intake gaps worth
+    **0.019 · 0.037** and energy deficits worth **0.006 · 0.029** of that cost.
+  - Per kcal shipped, that is ≈ 1 % · 2 % that could ever have buffered a later shortage
+    of the donor.
+- The material self-insurance value of withheld food is therefore small. With no seasons
+  and `r` ≤ 0.8 a year, retained food mostly decays before the donor's next shortage.
+- Ties created by giving raise innovation connectivity and diffusion contact. That is an
+  indirect consequence that no actor anticipates (no rule reads it as a reason).
+
+**7. The willingness problem.**
+
+| candidate reason to give | status in the code |
+|---|---|
+| cooperative disposition | **explicit behavioral assumption** (`φ = 0.3`, species parameter, `source_type = heuristic`) |
+| repeated mutual insurance | **missing**: receipt does not depend on past giving (the matching reads no history); ties are symmetric, so direction is unrecorded; 5H: 9 % of pairs ever reverse |
+| maintaining contact | **indirect consequence**: ties feed diffusion and innovation, but no actor values or perceives this |
+| shared risk exposure | **missing**: no unit observes a neighbor's state |
+| future reciprocal assistance | **missing** (as mutual insurance) |
+| kin / common descent | **substrate only**: fission genealogy exists (`parent_id`, split events), but no rule reads it. Kin within 2 fission links are 6 % · 6 % of opportunities and receive 10 % · 8 % of delivered kcal under the current kin-blind rule (geographic co-location) |
+| low cost of giving perishable surplus | **physical fact, not a motive**: 40–50 % of a gift would have spoiled. It lowers the cost of a willingness; it does not supply one |
+
+- A future benefit the simulator computes is not a benefit the donor knows of or expects.
+  Nothing in the model lets a donor expect anything from giving.
+
+**8. Offer sensitivity (static, full re-matching on recorded inputs; sensitivity
+conditions, not strategies; ratios to D0 unless absolute).**
+
+| φ | delivered | unmet / deficit | recipients still short | recipient intake (mean) | recipient energy deficit | recipients losing / gaining > 1 % of need | top-donor share | > 50 % from one donor | effective choice (≥ 2 deliver ≥ 25 %) | network full replacement | donor carried cost |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0 · 0 | 1 · 1 | 1 · 1 | 0.788 · 0.819 | 1.91 · 1.72 | 0.73 / 0 · 0.46 / 0 | – | – | – | – | 0 |
+| 0.1 | 0.58 · 0.38 | 0.64 · 0.83 | 0.61 · 0.93 | 0.859 · 0.852 | 1.45 · 1.44 | 0.36 / 0 · 0.39 / 0 | 0.49 · 0.49 | 0.41 · 0.40 | 0.43 · 0.14 | – | 0.61 · 0.39 |
+| 0.2 | 0.84 · 0.72 | 0.47 · 0.69 | 0.44 · 0.83 | 0.888 · 0.879 | 1.20 · 1.21 | 0.19 / 0 · 0.27 / 0 | 0.59 · 0.55 | 0.54 · 0.48 | 0.64 · 0.33 | – | 0.86 · 0.73 |
+| **0.3 (D0)** | 1 · 1 | 0.37 · 0.56 | 0.34 · 0.72 | 0.907 · 0.900 | 1 · 1 | – | 0.66 · 0.60 | 0.64 · 0.57 | 0.76 · 0.51 | 0.80 · 0.46 | 1 · 1 |
+| 0.45 | 1.15 · 1.33 | 0.28 · 0.42 | 0.25 · 0.56 | 0.927 · 0.924 | 0.77 · 0.76 | 0 / 0.15 · 0 / 0.29 | 0.72 · 0.67 | 0.73 · 0.68 | 0.85 · 0.68 | – | 1.13 · 1.30 |
+| 0.6 | 1.25 · 1.55 | 0.21 · 0.32 | 0.19 · 0.43 | 0.942 · 0.941 | 0.60 · 0.59 | 0 / 0.19 · 0 / 0.38 | 0.76 · 0.73 | 0.79 · 0.76 | 0.90 · 0.78 | 0.89 · 0.69 | 1.21 · 1.49 |
+| 1.0 | 1.43 · 1.87 | 0.11 · 0.18 | 0.10 · 0.25 | 0.972 · 0.965 | 0.30 · 0.34 | 0 / 0.25 · 0 / 0.51 | 0.84 · 0.81 | 0.89 · 0.87 | 0.96 · 0.88 | – | 1.35 · 1.73 |
+
+- **Offer quantity is a strong causal lever wherever demand exists**, much stronger than
+  donor routing (§AA: ≤ 0.5 % of delivered food).
+  - Under pressure, delivered food is nearly proportional to φ up to 0.3 and still rises
+    by 1.33× at 0.45.
+  - Recipient energy deficits fall by about a quarter at 0.45. Without offers they rise by
+    1.7–1.9×.
+- Changes are monotone and nearly one-sided: raising φ makes no recipient worse off by
+  more than 1 % of need. So the lever changes aggregate supply, not redistribution.
+- Transport loss share falls slightly as φ rises (nearer donors cover more).
+- **Concentration rises mechanically with φ:** fewer donors are used, top-donor share goes
+  0.49 → 0.84, and single-donor dependence 0.40 → 0.87. This follows from nearest-first
+  matching with larger offers, not from any relationship.
+- Substitutability also rises with φ: network full replacement 0.46 → 0.69 under pressure.
+  Dependence on a single donor and replaceability move together. Neither implies leverage.
+- Donor cost scales with shipments at ≈ `r` per kcal. Donors' kept stores fall by 1–19 %
+  across the range.
+
+**9. Effects on recipient dependency.**
+- **Material vulnerability** is real and grows with scarcity. Under pressure at D0, 45 %
+  of recipients get nothing replacing a lost primary donor after network rematching;
+  in neolithic, 16 %.
+- **Behavioral leverage** does not exist. No donor decision is conditioned on anything,
+  no recipient responds, and no donor knows whom it supplies. Dependency scores are not
+  authority.
+
+**10. Candidate resource-security mechanism (§AD-S).** The hypothesis: a cooperative donor
+limits its offer when retaining food materially improves its own security against
+foreseeable scarcity.
+
+| requirement | finding |
+|---|---|
+| 1. physical risk | own later shortfall. It exists (intake < 1 within 5 y: 9 % · 25 % of giving donor-years) |
+| 2. observable information | own balance, stores, harvest memory: moderately predictive (AUC 0.70–0.80) |
+| 3. why maintain it | **weak in the model's physics:** ≈ 1–2 % of each kcal withheld would ever reach a later shortage (§6). Most withheld food spoils |
+| 4. remaining assumption | cooperative willingness (φ) is still exogenous; the cap only limits it |
+| 5. non-arbitrary magnitude | **fails** (see below) |
+| 6. behavior across ecologies | dominated by `r` and by the budget convention (see below) |
+
+- *Illustration S1 (NOT a proposal):* keep `G·N/r`, where `G` is the worst remembered
+  shortfall.
+  - It cuts 12 % · 37 % of offers and zeroes 8 % · 32 %.
+  - Delivered food falls to 0.93 · 0.85 of D0.
+  - With `r` replaced by 1, these become 5 % · 27 % cut and 0.97 · 0.92 delivered.
+- So the outcome is controlled by two conventions: the minimax risk rule and how a
+  decaying store is counted. The model offers no anchor for either, short of a risk
+  coefficient, a horizon or a target, which this stage forbids.
+- **Rejected as insufficiently grounded.** It would also be scientifically perverse here:
+  it withholds food whose own insurance value is about 1–2 %, in order to model a motive
+  the physics hardly supports.
+
+**11. Scientific implementation gates.**
+
+| gate | result |
+|---|---|
+| 1 causal clarity | **fail**: no modeled reason explains the amount offered; security explains ≈ 1–2 % of the value withheld |
+| 2 actor clarity | pass in a limited sense: a donor could compute an offer from its own state. Allocation remains central |
+| 3 information validity | pass for own state; recipients' needs are global only |
+| 4 behavioral honesty | **fail** for any proposal: φ remains exogenous, and a cap would add a second unanchored parameter |
+| 5 material relevance | **pass, strongly** (§8) |
+| 6 representation sufficiency | pass: unit-level state suffices; no strata needed |
+| 7 isolation | pass: an offer rule is separable from matching |
+
+Gates 1 and 4 fail, so **no candidate was implemented**. D1, the branched run and the
+first-divergence check (Parts IX–X) were not performed. No opt-in selector was added, and
+`config_hash` is unchanged.
+
+**12. Population representation.**
+- Units remain sufficient statistical actors for everything examined here.
+- Nothing in this stage needs within-unit generosity, strata or households, and none was
+  added.
+
+**13. Decision: B — donor offers are materially consequential, but willingness remains
+unexplained.**
+- Also: the self-insurance cap is informable (not D) but has neither a material motive
+  nor a non-arbitrary magnitude under current physics.
+- Not C: offers bind in 64 % of donor-years under pressure.
+- Not E: the decomposition shows the offer is cleanly separable from the central
+  allocation. The obstacle is motive, not structure.
+
+**14. Rejected explanations:**
+- resource-security cap (S1 and variants);
+- "large stores give more";
+- an own-holdings or collective-welfare objective (each assumes its outcome);
+- unused offers as withholding (structurally impossible);
+- tie or partner preference (§AA).
+
+**15. Remaining causal assumptions:**
+- φ = 0.3 unconditional;
+- need-severity and nearest-first priority;
+- implicit global visibility of offers and deficits;
+- payment from harvest first;
+- symmetric undirected ties;
+- `food_ratio` still read by fission and innovation (donor side effect, 2–3 % of giving
+  donor-years);
+- dust transfers (unchanged).
+
+**16. Smallest justified next stage (recommendation, not started).**
+- **Stage 6B — falsification audit of "social storage" substrate.**
+  - The physics found here (40–60 % of a gift spoils anyway; withheld food rarely reaches
+    a later shortage) is the condition under which converting perishable surplus into
+    future claims on others is the classic causal explanation of food sharing.
+  - Its minimal state is a **directional**, decaying record of food received per partner.
+    Current ties are symmetric, so this record does not exist yet.
+  - Before any mechanism, measure read-only whether the substrate exists: how often a past
+    recipient later has a surplus within reach of its past donor when that donor is short,
+    within the store-decay horizon (5H: only 9 % of pairs ever reverse).
+  - If reversals are rare, social storage cannot explain willingness under current
+    geography. Record that as a no-go, and consider kin (fission genealogy, §7) as the
+    other grounded candidate.
+- No obligation, reputation, debt or authority is presupposed.
+- Optional: the versioned dust-transfer fix remains a precondition for clean relational
+  counterfactuals.
+
+**Reproduce** (`runs/` is gitignored):
+
+```bash
+uv run pytest tests/test_donor_offer.py -q
+uv run python scripts/probes/donor_offer_audit.py record --jobs 2 --out runs/stage6a/record
+uv run python scripts/probes/donor_offer_audit.py analyse --load runs/stage6a/record --jobs 2
+```
+
 ---
 
 ## 3. Open questions
@@ -3624,6 +3924,11 @@ the MVP 2.2 candidate and of this closure.**
 - **Food-ratio semantics (§AA §7, §AB, §AC).** Fertility reads dietary intake in the MVP 2.2
   candidate (Stage 5J; pending approval). Innovation need/surplus keep harvest adequacy;
   fission food stress remains ambiguous and unchanged in both versions.
+- **Provisioning willingness (§AD).** Offer quantity is a strong causal lever (delivered
+  food ≈ proportional to φ under pressure), but no modeled reason explains why or how much a
+  donor gives; a self-insurance cap is informable but unanchored and worth ≈ 1–2 % of the
+  withheld kcal. Next: a read-only falsification of social-storage substrate (directional
+  reversal of donor/recipient roles within store-decay horizons); kin as the alternative.
 - **Dust transfers (§AA §1).** Floating-point residues create ~1e-7 kcal transfers (0.7–1.5 %
   of transfers) and transient near-zero ties that can consume adoption draws.
 - **Hidden coordination assumptions (§Z).** Cooperative stopping in shared foraging patches;

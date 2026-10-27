@@ -141,7 +141,10 @@ def test_module_is_not_active() -> None:
         ["grep", "-rl", "--include=*.py", "provisioning_counterfactual", str(ROOT / "src")],
         capture_output=True, text=True, check=False,
     ).stdout.split()  # fmt: skip
-    assert [h for h in hits if not h.endswith("provisioning_counterfactual.py")] == []
+    # economy/donor_offer.py (Stage 6A) reuses match() and is itself NOT ACTIVE
+    # (tests/test_donor_offer.py checks that nothing in src imports it)
+    inactive = ("provisioning_counterfactual.py", "donor_offer.py")
+    assert [h for h in hits if not h.endswith(inactive)] == []
     assert not any("provisioning_counterfactual" in r.qualname for r in RULES.values())
 
 
