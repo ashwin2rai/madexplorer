@@ -2,8 +2,9 @@
 
 **Status:** current contract plus findings register (rewritten 2026-10-07; the full
 stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 6A (§AD, donor decisions; decision B, nothing activated); Stage 5 closed (approved
-2026-10-27). Strata are a passive accounting overlay; the physical-feedback gate (§N7) is
+stage: 6B (§AE, comparative mechanism selection; decision D, pathway C; nothing activated;
+review in `STAGE6B_SOCIOECOLOGICAL_MECHANISM_REVIEW.md`). 6A (§AD) decision B. Stage 5 closed
+(approved 2026-10-27). Strata are a passive accounting overlay; the physical-feedback gate (§N7) is
 closed.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
 (`PopulationStore`, `population/fields.py`). MVP 2.2 (dietary-intake fertility,
@@ -3894,6 +3895,107 @@ uv run python scripts/probes/donor_offer_audit.py record --jobs 2 --out runs/sta
 uv run python scripts/probes/donor_offer_audit.py analyse --load runs/stage6a/record --jobs 2
 ```
 
+### §AE. Stage 6B — socioecological opportunity and mechanism selection (2026-10-27)
+
+**COMPARATIVE REVIEW + READ-ONLY OBSERVATION + STATIC COUNTERFACTUALS. NOTHING IMPLEMENTED.**
+- Full review: `objective/STAGE6B_SOCIOECOLOGICAL_MECHANISM_REVIEW.md` (sources, matrix,
+  methods, results, 6C specification).
+- Helpers: `economy/opportunity_audit.py` (NOT ACTIVE).
+- Probe: `scripts/probes/opportunity_audit.py`.
+- Tests: `tests/test_opportunity_audit.py` (11).
+- Starting commit `cabe833`. Reference model: MVP 2.2 (manifest still CANDIDATE;
+  administrative state unchanged).
+
+**Why the direction changed.**
+- Stages 5H–6A studied provisioning in depth without comparing it against other
+  foundations.
+- 6B compares three pathways on equal terms:
+  - A, resource access, defensibility and outside options;
+  - B, coordination of productive resources;
+  - C, risk pooling and intergroup dependence.
+- Literature: 13 sources, at abstract or metadata level as stated in the review.
+- Model-facing evidence: MVP 2.2 neolithic 600 y and pressure + cultivation 400 y,
+  seeds 0–3, one recording pass.
+- Fidelity: observer-neutral; pooled foraging replayed bit for bit in 415,535 groups;
+  one-step regrowth exact.
+
+**What the model demonstrated** (neolithic · pressure):
+- **A:**
+  - Wild capacity is predictable (rank correlation 0.87 · 0.96) but only modestly
+    concentrated (Gini 0.14 · 0.23).
+  - Rivalry is real: 20 % · 62 % of foraging unit-years share a cell; being alone would
+    change harvest by p50 +2.5 % · +4.3 % of need (> 10 % in about 20 %); each kcal taken
+    costs 0.18 · 0.29 kcal of next year's stock.
+  - The arable cap **never binds** (0.000 of farming cell-years), so production is
+    labour-limited.
+  - Outside options are open and **known**: 90 % · 81 % believe a better reachable cell
+    exists.
+  - Verdict: resource concentration is measurable, but economic defensibility is not
+    identifiable (no defence cost, open exits, no land limit).
+- **B:**
+  - Pooled vs independent use differs by 1.2 % in total; pooling-induced shortfalls are
+    0.5 % · 0.7 % of members.
+  - The production function has no joint-production synergy.
+  - Verdict: no consequential coordination problem.
+- **C:**
+  - Before trade, 5.8 % · 31 % of unit-years are short.
+  - Shortages are spatially correlated (ratio 4.4 · 1.5), yet 99.7–99.9 % of short units
+    have surplus in reach (p50 23 · 14 × their deficit).
+  - Within 10 y, a former recipient can help its former donor in 63 % · 69 % of that
+    donor's later shortages; some neighbour can in about 100 %.
+  - Together with 6A (offers are a strong lever; a kcal given costs ≈ `r` kcal of next
+    year's stores), this is the strongest substrate.
+
+**What the literature supports, and what remains hypothetical.**
+- Defensibility and inequality are tied to dense, predictable, clumped resources (1, 2) and
+  to land-limited production (6). Those conditions are absent here.
+- Enduring inequality is late and reversible (5, 6), against any agriculture → inequality
+  script.
+- Need-based risk pooling is supported by simulations (9–11), with reduced benefit under
+  correlated shocks (10).
+- No source shows deliberate maximization of insurance benefit. Willingness stays a
+  premise.
+
+**Decision: D (pathway C).** The physical substrate for risk pooling exists. The
+actor-level interaction does not:
+- central global priority;
+- global visibility of offers and deficits;
+- donors that never see a need;
+- exogenous φ.
+
+**Stage 6C (recommended, not started):** *local need requests with proportional donor
+rationing*.
+- A short unit asks reachable units nearest first.
+- Each donor splits its offer `φ·b` across the requests it actually receives, in proportion
+  to the amounts requested.
+- Unmet requesters re-ask in bounded rounds.
+- No new persistent state.
+- φ remains an explicit need-based giving premise.
+- Falsified (stop) if delivered food, unmet deficit, recipients' intake and the served set
+  differ from D0 by < 1 % in both scenarios, or if the results depend on the round limit or
+  on id order.
+- Minimal change: `economy/trade.py` (versioned rule `local_need_requests`) and
+  `mechanisms.local_provisioning_requests = False`.
+
+**Representation:** unit-level state is sufficient for all three pathways. No strata,
+households or individuals are justified by any measured interaction.
+
+**Rejected or deferred:**
+- ownership, exclusion or defence;
+- commons governance;
+- coordination;
+- partner preference;
+- self-insurance;
+- land-scarcity inequality (revisit only if land becomes limiting).
+
+**Reproduce:**
+
+```bash
+uv run pytest tests/test_opportunity_audit.py -q
+uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/stage6b/record
+uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b/record --jobs 1
+```
+
 ---
 
 ## 3. Open questions
@@ -3929,6 +4031,10 @@ uv run python scripts/probes/donor_offer_audit.py analyse --load runs/stage6a/re
   donor gives; a self-insurance cap is informable but unanchored and worth ≈ 1–2 % of the
   withheld kcal. Next: a read-only falsification of social-storage substrate (directional
   reversal of donor/recipient roles within store-decay horizons); kin as the alternative.
+- **Opportunity structure (§AE).** Land never limits production and wild resources are
+  diffuse, so defensibility-based access mechanisms lack their preconditions; revisit only
+  with a clumped resource class or binding land. Stage 6C candidate: local need requests
+  with proportional donor rationing (pathway C, decision D).
 - **Dust transfers (§AA §1).** Floating-point residues create ~1e-7 kcal transfers (0.7–1.5 %
   of transfers) and transient near-zero ties that can consume adoption draws.
 - **Hidden coordination assumptions (§Z).** Cooperative stopping in shared foraging patches;
