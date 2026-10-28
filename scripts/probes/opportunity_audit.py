@@ -24,10 +24,11 @@ Usage:
 """
 
 import argparse
+import inspect
 import pickle
 import sys
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Any
@@ -38,18 +39,23 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from _common import SEEDS, physical_digest
 
+import madexplorer.economy.agriculture_kernel as agriculture_kernel
 import madexplorer.mobility.migration as migration
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
 from madexplorer.ecology.resources import logistic_regrowth
 from madexplorer.economy.agriculture import HECTARES_PER_KM2, FieldPlanningSubsystem
-from madexplorer.economy.foraging import ForagingSubsystem
+from madexplorer.economy.foraging import ForagingSubsystem, _harvest
 from madexplorer.economy.opportunity_audit import (
+    TARGET_REL_TOL,
     alone_harvest,
     gini,
     independent_harvest,
+    labor_elasticity,
     pooled_harvest,
     regrowth_loss,
+    remaining_target_met,
+    utilization,
 )
 from madexplorer.economy.trade import delivered_fraction
 from madexplorer.population.energetics import annual_need_columns
@@ -59,6 +65,11 @@ MVP2_2 = {
     "pressure+cult": ("scenarios/mvp2_2_pressure.yaml", 400, {"mechanisms.cultivation": True}),
 }
 LATER = 10  # years ahead for later shortage and assistance
+DESIRED_ARG = list(
+    inspect.signature(
+        getattr(agriculture_kernel.plan_fields, "py_func", agriculture_kernel.plan_fields)
+    ).parameters
+).index("desired")
 
 
 def scenario(name: str, seed: int) -> Scenario:
@@ -68,6 +79,32 @@ def scenario(name: str, seed: int) -> Scenario:
 
 
 # ---------------------------------------------------------------- recording
+
+
+def plan_with_desired(
+    evaluate: Any, sub: Any, state: Any, ctx: Any
+) -> tuple[Any, np.ndarray | None]:
+    """Run field planning once and copy each row's desired fields (before arable sharing).
+
+    Not a second calculation: the production kernel writes them into its ``desired`` scratch
+    argument and never rewrites it while sharing arable land, so the array is copied after
+    the same call returns. No other interface exposes it. ``None`` when nothing was planned.
+    """
+    kernel0 = agriculture_kernel.plan_fields
+    captured: list[np.ndarray] = []
+
+    def kernel(*args: Any) -> Any:
+        count = kernel0(*args)
+        captured.append(np.array(args[DESIRED_ARG], dtype=float))
+        return count
+
+    agriculture_kernel.plan_fields = kernel
+    try:
+        proposals = evaluate(sub, state, ctx)
+    finally:
+        agriculture_kernel.plan_fields = kernel0
+    assert len(captured) <= 1
+    return proposals, captured[0] if captured else None
 
 
 class Recorder:
@@ -91,6 +128,9 @@ class Recorder:
             inputs = sub._inputs(state, ctx)
             eco = state.ecology
             sid = cols.units[0].species_id
+            # Cell totals below (stock, removals, collective utilization) assume one foraging
+            # group per cell; with several species, groups forage one stock in sequence.
+            assert all(u.species_id == sid for u in cols.units), "single-species scenarios only"
             pa, ga, pr, gr = ctx.forage[sid].as_tuple()
             if not rec.static:
                 cfg = ctx.scenario.config
@@ -159,17 +199,19 @@ class Recorder:
             return proposals
 
         def plan(sub: Any, state: Any, ctx: Any) -> Any:
-            proposals = plan0(sub, state, ctx)
+            proposals, captured = plan_with_desired(plan0, sub, state, ctx)
             cols = ctx.columns(state)
-            before = dict(
-                zip([u.id for u in cols.units], cols.get("fields_ha").tolist(), strict=True)
-            )
+            ids = [u.id for u in cols.units]
+            before = dict(zip(ids, cols.get("fields_ha").tolist(), strict=True))
             after = dict(before)
             for prop in proposals:
                 for r, f in zip(prop.rows.tolist(), prop.fields_ha.tolist(), strict=True):
                     after[prop.cols.units[r].id] = f
+            desired = dict(zip(ids, captured.tolist(), strict=True)) if captured is not None else {}
             if rec.years and rec.years[-1]["year"] == state.year:
-                rec.years[-1]["fields_plan"] = {u: (before[u], after[u]) for u in before}
+                rec.years[-1]["fields_plan"] = {
+                    u: (before[u], after[u], desired.get(u, float("nan"))) for u in before
+                }
             return proposals
 
         def gather(
@@ -240,6 +282,95 @@ def _stock(
             (float(st["plant_return"][cell]), float(st["game_return"][cell])))  # fmt: skip
 
 
+def balance(u: dict[str, Any]) -> float:
+    """Pre-trade food balance: own crop + wild harvest + stores - need (trade's ``b``)."""
+    return float(u["farm"] + u["forage"] + u["stores"] - u["need"])
+
+
+def arable_cell(rows: list[tuple[float, float, float]], arable: float) -> dict[str, Any]:
+    """One farming cell-year of field planning: ``rows`` are each unit's (before, after,
+    desired) fields. ``rationed``: desired fields exceed the arable cap, so the kernel scaled
+    everyone (``plan_fields``); ``at_cap``: planned fields fill the cap. A unit is cut *by
+    rationing* when it wanted at least its current fields but was planned below them.
+    ``desired`` is this year's planned step toward the unit's target, not the target itself.
+    With zero arable land every desired field is rationed to zero (land unavailable, not
+    contested); the sharing is pro rata, so no unit is excluded except through the 0.05 ha
+    rounding (``zeroed_by_rounding``)."""
+    desired = sum(d for _, _, d in rows)
+    after = sum(a for _, a, _ in rows)
+    rationed = desired > arable
+    scale = min(1.0, arable / desired) if desired > 0 else 1.0
+    return {
+        "n": len(rows), "n_desiring": sum(1 for _, _, d in rows if d > 0),
+        "incumbents": sum(1 for b, _, _ in rows if b > 0),
+        "desired_ha": desired, "unallocated_ha": max(desired - after, 0.0) if rationed else 0.0,
+        "zeroed_by_rounding": sum(1 for _, _, d in rows if rationed and d >= 0.05 and d * scale < 0.05),
+        "arable": arable, "desired_ratio": desired / arable if arable > 0 else float("inf"),
+        "after_ratio": after / arable if arable > 0 else float("inf"),
+        "at_cap": after >= arable * (1 - 1e-9), "rationed": rationed,
+        "cut": sum(1 for b, a, _ in rows if a < b and b > 0), "grow": sum(1 for b, a, _ in rows if a > b),
+        "rationing_cut": sum(1 for b, a, d in rows if rationed and b > 0 and a < b and d >= b),
+        "capture_ok": all(  # the recorded desired fields reproduce the kernel's sharing
+            (a == 0.0 and d * s < 0.05) or abs(a - d * s) <= 1e-9 * max(a, 1.0)
+            for b, a, d in rows
+            for s in [scale]
+        ),
+    }  # fmt: skip
+
+
+def neighbours(uid: str, u: dict[str, Any], where: dict[int, list[str]]) -> list[tuple[str, float]]:
+    """Other units within one relocation range (the reach trade uses), with path cost.
+    Geographic reach only: not contact, and not knowledge of their stores."""
+    return [(x, cost) for c, cost in u["occupied_reach"] for x in where[c]] + [
+        (x, 0.0) for x in where[u["cell"]] if x != uid
+    ]
+
+
+def potential_role_reversal(
+    seq: dict[int, dict[str, tuple[float, int, list[tuple[int, float]]]]], horizon: int
+) -> list[tuple[str, int, int, bool, bool]]:
+    """``(a, year, delay, formerly_short_has_surplus, any_has_surplus)`` per eligible origin.
+
+    ``seq[year][uid] = (pre-trade balance, cell, occupied cells in reach)``. Origin: unit
+    ``a`` has a surplus in ``year`` and at least one *formerly short neighbour* (another unit
+    in reach with a negative balance that year; no transfer is required or observed). The
+    first year within ``horizon`` in which ``a`` is short is recorded: whether one of those
+    formerly short neighbours now has a surplus within ``a``'s reach, and whether any unit
+    does. A neighbour that no longer exists counts as not available; the window closes when
+    ``a`` disappears or the run ends, and origins without a later shortage are not recorded.
+    """
+    out = []
+    for t in sorted(seq):
+        units = seq[t]
+        cells_t: dict[int, list[str]] = defaultdict(list)
+        for uid, (_b, c, _r) in units.items():
+            cells_t[c].append(uid)
+        for a, (ba, ca, reach_a) in units.items():
+            if ba <= 0:
+                continue
+            reach_cells = {c for c, _ in reach_a} | {ca}
+            formerly_short = [
+                b for c in reach_cells for b in cells_t[c] if b != a and units[b][0] < 0
+            ]
+            if not formerly_short:
+                continue
+            for k in range(1, horizon + 1):
+                later = seq.get(t + k)
+                if later is None or a not in later:
+                    break
+                la, lca, lreach = later[a]
+                if la >= 0:
+                    continue
+                lcells = {c for c, _ in lreach} | {lca}
+                specific = any(
+                    b in later and later[b][0] > 0 and later[b][1] in lcells for b in formerly_short
+                )
+                anyone = any(v[0] > 0 and v[1] in lcells for x, v in later.items() if x != a)
+                out.append((a, t, k, specific, anyone))
+                break
+    return out
+
+
 def analyse_run(run: dict[str, Any]) -> dict[str, Any]:
     st, years = run["static"], run["years"]
     out: dict[str, Any] = defaultdict(list)
@@ -257,33 +388,37 @@ def analyse_run(run: dict[str, Any]) -> dict[str, Any]:
     for y in years:
         units = y["units"]
         occupied_cells = {u["cell"] for u in units.values()}
-        # --- A: concentration of potential within each unit's reach (true capacity)
         acc_cap = y["plant_cap"] * st["plant_access"] + y["game_cap"] * st["game_access"]
         out["occupied_frac"].append(len(occupied_cells) / int(land.sum()))
-        for uid, u in units.items():
-            # --- A: realized foraging regime and outside options
-            stock, returns = _stock(y, st, u["cell"])
-            avail = stock[0] + stock[1]
-            out["unit"].append({
-                "year": y["year"], "need": u["need"], "target": u["target"], "forage": u["forage"], "farm": u["farm"],
-                "fields": u["fields"], "people": u["people"], "depletion": u["forage"] / avail if avail > 0 else 0.0,
-                "cap_ratio": u["labor"] * u["eff"] * max(returns) / avail if avail > 0 else float("inf"),
-                "home": u["home_per_head"], "best": u["best_alt"], "best_cost": u["best_cost"],
-                "share_better": u["share_better"], "n_reach": u["n_reach"],
-                "known": run["known"].get(y["year"], {}).get(uid),
-                "reach_cap_ratio": float(acc_cap[u["cell"]] / np.median(acc_cap[[c for c, _ in u["occupied_reach"]] or [u["cell"]]])),
-            })  # fmt: skip
-        # --- A + B: foraging groups
+        # --- A + B: foraging groups (one per cell: single species, asserted when recorded)
         members_of_cell: dict[int, list[str]] = {}
+        cell_util: dict[int, float | None] = {}
+        group_met: dict[int, bool | None] = {}
         for cell, members, plant_rm, game_rm in y["groups"]:
             members_of_cell[cell] = members
             stock, returns = _stock(y, st, cell)
+            avail = stock[0] + stock[1]
+            removed = float(plant_rm + game_rm)
+            shares = [units[m]["forage"] for m in members]
+            remaining = sum(units[m]["target"] for m in members)
+            cell_util[cell] = utilization(removed, avail)
+            group_met[cell] = remaining_target_met(sum(shares), remaining)
+            out["cell"].append({
+                "n": len(members), "util": cell_util[cell], "removed": removed, "shares": sum(shares),
+                "max_share": max((utilization(x, avail) or 0.0) for x in shares), "met": group_met[cell],
+            })  # fmt: skip
+            if group_met[cell] is False:  # missed => all labor applied (cell_harvest)
+                full = sum(units[m]["labor"] * units[m]["eff"] for m in members)
+                out["missed"].append((
+                    abs(sum(_harvest(stock, returns, full)) - removed) <= 1e-9 * max(removed, 1.0),
+                    labor_elasticity(stock, returns, full),
+                ))  # fmt: skip
             lab = [units[m]["labor"] for m in members]
             eff = [units[m]["eff"] for m in members]
             tgt = [units[m]["target"] for m in members]
             pooled = pooled_harvest(stock, returns, lab, eff, tgt)
             out["replay_groups"] += 1
-            out["replay_exact"] += pooled == [units[m]["forage"] for m in members]
+            out["replay_exact"] += pooled == shares
             if len(members) < 2:
                 continue
             ind, _e = independent_harvest(stock, returns, lab, eff, tgt)
@@ -294,7 +429,7 @@ def analyse_run(run: dict[str, Any]) -> dict[str, Any]:
             finite = [r for r in ratio if np.isfinite(r)]
             out["group"].append({
                 "n": len(members), "pooled_total": sum(pooled), "ind_total": sum(ind), "target": sum(tgt),
-                "avail": stock[0] + stock[1], "spread": (max(finite) / min(finite)) if finite and min(finite) > 0 else float("inf"),
+                "avail": avail, "spread": (max(finite) / min(finite)) if finite and min(finite) > 0 else float("inf"),
             })  # fmt: skip
             for k, m in enumerate(members):
                 u = units[m]
@@ -331,6 +466,21 @@ def analyse_run(run: dict[str, Any]) -> dict[str, Any]:
                     ]
                     out["carry"].append((pooled[k], lost, bool(others_next),
                                          sum(nxt["units"][x]["need"] for x in others_next)))  # fmt: skip
+        # --- A: realized foraging regime and outside options, per unit
+        for uid, u in units.items():
+            stock, returns = _stock(y, st, u["cell"])
+            avail = stock[0] + stock[1]
+            out["unit"].append({
+                "year": y["year"], "need": u["need"], "remaining_target": u["target"], "forage": u["forage"], "farm": u["farm"],
+                "stores": u["stores"], "fields": u["fields"], "people": u["people"],
+                "remaining_target_met": remaining_target_met(u["forage"], u["target"]),
+                "group_target_met": group_met.get(u["cell"]), "multi": len(members_of_cell.get(u["cell"], [])) >= 2,
+                "unit_harvest_share": utilization(u["forage"], avail), "cell_util": cell_util.get(u["cell"]),
+                "home": u["home_per_head"], "best": u["best_alt"], "best_cost": u["best_cost"],
+                "share_better": u["share_better"], "n_reach": u["n_reach"],
+                "known": run["known"].get(y["year"], {}).get(uid),
+                "reach_cap_ratio": float(acc_cap[u["cell"]] / np.median(acc_cap[[c for c, _ in u["occupied_reach"]] or [u["cell"]]])),
+            })  # fmt: skip
         # --- A: farming displaces co-users' wild capacity
         fields_by_cell: dict[int, list[tuple[str, float]]] = defaultdict(list)
         for uid, u in units.items():
@@ -353,82 +503,72 @@ def analyse_run(run: dict[str, Any]) -> dict[str, Any]:
                 lost = (base_p * st["plant_disp"] * others * st["plant_access"][cell]
                         + base_g * st["game_disp"] * others * st["game_access"][cell])  # fmt: skip
                 out["displaced"].append((lost / units[uid]["need"], units[uid]["fields"] > 0))
-        # --- A: arable sharing
+        # --- A: arable sharing (cells with planned or desired fields)
         plan = y.get("fields_plan", {})
         if plan:
-            per_cell: dict[int, list[tuple[float, float]]] = defaultdict(list)
-            for uid, (before, after) in plan.items():
+            per_cell: dict[int, list[tuple[float, float, float]]] = defaultdict(list)
+            for uid, row in plan.items():
                 if uid in units:
-                    per_cell[units[uid]["cell"]].append((before, after))
+                    per_cell[units[uid]["cell"]].append(row)
             for cell, rows in per_cell.items():
-                total_after = sum(a for _, a in rows)
-                if total_after <= 0:
+                if sum(a for _, a, _ in rows) <= 0 and sum(d for _, _, d in rows) <= 0:
                     continue
-                binding = total_after >= st["arable"][cell] * (1 - 1e-9)
-                cut = sum(1 for b, a in rows if a < b and b > 0)
-                grow = sum(1 for b, a in rows if a > b)
-                out["arable"].append(
-                    (binding, len(rows), cut, grow, total_after / st["arable"][cell])
-                )
+                out["arable"].append(arable_cell(rows, float(st["arable"][cell])))
+            out["desiring_unit_years"].append(
+                sum(row[2] > 0 for uid, row in plan.items() if uid in units)
+            )
+            out["zero_arable_desiring"] += [
+                (uid, row[2]) for uid, row in plan.items()
+                if uid in units and row[2] > 0 and st["arable"][units[uid]["cell"]] <= 0
+            ]  # fmt: skip
         # --- C: complementary shortage and surplus (pre-trade balances, units in reach)
-        bal = {uid: u["farm"] + u["forage"] + u["stores"] - u["need"] for uid, u in units.items()}
+        bal = {uid: balance(u) for uid, u in units.items()}
         where: dict[int, list[str]] = defaultdict(list)
         for uid, u in units.items():
             where[u["cell"]].append(uid)
+        counted_by: dict[str, int] = defaultdict(int)  # surplus unit -> short units counting it
         for uid, u in units.items():
-            neighbors = [(x, cost) for c, cost in u["occupied_reach"] for x in where[c]] + [
-                (x, 0.0) for x in where[u["cell"]] if x != uid
-            ]
-            if not neighbors:
+            nbs = neighbours(uid, u, where)
+            if not nbs:
                 out["isolated"].append(bal[uid] < 0)
                 continue
-            short_nb = np.mean([bal[x] < 0 for x, _ in neighbors])
+            short_nb = np.mean([bal[x] < 0 for x, _ in nbs])
             surplus_in = sum(
-                bal[x] * delivered_fraction(cost, st["decay"])
-                for x, cost in neighbors
-                if bal[x] > 0
+                bal[x] * delivered_fraction(cost, st["decay"]) for x, cost in nbs if bal[x] > 0
             )
+            if bal[uid] < 0:
+                for x, _ in nbs:
+                    if bal[x] > 0:
+                        counted_by[x] += 1
             out["pair"].append((bal[uid] < 0, short_nb, -bal[uid] / u["need"] if bal[uid] < 0 else 0.0,
-                                surplus_in / -bal[uid] if bal[uid] < 0 else float("nan"), len(neighbors)))  # fmt: skip
-    # --- C: bilateral vs network assistance over time (physical feasibility, not willingness)
+                                surplus_in / -bal[uid] if bal[uid] < 0 else float("nan"), len(nbs)))  # fmt: skip
+        out["counted_by"].extend(counted_by.values())
+    # --- C: potential role reversal over time (physical feasibility; no transfer observed)
     seq = {
         y["year"]: {
-            uid: (u["farm"] + u["forage"] + u["stores"] - u["need"], u["cell"], u["occupied_reach"])
-            for uid, u in y["units"].items()
+            uid: (balance(u), u["cell"], u["occupied_reach"]) for uid, u in y["units"].items()
         }
         for y in years
     }
-    for y in years:
-        t = y["year"]
-        units = seq[t]
-        cells_t: dict[int, list[str]] = defaultdict(list)
-        for uid, (_b, c, _r) in units.items():
-            cells_t[c].append(uid)
-        for a, (ba, ca, reach_a) in units.items():
-            if ba <= 0:
-                continue
-            reach_cells = {c for c, _ in reach_a} | {ca}
-            helped = [b for c in reach_cells for b in cells_t[c] if b != a and units[b][0] < 0]
-            if not helped:
-                continue
-            for k in range(1, LATER + 1):
-                later = seq.get(t + k)
-                if later is None or a not in later:
-                    break
-                la, lca, lreach = later[a]
-                if la >= 0:
-                    continue
-                lcells = {c for c, _ in lreach} | {lca}
-                bil = any(b in later and later[b][0] > 0 and later[b][1] in lcells for b in helped)
-                net = any(v[0] > 0 and v[1] in lcells for x, v in later.items() if x != a)
-                out["later"].append((k, bil, net))
-                break
+    out["later"] = potential_role_reversal(seq, LATER)
     return dict(out)
 
 
 def _q(values: Any, qs: tuple[float, ...] = (0.1, 0.5, 0.9)) -> str:
     a = np.asarray([v for v in values if v is not None and np.isfinite(v)], dtype=float)
     return "/".join(f"{np.quantile(a, x):.3g}" for x in qs) if a.size else "-"
+
+
+def rate(flags: Any, eligible: Any = None) -> str:
+    """``k/n (p %)`` over the eligible observations: exact counts, so a rare nonzero event is
+    never shown as 0, and an empty denominator is reported as such (not as a rate)."""
+    f = np.asarray(flags, dtype=bool)
+    if eligible is not None:
+        f = f[np.asarray(eligible, dtype=bool)]
+    k, n = int(f.sum()), int(f.size)
+    if n == 0:
+        return "0/0 (no eligible observations)"
+    return f"{k}/{n} ({100.0 * k / n:.4g} %)"
 
 
 def report(name: str, outs: list[dict[str, Any]]) -> None:
@@ -455,14 +595,66 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
     un = [r for o in outs for r in o.get("unit", [])]
     rc = np.array([r["reach_cap_ratio"] for r in un])
     print(f"   home capacity / median capacity of occupied cells in reach: p10/p50/p90 {_q(rc)}")
-    dep = np.array([r["depletion"] for r in un])
-    met = np.array([r["farm"] + r["forage"] >= r["target"] / 1.0 - 1e-6 for r in un])
-    forager = np.array([r["target"] > 0 for r in un])
+    eligible = np.array([r["remaining_target_met"] is not None for r in un])
+    met = np.array([bool(r["remaining_target_met"]) for r in un])
+    gmet = np.array([bool(r["group_target_met"]) for r in un])
+    multi = np.array([r["multi"] for r in un])
+    own = np.array([r["farm"] + r["forage"] >= r["need"] for r in un])
+    own_st = np.array([r["farm"] + r["forage"] + r["stores"] >= r["need"] for r in un])
     print(
-        f"\n-- A2 realized foraging (unit-years {len(un)}; with a foraging target {forager.mean():.3f})"
+        f"\n-- A2 realized foraging (unit-years {len(un)}; eligible = remaining foraging target > 0, i.e. need x (1 + surplus target) - crop > 0)"
     )
-    print(f"   target met by own production {met[forager].mean():.3f}; harvest / accessible stock p10/p50/p90 {_q(dep[forager])}; "
-          f"stock-limited (> 50 % of accessible taken) {(dep[forager] > 0.5).mean():.3f}")  # fmt: skip
+    print(f"   eligible unit-years {rate(eligible)}")
+    print(
+        f"   remaining_foraging_target_met (wild harvest >= remaining target, rel. tol {TARGET_REL_TOL:g}) {rate(met, eligible)}"
+    )
+    print(f"     of eligible: unit short but its group met the summed target (effort-proportional split) {rate(~met & gmet, eligible)}; "
+          f"group did not meet the summed target, so it applied all its labor (not: labor was the binding margin) {rate(~gmet, eligible)}")  # fmt: skip
+    print(
+        f"     single-unit cells {rate(met, eligible & ~multi)}; multi-unit cells {rate(met, eligible & multi)}"
+    )
+    print(
+        f"   basic need from own production (crop + wild >= need, before stores and trade): all unit-years {rate(own)}; eligible {rate(own, eligible)}"
+    )
+    print(
+        f"   basic need incl. stores (crop + wild + stores >= need, before trade): all unit-years {rate(own_st)}; eligible {rate(own_st, eligible)}"
+    )
+    share = np.array(
+        [np.nan if r["unit_harvest_share"] is None else r["unit_harvest_share"] for r in un]
+    )
+    cutil = np.array([np.nan if r["cell_util"] is None else r["cell_util"] for r in un])
+    print(
+        f"   unit_harvest_share (own wild harvest / cell's accessible stock), eligible p10/p50/p90 {_q(share[eligible])}; > 0.5 {rate(share > 0.5, eligible)}"
+    )
+    print(
+        f"   collective utilization of the unit's cell (all removals / accessible stock), eligible p10/p50/p90 {_q(cutil[eligible])}; > 0.5 {rate(cutil > 0.5, eligible)}"
+    )
+    print(
+        f"     eligible with own share <= 0.5 but cell utilization > 0.5 {rate((share <= 0.5) & (cutil > 0.5), eligible)}"
+    )
+    print(
+        f"     cell utilization of eligible units whose group missed its summed target p10/p50/p90 {_q(cutil[eligible & ~gmet])}"
+    )
+    cells = [c for o in outs for c in o.get("cell", [])]
+    if cells:
+        cu = np.array([np.nan if c["util"] is None else c["util"] for c in cells])
+        cm = np.array([c["n"] >= 2 for c in cells])
+        cmiss = np.array([c["met"] is False for c in cells])
+        print(f"   foraging cell-years (one group per cell) {len(cells)}: collective utilization p10/p50/p90 {_q(cu)}; > 0.5 {rate(cu > 0.5)}; "
+              f"multi-unit {rate(cm)}, of which > 0.5 {rate(cu > 0.5, cm)}")  # fmt: skip
+        print(
+            f"     cell-years whose group missed its summed remaining target {rate(cmiss)}; their utilization p10/p50/p90 {_q(cu[cmiss])}"
+        )
+        print(f"     removal = sum of member harvests (no double counting): max relative difference "
+              f"{max(abs(c['removed'] - c['shares']) / max(c['removed'], 1.0) for c in cells):.2g}")  # fmt: skip
+    miss = [m for o in outs for m in o.get("missed", [])]
+    if miss:
+        eps = np.array([np.nan if e is None else e for _, e in miss])
+        print(f"   groups that missed their summed target {len(miss)}: harvest at full labor reproduces their removal {rate([ok for ok, _ in miss])}; "
+              f"labor elasticity of harvest at full effort p10/p50/p90 {_q(eps)}; >= 0.9 {rate(eps >= 0.9)}; < 0.5 {rate(eps < 0.5)}")  # fmt: skip
+        print(
+            "     (1: harvest scales with labor; near 0: more labor takes almost nothing more from the stock; between: both limit)"
+        )
     mem = [m for o in outs for m in o.get("member", [])]
     grp = [x for o in outs for x in o.get("group", [])]
     print(
@@ -492,12 +684,49 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
         )
     ar = [a for o in outs for a in o.get("arable", [])]
     if ar:
-        b = np.array([a[0] for a in ar])
-        multi = np.array([a[1] >= 2 for a in ar])
-        print(f"   arable: farming cell-years {len(ar)}, cap binding {b.mean():.3f}, binding with >= 2 farming units {(b & multi).mean():.3f}; "
-              f"incumbents cut while another expands in a binding cell {np.mean([a[0] and a[2] > 0 and a[3] > 0 for a in ar]):.4f}")  # fmt: skip
+        zero = np.array([a["arable"] <= 0 for a in ar])
+        rat = np.array([a["rationed"] for a in ar])
+        desiring = sum(x for o in outs for x in o.get("desiring_unit_years", []))
+        print(
+            f"   field planning (farming cell-years = occupied cells with desired or planned fields {len(ar)}; unit-years with desired fields {desiring};"
+            " desired = this year's planned step toward the unit's target, before arable sharing):"
+        )
+        print(
+            f"     allocation constrained by the arable cap (zero-arable or rationed) {rate(rat)} of farming cell-years; units in them {sum(a['n_desiring'] for a in ar if a['rationed'])}/{desiring} unit-years"
+        )
+        zd = [(i, u, d) for i, o in enumerate(outs) for u, d in o.get("zero_arable_desiring", [])]
+        zu = [(i, u) for i, u, _ in zd]
+        per_unit = list(Counter(zu).values())
+        print(f"     (1) zero arable land, desired fields > 0, all planned to zero: {rate(zero)} of farming cell-years; unit-years {sum(a['n_desiring'] for a in ar if a['arable'] <= 0)}/{desiring}; "
+              f"of which held fields before {sum(a['incumbents'] for a in ar if a['arable'] <= 0)}; distinct units {len(per_unit)}, such years per unit p50/p90/max {_q(per_unit, (0.5, 0.9, 1.0))}; "
+              f"desired ha per unit p10/p50/p90 {_q([d for _, _, d in zd])}")  # fmt: skip
+        ar = [a for a, z in zip(ar, zero, strict=True) if not z]
+        at = np.array([a["at_cap"] for a in ar])
+        rat = np.array([a["rationed"] for a in ar])
+        mul = np.array([a["n_desiring"] >= 2 for a in ar])
+        after = np.array([a["after_ratio"] for a in ar])
+        print(
+            f"     (2) positive arable land (cell-years {len(ar)}; recorded desired fields reproduce the kernel's sharing in {rate([a['capture_ok'] for a in ar])}):"
+        )
+        print(
+            f"       planned fields >= 99 % of cap {rate(after >= 0.99)}; >= 99.9 % {rate(after >= 0.999)}; at cap (>= 1 - 1e-9) {rate(at)}"
+        )
+        print(f"       rationed (desired > cap: every unit scaled down pro rata) {rate(rat)}: >= 2 cultivators competing {rate(rat & mul)}, one cultivator exceeding the land {rate(rat & ~mul)}; "
+              f"desired / cap p50/max {_q([a['desired_ratio'] for a in ar if a['rationed']], (0.5, 1.0))}; unit-years {sum(a['n_desiring'] for a in ar if a['rationed'])}/{desiring}; "
+              f"unallocated / desired ha {sum(a['unallocated_ha'] for a in ar):.4g}/{sum(a['desired_ha'] for a in ar if a['rationed']):.4g} in rationed cells, of {sum(a['desired_ha'] for a in ar):.4g} desired overall")  # fmt: skip
+        print(
+            f"       units cut by rationing (wanted >= current fields, planned below them): cell-years with any {rate([a['rationing_cut'] > 0 for a in ar])}; units {sum(a['rationing_cut'] for a in ar)}; "
+            f"zeroed by the 0.05 ha rounding after scaling {sum(a['zeroed_by_rounding'] for a in ar)}"
+        )
+        print(
+            f"       incumbent cut while another expands: any cell {rate([a['cut'] > 0 and a['grow'] > 0 for a in ar])}; rationed cell {rate([a['cut'] > 0 and a['grow'] > 0 for a in ar], rat)}"
+        )
+        print(
+            "     (no rule excludes a cultivator: sharing is pro rata over all units in the cell; competition = rationing with >= 2 cultivators)"
+        )
     print(
-        "\n-- A4 outside options (units in multi-unit cells; per-head accessible stock, alternative / home)"
+        "\n-- A4 outside options (units in multi-unit cells; current per-head accessible stock, alternative / home;"
+        " a reachable or believed cell, not a realized or costless move)"
     )
     if mem:
         home = np.array([m["home"] for m in mem])
@@ -508,7 +737,7 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
         kn = [m["known"] for m in mem if m["known"] is not None]
         if kn:
             kr = np.array([k[2] / k[1] if k[1] > 0 else np.nan for k in kn])
-            print(f"   actor (beliefs): known alternative cells p10/p50/p90 {_q([k[0] for k in kn])}; believed best / believed home p50 {_q(kr, (0.5,))}; "
+            print(f"   actor (beliefs; units that evaluated migration {len(kn)}/{len(mem)}): known alternative cells p10/p50/p90 {_q([k[0] for k in kn])}; believed best / believed home p50 {_q(kr, (0.5,))}; "
                   f"share with a believed alternative >= home {np.nanmean(kr >= 1):.3f}; units with no known alternative {np.mean([k[0] == 0 for k in kn]):.3f}")  # fmt: skip
     # ---- B
     print(
@@ -537,27 +766,61 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
         )
     # ---- C
     pr = [p for o in outs for p in o.get("pair", [])]
-    if pr:
-        short = np.array([p[0] for p in pr])
+    iso = np.array([x for o in outs for x in o.get("isolated", [])], dtype=bool)
+    print(
+        "\n-- C complementary shortage (pre-trade balance crop + wild + stores - need; neighbours = other units"
+        " within one relocation range, the reach trade uses: geography, not contact or knowledge of stores)"
+    )
+    if pr or iso.size:
+        short = np.array([p[0] for p in pr], dtype=bool)
         nb = np.array([p[1] for p in pr])
         cover = np.array([p[3] for p in pr if p[0]])
+        all_short = np.concatenate([short, iso])
         print(
-            "\n-- C complementary shortage (pre-trade balance; neighbors = units in one relocation range)"
+            f"   unit-years {len(all_short)}: with a neighbour {rate(np.r_[np.ones(len(pr)), np.zeros(iso.size)])}; isolated {rate(np.r_[np.zeros(len(pr)), np.ones(iso.size)])}"
         )
         print(
-            f"   short unit-years {short.mean():.3f}; neighbors short | unit short {nb[short].mean():.3f} vs | unit not short {nb[~short].mean():.3f} (synchrony ratio {nb[short].mean() / max(nb[~short].mean(), 1e-300):.2f})"
+            f"   short: all unit-years {rate(all_short)}; with a neighbour {rate(short)}; isolated {rate(iso)}"
+        )
+        if short.any() and (~short).any():
+            print(
+                f"   (units with a neighbour) neighbours short | unit short {nb[short].mean():.3f} vs | unit not short {nb[~short].mean():.3f} (synchrony ratio {nb[short].mean() / max(nb[~short].mean(), 1e-300):.2f})"
+            )
+        n_short = int(all_short.sum())
+        no_surplus = int((cover <= 0).sum())
+        print(f"   short units without any surplus unit in reach: of short units with a neighbour {rate(cover <= 0)}; "
+              f"of all short units (isolated short counted as without) {no_surplus + int(iso.sum())}/{n_short}")  # fmt: skip
+        print(
+            f"   hypothetical pre-competition coverage, short units with a neighbour: delivered-equivalent surplus balance in reach / own deficit p10/p50/p90 {_q(cover)}; >= 1 {rate(cover >= 1)}"
         )
         print(
-            f"   short units with no surplus neighbor {np.mean(cover <= 0):.3f}; delivered-equivalent neighbor surplus / own deficit p10/p50/p90 {_q(cover)} (all surplus, before competition)"
+            "     (whole surplus balances after the transport delivery fraction; not offers (phi x b), not allocated: one donor counts for every short unit in its reach)"
         )
-        iso = [x for o in outs for x in o.get("isolated", [])]
+        cb = np.array([x for o in outs for x in o.get("counted_by", [])])
+        if cb.size:
+            print(
+                f"     surplus units counted by >= 1 short unit {cb.size}: short units counting the same surplus unit p50/p90/max {_q(cb, (0.5, 0.9, 1.0))}; counted by >= 2 {rate(cb >= 2)}"
+            )
+    lt = [x for o in outs for x in o.get("later", [])]
+    if lt:
+        spec = np.array([x[3] for x in lt])
+        anyone = np.array([x[4] for x in lt])
         print(
-            f"   isolated unit-years (no other unit in reach) {len(iso)} ({len(iso) / (len(iso) + len(pr)):.3f}), of which short {np.mean(iso) if iso else 0:.3f}"
+            f"   potential role reversal (origin: a surplus unit with >= 1 short unit in reach; no transfer required or observed; first own shortage within {LATER} y):"
         )
-    lt = np.array([x for o in outs for x in o.get("later", [])], dtype=float)
-    if lt.size:
-        print(f"   surplus units that had a short neighbor and fall short within {LATER} y: {len(lt)}; when they do, a former short neighbor now has surplus in reach (bilateral) {lt[:, 1].mean():.3f}; "
-              f"any neighbor has surplus in reach (network) {lt[:, 2].mean():.3f}; delay p50 {np.median(lt[:, 0]):.0f} y")  # fmt: skip
+        print(
+            f"     per origin year (original weighting) {len(lt)}: a formerly short neighbour now has surplus in reach {rate(spec)}; any unit has surplus in reach {rate(anyone)}; delay p50 {np.median([x[2] for x in lt]):.0f} y"
+        )
+        first: dict[tuple[int, str, int], tuple[int, bool, bool]] = {}
+        for i, o in enumerate(outs):
+            for a, t, k, s, n in o.get("later", []):
+                key = (i, a, t + k)
+                if key not in first or k < first[key][0]:
+                    first[key] = (k, s, n)
+        ev = np.array(list(first.values()), dtype=float)
+        print(
+            f"     per distinct later shortage (most recent origin) {len(ev)}: formerly short neighbour {rate(ev[:, 1])}; any unit {rate(ev[:, 2])}; delay p50 {np.median(ev[:, 0]):.0f} y"
+        )
 
 
 def _analyse_path(path: Path) -> tuple[str, int, bool, dict[str, Any]]:

@@ -7,7 +7,12 @@ manifest still reads CANDIDATE. That is an administrative baseline state, distin
 scientific acceptance of dietary-intake fertility, and it is unchanged here.
 Design summary: `MVP3_SOCIOECONOMIC_STRATA_DESIGN.md` §AE.
 
-**Decision: D (pathway C).** The physical substrate for risk pooling between units is
+**Stage 6B-P1 correction (2026-10-28).** Several measurements below were wrong, mislabelled
+or over-interpreted. They are corrected in place, and §15 records what was originally
+reported, what changed, and why. The decision below is **provisional**: it is re-examined in
+6B-P4 after P2 and P3. P1 issues no pathway decision.
+
+**Decision (original, provisional since 6B-P1): D (pathway C).** The physical substrate for risk pooling between units is
 strong. What is missing is an actor-level interaction:
 - provisioning is centrally sequenced, with global information;
 - willingness is an exogenous parameter.
@@ -126,7 +131,8 @@ Exclusion, defence, monitoring and sanction are **not implemented** anywhere.
 
 ## 5. Methods (pre-registered measures)
 
-- Probe: `scripts/probes/opportunity_audit.py` (one read-only recording pass).
+- Probe: `scripts/probes/opportunity_audit.py` (one read-only recording pass; since 6B-P1
+  it also copies each unit's desired fields from the field-planning kernel, see §15).
 - Helpers: `economy/opportunity_audit.py`.
 - Tests: `tests/test_opportunity_audit.py`.
 - Runs: MVP 2.2 neolithic 600 y and pressure + cultivation 400 y, seeds 0–3.
@@ -153,11 +159,25 @@ Exclusion, defence, monitoring and sanction are **not implemented** anywhere.
   occupied cells in reach is p10–p90 0.81–1.22 · 0.69–1.48.
 - No clumped, dense resource class exists.
 
-**Realized foraging:**
-- Own production meets the target in 90 % · 77 % of unit-years.
-- Harvest / accessible stock p50 0.20 · 0.21; stock-limited (> 50 % taken) only
-  2.5 % · 10.5 %.
-- Production is mostly labour- and target-limited, not stock-limited.
+**Realized foraging** (corrected in 6B-P1, §15):
+- Wild harvest meets the *remaining* (crop-net) foraging target in 74.0 % · 29.3 % of
+  eligible unit-years (originally reported as 90 % · 77 %, which counted crops twice).
+- In 21.5 % · 62.9 % of eligible unit-years the unit's whole group applied all its labor and
+  still fell short of its summed target. In a further 5.8 % · 10.6 % the group met it, but
+  the effort-proportional split left this unit below its own target.
+- Basic need from own production (crop + wild ≥ need, before stores and trade) is met in
+  93.0 % · 67.7 % of unit-years. That is a different quantity from target attainment.
+- A unit's own harvest share of the cell's accessible stock is p50 0.20 · 0.21, and
+  exceeds 0.5 in 2.5 % · 10.5 % (this was originally labelled "stock-limited").
+  *Collective* utilization of the cell, meaning all removals over the accessible stock, is
+  p50 0.23 · 0.42 per foraging cell-year and exceeds 0.5 in 4.0 % · 28.8 %.
+- Groups that miss their summed target remove p50 0.40 · 0.48 of the accessible stock.
+  The solver leaves a target unmet only at full labor, so these groups exhausted their
+  labor. That is not a binding labor margin: the labor elasticity of harvest at full
+  effort is p50 0.76 · 0.70 (§15.1), so more labor would help, less than proportionally,
+  and labor and the stock limit jointly. No single binding cause is identified. The earlier claim "production is mostly labour- and target-limited, not
+  stock-limited" is withdrawn; under pressure most foraging units do not reach their
+  target.
 
 **Rivalry is real:**
 - 20 % · 62 % of foraging unit-years are in multi-unit cells.
@@ -171,13 +191,28 @@ Exclusion, defence, monitoring and sanction are **not implemented** anywhere.
 - *Fields:* displaced wild capacity per co-resident p50 1.1 % · 2.6 % of need (p90 3.7 % ·
   11 %); 96–97 % of the affected units farm themselves.
 
-**Land never limits:**
-- The arable cap binds in **0.000** of 290,391 · 56,770 farming cell-years.
-- Incumbents are cut while others expand in 0.04 % (pressure).
-- Production is labour-limited.
-- So the land-limited condition associated with persistent inequality (source 6) is absent.
+**Arable land rarely limits, and only locally** (corrected in 6B-P1; originally "the cap
+binds in 0.000", read as "land never limits"):
+- Neolithic: 0 / 290,439 farming cell-years at the cap or rationed.
+- Pressure, cells with arable land: desired fields exceed the cap, so every unit is scaled
+  down, in **25 / 56,788 cell-years (0.044 %)**. All of them have ≥ 2 farming units, with
+  desired/cap p50 1.05 (max 1.08). 97 units were planned below fields they wanted to keep
+  (22 cell-years).
+- Pressure, cells with **no** arable land: 1,928 cell-years (2,803 unit-years) in which units
+  wanted fields (p50 5.9 ha) were all planned to zero. None held fields before. The
+  original metric skipped these cells. They are a location limit, not contested land, and
+  they persist: 221 distinct units, p50 6 and up to 136 years each (§15.1).
+- An incumbent contracts while another unit expands in 677 cell-years (1.2 %), but only 24 of
+  those are rationed cells. The rest are units' own contraction choices, not the cap.
+- Land-limited production in the sense of source 6 (land as the binding factor of a
+  population's production) is not observed in these runs. Rare, local rationing exists.
+  It is not evidence of land scarcity or of property institutions. "Rare" holds for land
+  *competition*; land *unavailability* reaches 3.3 % of pressure farming cell-years and
+  falls wholly on a few units (§15.1).
 
-**Outside options are open and known** (units in multi-unit cells):
+**Better-stocked alternatives are reachable and believed in** (units in multi-unit cells;
+current per-head stock; a reachable or believed cell is not a realized or costless move,
+and travel, carrying and familiarity costs are not counted here):
 - *Analyst:* a reachable cell with at least the home per-head stock exists for 84 % · 72 %
   (best / home p50 1.5 · 1.2, ≈ 45 km).
 - *Actor:* units hold beliefs on p50 20 · 12 alternative cells, believe a better one exists
@@ -188,8 +223,9 @@ Exclusion, defence, monitoring and sanction are **not implemented** anywhere.
 identifiable**:
 - no defence cost;
 - low contrast;
-- open, known outside options;
-- non-binding land.
+- better-stocked cells are usually reachable and believed in (not shown to be realizable
+  exits);
+- land rationing is rare and local (0.044 % of pressure farming cell-years with arable land).
 
 Rivalry exists (Level 2), but its decision layer (moving away from crowded cells) is
 already represented by migration.
@@ -216,17 +252,29 @@ co-users' need, is too small for a commons dilemma, source 7.)
 
 ## 8. Results — C: risk pooling
 
-- **Short before trade:** 5.8 % · 31 % of unit-years.
+- **Short before trade:** 5.8 % · 30.6 % of all unit-years. (The original figure was
+  conditional on having a neighbour in reach; isolated unit-years are 1.2 % · 0.02 %.)
 - **Shortages are spatially correlated:** neighbours are short 22 % vs 4.9 % when a unit is
   / is not short (ratio 4.4) in neolithic; 38 % vs 26 % (1.5) under pressure.
-- **Surplus nonetheless abounds:**
-  - only 0.1 % · 0.3 % of short units have no surplus neighbour;
-  - delivered-equivalent neighbour surplus / own deficit p10 5.0 · 1.8, p50 23 · 14.
-- **Staggered recurrence:** when a unit that had a short neighbour falls short itself
-  within 10 years (26,888 · 29,849 cases, median delay 4 · 3 y):
-  - a **former recipient now has surplus in reach in 63 % · 69 %** (bilateral
-    feasibility);
-  - **some** neighbour has surplus in 100 % · 99.9 % (network feasibility).
+- **Hypothetical surplus is nearly always in reach** (pre-competition, whole surplus
+  balances after the transport delivery fraction; not offers `φ·b`, not allocated):
+  - short units with a neighbour but no surplus unit in reach: 0.11 % · 0.30 %. Counting
+    isolated short units, 0.77 % · 0.31 % of all short units;
+  - delivered-equivalent surplus in reach / own deficit p10 5.0 · 1.8, p50 23 · 14; ≥ 1 for
+    98.9 % · 94.9 %;
+  - the same surplus unit is counted by several short units: by ≥ 2 for 56 % · 88 % of the
+    surplus units counted at all (p50 2 · 6). The coverage figures are therefore not
+    jointly available (reconciled in 6B-P3).
+- **Potential role reversal** (corrected labels, 6B-P1; no transfer is observed or
+  required). Take a surplus unit with at least one short unit in reach. At its first own
+  shortage within 10 years:
+  - a *formerly short neighbour* now has surplus in its reach in 63 % · 69 % of origin
+    years (26,888 · 29,849, median delay 4 · 3 y);
+  - counted once per distinct later shortage (most recent origin; 6,087 · 7,073), 51 % · 61 %
+    (median delay 1 y);
+  - some unit has surplus in reach in ≈ 100 % · 99.9 %;
+  - the earlier wording "a former recipient can help its former donor" is withdrawn.
+    Whether the neighbour actually received anything was not recorded.
 - **Combined with 6A:**
   - offers are a strong causal lever (delivered food ∝ φ under pressure);
   - giving costs ≈ `r` kcal of next year's stores per kcal given;
@@ -236,9 +284,9 @@ co-users' need, is too small for a commons dilemma, source 7.)
 - **Not established:** willingness. φ = 0.3 stays exogenous, no participant anticipates any
   benefit, and the network benefit says nothing about individual incentive.
 
-**Verdict C:** the strongest physical substrate. The ecology produces recurrent,
-complementary, mostly reachable surplus, with role reversal within a few years, at a low
-material cost to donors. What fails is the actor level:
+**Verdict C (as originally stated; re-examined in 6B-P3/P4):** the strongest physical substrate. The ecology produces recurrent,
+complementary, mostly reachable hypothetical surplus, with frequent *potential* role
+reversal, at a low material cost to donors. What fails is the actor level:
 - central global priority;
 - every offer visible to every deficit unit;
 - donors that never see a need;
@@ -251,9 +299,9 @@ material cost to donors. What fails is the actor level:
 | material consequence | moderate (2–4 % of need, p90 15 %) | small (≈ 1 %) | large (6A: delivered ∝ φ; recipients' intake and survival) |
 | causal specificity | high (stock, depletion) | high, but trivial | high (balance, reach, transport) |
 | existing substrate | rivalry yes; land scarcity, density and defence no | no synergy | yes |
-| actor and information | defence actor undefined; outside options known | none | recipient (own deficit), donor (own surplus): identifiable |
+| actor and information | defence actor undefined; better cells believed in | none | recipient (own deficit), donor (own surplus): identifiable |
 | variation | with crowding | little | with synchrony, storage and scarcity (neolithic vs pressure differ) |
-| persistence and reversal | location persistent, but units can leave | — | role reversal within 3–4 y: persistence and reversal both possible |
+| persistence and reversal | location persistent, but units can leave | — | potential role reversal (51–69 %, by weighting): persistence and reversal both possible |
 | representation | unit-level, but needs defence and exclusion state not justified | unit-level | unit-level; no strata |
 | empirical relevance | strong in literature (1, 2, 6), but its conditions are absent here | 7, 8 need a real dilemma | 9, 10, 11 (simulations), conditions present |
 | testability | weak (defence cost unidentified) | — | sharp (§14 falsification) |
@@ -263,7 +311,9 @@ material cost to donors. What fails is the actor level:
 - **The comparative judgement** is clearest on substrate and testability. A's literature is
   the most compelling empirically, but its preconditions (clumped, dense resources;
   land-limited production; closed outside options) are measurably absent. Building
-  exclusion now would manufacture the mechanism.
+  exclusion now would manufacture the mechanism. (6B-P1: land rationing is rare and local
+  rather than absent, and under pressure most foraging units miss their remaining target.
+  The cross-pathway judgement is reopened for 6B-P4.)
 
 **Cross-cutting:**
 - Mobility undermines A (open, known exits) and supports C (large networks).
@@ -273,7 +323,9 @@ material cost to donors. What fails is the actor level:
 ## 10. Falsification evidence recorded
 
 - A would have been strong had arable caps bound, outside options been closed or unknown,
-  or alone-vs-pooled gains been large. None holds.
+  or alone-vs-pooled gains been large. Caps bind only rarely and locally (0.044 % of pressure
+  farming cell-years with arable land). Better cells are usually believed in. Alone-vs-pooled
+  gains are moderate.
 - B would have been strong had pooled and independent outcomes differed materially. They
   differ ≈ 1 %.
 - C would have been weak with synchronized shortages and no surplus in reach. Shortages are
@@ -301,13 +353,13 @@ The pooled foraging rule is not an institution.
 
 ## 12. Rejected alternatives
 
-- **Ownership, exclusion or territorial defence:** no defence cost, open and known exits,
-  non-binding land.
+- **Ownership, exclusion or territorial defence:** no defence cost, better cells usually
+  reachable and believed in, land rationing rare and local.
 - **Commons governance:** no material dilemma.
 - **Joint-production coordination:** no synergy in the production function.
 - **Partner preference** (5H) and **donor self-insurance** (6A).
-- **Land-scarcity inequality:** land never binds. Revisit only if a scenario or a future
-  ecology makes land limiting.
+- **Land-scarcity inequality:** land rationing is rare and local (pressure 0.044 %; neolithic
+  none). Revisit only if a scenario or a future ecology makes land limiting.
 
 ## 13. Open questions
 
@@ -341,4 +393,134 @@ Stated in ODD terms (source 13):
 
 A later stage, not 6C, could test a *directional* exchange memory (need-based vs debt-based,
 source 10). This review's reversal feasibility (63–69 %) shows it would have behavioural
-room.
+room. It would be *potential* room, since the statistic observes no transfers (6B-P1).
+
+## 15. Stage 6B-P1 — measurement and diagnostic corrections (2026-10-28)
+
+**Scope.** Corrections to read-only analysis only. The simulator, scenarios, RNG, goldens
+and oracles are unchanged. No pathway decision is issued here; that belongs to 6B-P4.
+
+**Data.** There was no earlier recording to reuse, so all eight runs were recorded afresh:
+MVP 2.2 neolithic 600 y and pressure + cultivation 400 y, seeds 0–3. All eight are
+observer-neutral.
+- The recorder additionally copies the field-planning kernel's `desired` scratch array, read
+  after the same call (no RNG).
+- On every positive-arable farming cell-year (290,439 · 56,788) it reproduces the kernel's
+  arable sharing.
+- Running the *original* analysis (git `56a5122`) on these recordings reproduces every
+  originally reported figure. So each difference below comes from the measurement, not the
+  data.
+
+**Kinds of error.**
+- (N) numerical result wrong;
+- (L) result correct but label or denominator misleading;
+- (I) result correct but the conclusion went beyond the observation.
+
+| measurement | original (neolithic · pressure) | corrected (neolithic · pressure) | kind | interpretation changed? |
+|---|---|---|---|---|
+| foraging-target attainment | `farm + forage ≥ target`: 90.2 % · 76.7 % | `forage ≥ remaining target` (rel. tol 1e-9, above the solver's 1e-12), eligible = remaining target > 0: **283,276/383,045 = 74.0 % · 36,798/125,508 = 29.3 %** | N (the recorded target is already net of crops: `max(need·1.2 − crop, 0)`) | yes: under pressure most foraging units miss their remaining target. "Labour- and target-limited, not stock-limited" withdrawn |
+| why the target is missed | — | group applied all labor and missed the summed target: 21.5 % · 62.9 % of eligible; group met it but the effort-proportional split left the unit short: 5.8 % · 10.6 % | new | the limiting input (labor, stock, or their concave combination) is not identified |
+| basic need from own production | not separated | crop + wild ≥ need: 93.0 % · 67.7 % of unit-years; + stores 94.2 % · 69.4 % | new | target attainment ≠ nutritional adequacy |
+| individual harvest share | "harvest / accessible stock", "stock-limited (> 50 %)": 2.5 % · 10.5 % | `unit_harvest_share` p50 0.20 · 0.21; > 0.5 in 2.5 % · 10.5 % of eligible | L | it is a share, not a limitation test |
+| collective stock utilization | not established | cell removals / accessible stock per foraging cell-year (339,771 · 75,764; one group per cell, single species asserted): p50 0.23 · 0.42; > 0.5 in 4.0 % · 28.8 % (multi-unit cells 11.9 % · 33.3 %). Eligible unit-years with own share ≤ 0.5 but cell > 0.5: 3.2 % · 19.3 %. Removal = Σ member harvests to 4e-16 | new | under pressure, shared stocks are used much more heavily than individual shares suggest; groups missing their target remove p50 0.40 · 0.48. No scarcity threshold is asserted |
+| arable cap events | "binding 0.000" (rounded; zero-arable cells silently skipped) → "land never limits" | positive-arable cells: at cap 0/290,439 · **26/56,788 (0.046 %)**; rationed (desired > cap) 0 · **25 (0.044 %)**, all multi-unit, desired/cap ≤ 1.08. Zero-arable cells with desired fields 0 · **1,928/58,716 cell-years (3.3 %)**, 2,803 unit-years, all planned to zero, none previously farmed | L + I | land rationing is rare and local, not absent; zero-arable demand is a location limit, not contested land |
+| incumbent field reductions | 0.04 % "in a binding cell" (pressure) | incumbent cut while another expands: 221 (0.08 %) · 677 (1.2 %) in any cell, of which in rationed cells 0 · 24; units cut *by rationing* (wanted ≥ current, planned below): 0 · 97 units in 22 cell-years | I | most contractions alongside expansion are own choices, not displacement |
+| potential role reversal | "former recipient can help its former donor" 63 % · 69 %, delay 4 · 3 y | formerly short reachable neighbour has surplus in reach at the origin unit's first later shortage: per origin year 63.1 % · 68.8 % (26,888 · 29,849); per distinct later shortage 50.7 % · 60.8 % (6,087 · 7,073), delay p50 1 y | L (no transfer observed) + weighting (one shortage counted once per origin year) | establishes physical potential for reversal only, not reciprocity or realized assistance |
+| reachable-surplus coverage | "only 0.1 % · 0.3 % of short units have no surplus neighbour" | conditional on a neighbour: 25/22,152 (0.11 %) · 115/38,916 (0.30 %); of all short units, isolated counted: 172/22,299 (0.77 %) · 122/38,923 (0.31 %). Surplus in reach ≥ deficit: 98.9 % · 94.9 %. Surplus units counted by ≥ 2 short units: 56 % · 88 % | L + I | hypothetical, pre-competition, multiply counted, geographic (not contact or knowledge of stores). Joint feasibility is deferred to 6B-P3 |
+| short before trade | 5.8 % · 31 % "of unit-years" | all unit-years 5.82 % · 30.63 %; with a neighbour 5.85 % · 30.63 %; isolated 3.2 % (147/4,614) · 26 % (7/27) | L | unchanged in substance |
+| outside options | "open and known" | values unchanged (analyst 84 % · 72 %, believed 90 % · 81 %) | I | a reachable or believed better cell is not a realized, costless move |
+
+**Unchanged and still supported:**
+- pooled foraging replay is exact (339,771 · 75,764 groups), and one-step regrowth is exact;
+- rivalry in shared cells (alone − pooled p50 +2.5 % · +4.3 % of need) and its intertemporal
+  cost (0.18 · 0.29 kcal per kcal removed);
+- pooled vs independent ≈ 1.2 % (B);
+- spatially correlated but complementary shortages (synchrony ratio 4.4 · 1.5);
+- recurring potential role reversal.
+
+**Not established by these recordings** (deferred):
+- which units actually received or gave transfers. This would need trade instrumentation
+  (6B-P2/P3);
+- which input limits a group that applied all its labor (§15.1 measures the labor
+  elasticity at full effort; it shows joint limitation, not a single cause);
+- whether multiply counted nearby surplus can jointly cover simultaneous deficits (6B-P3).
+
+### 15.1 P1 closure review (2026-10-28)
+
+Answers to the focused closure review. Same recordings (`runs/stage6b_p1/record`), pressure
+figures unless stated; neolithic has none of the arable categories (no occupied cell lacks
+arable land, and no cell is rationed).
+
+**Arable land: three categories, kept apart.** *Desired fields* are the kernel's per-unit
+decision before arable sharing: this year's step toward the unit's target, capped by
+labor and need, not the target itself. The decision rule does not consult arable land;
+the per-cell sharing then scales every unit by `min(1, arable / Σ desired)` and rounds
+fields below 0.05 ha to zero.
+
+| category | numerator / denominator | value |
+|---|---|---|
+| farming cell-years (base) | occupied cell-years with desired or planned fields | 58,716 (of 75,764 occupied) |
+| allocation constrained by the cap (either category below) | cell-years / farming cell-years | 1,953 / 58,716 (3.3 %); 3,028 / 108,361 unit-years with desired fields |
+| (1) land unavailable: zero arable, desired > 0 | cell-years / farming cell-years | 1,928 / 58,716 (3.3 %); 2,803 / 108,361 unit-years; 221 distinct units; 6 / 26 / 136 years per unit (p50/p90/max); desired p50 5.9 ha; previously farmed 0 |
+| (2) competition: positive arable, desired > cap | cell-years / positive-arable farming cell-years | 25 / 56,788 (0.044 %); all with ≥ 2 cultivators; one cultivator exceeding the land 0; desired / cap ≤ 1.08; 225 unit-years; 565 of 11,700 desired ha unallocated (of 3.78 M desired overall) |
+| units cut by rationing (wanted ≥ current, planned below) | units | 97 in 22 cell-years |
+| deliberate exclusion | — | no rule excludes a cultivator (pro rata over all units); zeroed by the 0.05 ha rounding after scaling: 0 |
+
+- *Zero-arable desired fields are an intermediate quantity, not accumulated demand.* With
+  no fields the unit's desired step is recomputed from zero every year, so it never grows
+  toward the target. It is nevertheless a real, recurring intention of the decision rule:
+  farming beats foraging there by the rule's own comparison. It has no consequence: no
+  cost, no state, and migration does not value arable land, so 221 units stay blocked, some
+  for over a century. Whether this is a model gap belongs to P3 (demand) and P4.
+- *Qualification of "land constraints are rare".* It holds for competition among
+  cultivators (0.044 %). It does not hold for land unavailability (3.3 % of farming
+  cell-years, concentrated on few units). No observation concerns exclusion.
+
+**The desired-field diagnostic is a copy, not a duplicate.**
+- `plan_with_desired` (probe) wraps the production kernel `plan_fields` for one call and
+  copies its `desired` scratch argument afterwards. The kernel never rewrites that array
+  while sharing land. No existing interface exposes desired fields: `FieldPlans` carries
+  only the changed rows after sharing, and `_evaluate_reference` keeps its list local.
+- `test_desired_capture_agrees_with_production_planning` (controlled state: a zero-arable
+  cell, a scarce cell with ≥ 3 cultivators including an incumbent, an ample cell with a unit
+  contracting by its own choice):
+  - plans are identical with and without the capture, and equal to `_evaluate_reference`;
+  - with unlimited land the authoritative Python path plants exactly the captured desired
+    fields;
+  - desired fields do not depend on arable land;
+  - the captured fields reproduce the sharing in every cell;
+  - the physical digest (events, RNG states, units) is unchanged.
+- On the recordings the capture reproduces the kernel's sharing in 290,439 · 56,788 of
+  290,439 · 56,788 positive-arable farming cell-years, and all 8 runs are observer-neutral.
+
+**Foraging limitation.**
+- *Denominator of "63 %":* eligible pressure unit-years, i.e. unit-years with a remaining
+  (crop-net) foraging target > 0, pooled over seeds 0–3: **78,938 / 125,508 (62.9 %)**
+  (neolithic 82,239 / 383,045, 21.5 %). At cell level: 48,498 / 75,764 foraging cell-years
+  (64.0 %) · 62,689 / 339,771 (18.5 %).
+- *Exhausted labor is established exactly.* `cell_harvest` lowers effort only when full
+  labor would exceed the target, so a missed target implies full labor. Replaying harvest
+  at full labor reproduces the recorded removal in 100 % of these groups.
+- *Binding labor margin is not established.* Labor elasticity of harvest at full effort
+  (`labor_elasticity`, `E·H'(E)/H(E)`): p10/p50/p90 0.65/0.76/0.89 · 0.57/0.70/0.85;
+  ≥ 0.9 in 6.7 % · 3.3 %; < 0.5 in 1.0 % · 5.0 %. More labor would raise harvest, less than
+  proportionally: labor and stock depletion limit jointly. This is a property of the
+  model's harvest function at the recorded state, not a test of which constraint binds
+  behaviourally.
+- *Utilization consistency.* Stock is read in the same foraging call, before this year's
+  harvest is applied, as stock × access; removal is the same proposal's plant + game
+  removal, in kcal; removal equals the sum of member harvests to 3.6e-16. There is one
+  foraging group per occupied cell-year (single species asserted), so foraging cell-years
+  equal occupied cell-years (339,771 · 75,764), and none has zero accessible stock (no
+  undefined ratios). No scarcity is inferred from the 0.5 threshold, which is descriptive.
+
+**Reproduce:**
+
+```bash
+uv run pytest tests/test_opportunity_audit.py -q
+uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/stage6b_p1/record
+uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b_p1/record --jobs 1
+```
+
+Older recordings made before 6B-P1 lack desired fields and cannot be analysed by the current
+probe.

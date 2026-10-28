@@ -2,8 +2,8 @@
 
 **Status:** current contract plus findings register (rewritten 2026-10-07; the full
 stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 6B (§AE, comparative mechanism selection; decision D, pathway C; nothing activated;
-review in `STAGE6B_SOCIOECOLOGICAL_MECHANISM_REVIEW.md`). 6A (§AD) decision B. Stage 5 closed
+stage: 6B-P1 (§AE, measurement corrections; the 6B decision D / pathway C is provisional until
+6B-P4; nothing activated; review in `STAGE6B_SOCIOECOLOGICAL_MECHANISM_REVIEW.md` §15). 6A (§AD) decision B. Stage 5 closed
 (approved 2026-10-27). Strata are a passive accounting overlay; the physical-feedback gate (§N7) is
 closed.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
@@ -3898,11 +3898,22 @@ uv run python scripts/probes/donor_offer_audit.py analyse --load runs/stage6a/re
 ### §AE. Stage 6B — socioecological opportunity and mechanism selection (2026-10-27)
 
 **COMPARATIVE REVIEW + READ-ONLY OBSERVATION + STATIC COUNTERFACTUALS. NOTHING IMPLEMENTED.**
+
+**6B-P1 correction (2026-10-28).** The measurements below are corrected in place. The full
+original-vs-corrected record is in review §15. In summary:
+- (N) foraging-target attainment counted crops twice;
+- (L/I) arable binding was rounded to 0.000 and zero-arable cells were skipped;
+- (L) "stock-limited" was an individual harvest share;
+- (L) "former recipient / donor" observed no transfer;
+- (L) surplus coverage was conditional on a neighbour and counted the same donors many times.
+
+The 6B decision and the 6C recommendation are **provisional**, to be re-examined in 6B-P4.
+P1 issues no decision.
 - Full review: `objective/STAGE6B_SOCIOECOLOGICAL_MECHANISM_REVIEW.md` (sources, matrix,
   methods, results, 6C specification).
 - Helpers: `economy/opportunity_audit.py` (NOT ACTIVE).
 - Probe: `scripts/probes/opportunity_audit.py`.
-- Tests: `tests/test_opportunity_audit.py` (11).
+- Tests: `tests/test_opportunity_audit.py` (22).
 - Starting commit `cabe833`. Reference model: MVP 2.2 (manifest still CANDIDATE;
   administrative state unchanged).
 
@@ -3926,29 +3937,56 @@ uv run python scripts/probes/donor_offer_audit.py analyse --load runs/stage6a/re
   - Rivalry is real: 20 % · 62 % of foraging unit-years share a cell; being alone would
     change harvest by p50 +2.5 % · +4.3 % of need (> 10 % in about 20 %); each kcal taken
     costs 0.18 · 0.29 kcal of next year's stock.
-  - The arable cap **never binds** (0.000 of farming cell-years), so production is
-    labour-limited.
-  - Outside options are open and **known**: 90 % · 81 % believe a better reachable cell
-    exists.
-  - Verdict: resource concentration is measurable, but economic defensibility is not
-    identifiable (no defence cost, open exits, no land limit).
+  - Arable land, three separate categories (P1 closure, review §15.1). Neolithic: none of
+    them occurs. Pressure:
+    - *competition* (positive arable, desired > cap, ≥ 2 cultivators scaled pro rata):
+      25 / 56,788 positive-arable farming cell-years (0.044 %), 225 / 108,361 unit-years
+      with desired fields, 565 of 3.78 M desired ha unallocated, 97 units cut;
+    - *land unavailability* (zero arable, desired fields > 0, all planned to zero):
+      1,928 / 58,716 farming cell-years (3.3 %), 2,803 unit-years, 221 distinct units,
+      persistent (p50 6, max 136 years per unit), none previously farmed;
+    - *deliberate exclusion*: no rule excludes a cultivator, and the 0.05 ha rounding
+      zeroed nobody after scaling.
+    Land competition is rare; land *unavailability* is not negligible and falls wholly on a
+    small set of units. (Originally reported as "never binds" from a rounded 0.000.)
+  - Wild harvest meets the remaining (crop-net) target in 74 % · 29 % of eligible unit-years
+    (originally 90 % · 77 %, crops counted twice). Under pressure, 63 % of eligible units are
+    in groups that missed their summed target (78,938 / 125,508 eligible unit-years), which
+    the solver allows only at full labor (replay at full labor exact in 100 % of these
+    groups). Exhausted labor is not a binding labor margin: the labor elasticity of harvest
+    at full effort is p50 0.76 · 0.70 (≥ 0.9 in 6.7 % · 3.3 %, < 0.5 in 1.0 % · 5.0 %), so
+    labor and the stock limit jointly. "Labour-limited" stays withdrawn.
+  - Collective cell utilization is p50 0.23 · 0.42 and exceeds 0.5 in 4 % · 29 % of
+    foraging cell-years. The individual share exceeds 0.5 in 2.5 % · 10.5 %.
+  - Better-stocked cells are reachable and believed in: 90 % · 81 % believe a better
+    reachable cell exists. This does not show a realized or costless exit.
+  - Verdict (provisional): resource concentration is measurable, but economic defensibility
+    is not identifiable (no defence cost, reachable better cells, rare and local land
+    rationing).
 - **B:**
   - Pooled vs independent use differs by 1.2 % in total; pooling-induced shortfalls are
     0.5 % · 0.7 % of members.
   - The production function has no joint-production synergy.
   - Verdict: no consequential coordination problem.
 - **C:**
-  - Before trade, 5.8 % · 31 % of unit-years are short.
-  - Shortages are spatially correlated (ratio 4.4 · 1.5), yet 99.7–99.9 % of short units
-    have surplus in reach (p50 23 · 14 × their deficit).
-  - Within 10 y, a former recipient can help its former donor in 63 % · 69 % of that
-    donor's later shortages; some neighbour can in about 100 %.
+  - Before trade, 5.8 % · 30.6 % of all unit-years are short (isolated unit-years 1.2 % ·
+    0.02 %).
+  - Shortages are spatially correlated (ratio 4.4 · 1.5). Hypothetical pre-competition
+    surplus balances are in reach for 99.9 % · 99.7 % of short units that have a neighbour,
+    and 99.2 % · 99.7 % of all short units (p50 23 · 14 × deficit). The same surplus unit is
+    counted by ≥ 2 short units in 56 % · 88 % of cases, so the coverage is not jointly
+    available (6B-P3).
+  - Potential role reversal, with no transfer observed: at a surplus unit's first later
+    shortage, a formerly short reachable neighbour has surplus in reach in 63 % · 69 % of
+    origin years, or 51 % · 61 % counted once per later shortage. Some unit has surplus in
+    reach in about 100 %.
   - Together with 6A (offers are a strong lever; a kcal given costs ≈ `r` kcal of next
-    year's stores), this is the strongest substrate.
+    year's stores), this was judged the strongest substrate (provisional).
 
 **What the literature supports, and what remains hypothetical.**
 - Defensibility and inequality are tied to dense, predictable, clumped resources (1, 2) and
-  to land-limited production (6). Those conditions are absent here.
+  to land-limited production (6). Those conditions are absent in aggregate; land
+  unavailability (zero arable) is concentrated on a few units and has no social response.
 - Enduring inequality is late and reversible (5, 6), against any agriculture → inequality
   script.
 - Need-based risk pooling is supported by simulations (9–11), with reduced benefit under
@@ -3956,14 +3994,14 @@ uv run python scripts/probes/donor_offer_audit.py analyse --load runs/stage6a/re
 - No source shows deliberate maximization of insurance benefit. Willingness stays a
   premise.
 
-**Decision: D (pathway C).** The physical substrate for risk pooling exists. The
+**Decision (provisional since 6B-P1; re-examined in 6B-P4): D (pathway C).** The physical substrate for risk pooling exists. The
 actor-level interaction does not:
 - central global priority;
 - global visibility of offers and deficits;
 - donors that never see a need;
 - exogenous φ.
 
-**Stage 6C (recommended, not started):** *local need requests with proportional donor
+**Stage 6C (recommended, not started; on hold until 6B-P4):** *local need requests with proportional donor
 rationing*.
 - A short unit asks reachable units nearest first.
 - Each donor splits its offer `φ·b` across the requests it actually receives, in proportion
@@ -3986,14 +4024,14 @@ households or individuals are justified by any measured interaction.
 - coordination;
 - partner preference;
 - self-insurance;
-- land-scarcity inequality (revisit only if land becomes limiting).
+- land-scarcity inequality (land rationing rare and local, 6B-P1; revisit only if land becomes limiting).
 
 **Reproduce:**
 
 ```bash
 uv run pytest tests/test_opportunity_audit.py -q
-uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/stage6b/record
-uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b/record --jobs 1
+uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/stage6b_p1/record
+uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b_p1/record --jobs 1
 ```
 
 ---
@@ -4031,10 +4069,12 @@ uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b/re
   donor gives; a self-insurance cap is informable but unanchored and worth ≈ 1–2 % of the
   withheld kcal. Next: a read-only falsification of social-storage substrate (directional
   reversal of donor/recipient roles within store-decay horizons); kin as the alternative.
-- **Opportunity structure (§AE).** Land never limits production and wild resources are
-  diffuse, so defensibility-based access mechanisms lack their preconditions; revisit only
-  with a clumped resource class or binding land. Stage 6C candidate: local need requests
-  with proportional donor rationing (pathway C, decision D).
+- **Opportunity structure (§AE, corrected 6B-P1).** Arable rationing is rare and local
+  (pressure 0.044 % of positive-arable farming cell-years), and wild resources are diffuse.
+  Under pressure, however, most foraging units miss their crop-net target, and collective
+  cell utilization often exceeds individual shares. Which input limits such groups is open.
+  Provisional Stage 6C candidate: local need requests with proportional donor rationing
+  (pathway C, decision D), re-examined in 6B-P4.
 - **Dust transfers (§AA §1).** Floating-point residues create ~1e-7 kcal transfers (0.7–1.5 %
   of transfers) and transient near-zero ties that can consume adoption draws.
 - **Hidden coordination assumptions (§Z).** Cooperative stopping in shared foraging patches;

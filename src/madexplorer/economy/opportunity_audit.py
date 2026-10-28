@@ -19,6 +19,19 @@ efficiency, targets and harvest function:
 
 They change no stock and draw no random numbers. :func:`regrowth_loss` prices how much of
 one year's removal is still missing from next year's stock under ``logistic_regrowth``.
+
+Measurement definitions (Stage 6B-P1):
+
+- :func:`remaining_target_met`: the recorded foraging target is already net of crops
+  (``max(need (1 + surplus_target) - farm_harvest, 0)``, ``ForagingSubsystem._inputs``), so
+  attainment compares wild harvest alone with it; units with no remaining target are not
+  eligible. Meeting it is not the same as meeting nutritional need.
+- :func:`utilization`: kcal removed / accessible stock before harvest. Applied to one unit's
+  harvest it is that unit's *share* of the stock; applied to a foraging group's removal it is
+  the cell's *collective* utilization. Neither says by itself which input limited harvest.
+- :func:`labor_elasticity`: the harvest function's elasticity in effort. A group that missed
+  its target applied all its labor (``cell_harvest``), but that alone does not make labor
+  the binding margin: the elasticity at full effort says how far more labor would help.
 """
 
 from collections.abc import Sequence
@@ -26,10 +39,44 @@ from collections.abc import Sequence
 import numpy as np
 
 from madexplorer.ecology.resources import logistic_regrowth
-from madexplorer.economy.foraging import _harvest, cell_harvest, single_unit_harvest
+from madexplorer.economy.foraging import (
+    _harvest,
+    _marginal_return,
+    cell_harvest,
+    single_unit_harvest,
+)
 
 Pair = tuple[float, float]
 BISECTION_STEPS = 200
+# Relative shortfall below which a remaining target counts as met. The production solver
+# stops at |H - T| <= 1e-12 T (``foraging.SOLVER_TOLERANCE``; its bisection fallback ends at
+# or above T) and splitting a group's removal by effort adds rounding near 1e-16 relative;
+# 1e-9 sits well above both and far below any nutritionally meaningful shortfall.
+TARGET_REL_TOL = 1e-9
+
+
+def remaining_target_met(
+    forage: float, remaining_target: float, rel_tol: float = TARGET_REL_TOL
+) -> bool | None:
+    """Whether wild harvest met the crop-net foraging target; ``None`` if none remained."""
+    if remaining_target <= 0:
+        return None
+    return forage >= remaining_target * (1.0 - rel_tol)
+
+
+def utilization(removed: float, accessible: float) -> float | None:
+    """Removed kcal / accessible stock before harvest; ``None`` when nothing was accessible."""
+    return removed / accessible if accessible > 0 else None
+
+
+def labor_elasticity(stock: Pair, returns: Pair, effective_hours: float) -> float | None:
+    """``E H'(E) / H(E)`` of the harvest function at ``effective_hours``: the % change in
+    harvest per % change in effort. 1 means harvest scales with labor; near 0, extra labor
+    takes almost nothing more from the stock. ``None`` when nothing can be harvested."""
+    harvest = sum(_harvest(stock, returns, effective_hours))
+    if harvest <= 0:
+        return None
+    return effective_hours * _marginal_return(stock, returns, effective_hours) / harvest
 
 
 def pooled_harvest(

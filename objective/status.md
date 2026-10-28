@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-27 (MVP 3 Stage 6B; decision D, pathway C; pause for review)\
+**Updated:** 2026-10-28 (MVP 3 Stage 6B-P1, measurement corrections; pause for review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`), still the repository default.
 MVP 2.2 (`baselines/mvp2_2/`, opt-in) is the scientific reference, selected explicitly through
 `scenarios/mvp2_2_*.yaml`. Its fertility mechanism is scientifically accepted; its manifest
@@ -13,77 +13,78 @@ How to read this file: the current handoff, then what MVP 3 has established, the
 stage evidence in the MVP 3 design document; executable truth in code, tests and model
 rules (`madexplorer rules -v`). Older stage handoffs are in git (before `aae0974` the full
 per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening logs; the
-Stage 5J handoff at `204e413`; Stage 6A at `cabe833`).
+Stage 5J handoff at `204e413`; Stage 6A at `cabe833`; Stage 6B at `56a5122`).
 
 ## 1. Current handoff
 
-**Stage 6B — socioecological opportunity, comparative review and mechanism selection.
-Decision D (pathway C). PAUSE FOR SCIENTIFIC REVIEW.**
+**Stage 6B-P1 — scientific measurement and diagnostic corrections. COMPLETE, PAUSED FOR
+SCIENTIFIC REVIEW.** This is the first of five corrective substages agreed after an
+independent review of Stage 6B:
+- P1, measurements;
+- P2, reproducibility and audit integrity;
+- P3, provisioning supply, demand and feasibility;
+- P4, synthesis and the Stage 6C decision gate;
+- P5, roadmap.
 
-**Starting commit:** `cabe833` (Stage 6A committed), clean worktree.
+**Next: 6B-P2** (not started). P3–P5 and Stage 6C are not started. The 6B decision D /
+pathway C is **provisional** until P4. P1 issues no decision.
 
-**Scope:**
-- Compare three candidate foundations:
-  - A, resource access, defensibility and outside options;
-  - B, coordination of productive resources;
-  - C, risk pooling and intergroup dependence.
-- Evidence: a bounded literature review (13 sources, abstract or metadata level as stated)
-  and one read-only recording pass.
-- Recommend exactly one Stage 6C interaction. Nothing is implemented.
+**Starting commit:** `56a5122` (Stage 6B committed), clean worktree.
 
-**Files added (all uncommitted, NOT ACTIVE):**
-- `objective/STAGE6B_SOCIOECOLOGICAL_MECHANISM_REVIEW.md`: the review and the 6C
-  specification.
-- `src/madexplorer/economy/opportunity_audit.py`: pure helpers (pooled, independent and
-  alone harvest; regrowth loss; Gini).
-- `scripts/probes/opportunity_audit.py`.
-- `tests/test_opportunity_audit.py` (11 tests).
-- Design §AE and this file.
+**What P1 corrected** (details in review §15, design §AE). Figures are neolithic · pressure.
+- **(N) Foraging-target attainment.** The recorded target is already net of crops
+  (`ForagingSubsystem._inputs`), but the old check added crops again.
+  - Corrected: `remaining_foraging_target_met` is 74.0 % · 29.3 % of eligible unit-years
+    (was 90 % · 77 %).
+  - Under pressure, 78,938 / 125,508 eligible unit-years (63 %) are in groups that missed
+    the summed target, which happens only at full labor (replay exact).
+  - Exhausted labor is not a binding labor margin: labor elasticity of harvest at full
+    effort p50 0.76 · 0.70, so labor and stock limit jointly. "Labour-limited, not
+    stock-limited" is withdrawn.
+- **(L) Individual vs collective use.**
+  - The "stock-limited" figure (2.5 % · 10.5 %) is one unit's harvest share.
+  - Collective cell utilization exceeds 0.5 in 4.0 % · 28.8 % of foraging cell-years.
+- **(L + I) Arable land** (pressure; neolithic: none). The old "0.000" hid two categories:
+  - competition: 25 / 56,788 positive-arable farming cell-years rationed (0.044 %; 97 units
+    cut);
+  - land unavailability: 1,928 / 58,716 farming cell-years in zero-arable cells (3.3 %),
+    221 units, persistent (up to 136 y); desired fields there are a recurring one-year
+    step, not accumulated demand.
+  - No rule excludes a cultivator. "Rare" holds for competition, not for unavailability.
+- **(I) Incumbent cuts.** 653 of the 677 incumbent contractions alongside an expansion are
+  own choices, not displacement by the cap.
+- **(L) Role reversal.** It is *potential*, with no transfer observed: 63 % · 69 % per origin
+  year, 51 % · 61 % per distinct later shortage.
+- **(L + I) Reachable surplus.**
+  - It is hypothetical and conditional on having a neighbour.
+  - Short units without any surplus in reach: 0.77 % · 0.31 % of all short units.
+  - The same surplus unit is counted by ≥ 2 short units in 56 % · 88 % of cases.
+- **Unchanged:**
+  - exact pooled replay and regrowth;
+  - rivalry (+2.5 % · +4.3 % of need);
+  - B ≈ 1.2 %;
+  - correlated complementary shortages.
+
+**Files changed (all uncommitted, NOT ACTIVE):**
+- `scripts/probes/opportunity_audit.py`: corrected analysis and labels, exact `k/n` rates,
+  arable categories from the kernel's desired fields (`plan_with_desired`: a copy of the
+  production kernel's scratch output, not a second calculation), potential role reversal as
+  a function, missed-target labor diagnostics, and a single-species assertion.
+- `src/madexplorer/economy/opportunity_audit.py`: `remaining_target_met`, `utilization`,
+  `labor_elasticity`, `TARGET_REL_TOL` (diagnostics only; no simulator path imports it).
+- `tests/test_opportunity_audit.py`: 22 tests (11 new); fixture extended to 100 y so crops
+  occur.
+- Review §15 and §15.1 (closure review); design §AE, header and open question; this file.
 
 **Production default:** unchanged. No production file was modified, and `config_hash` is
 unchanged.
 
-**Experiment:**
-- MVP 2.2 neolithic 600 y and pressure + cultivation 400 y, seeds 0–3.
-- All runs observer-neutral.
-- Pooled foraging replay exact in 415,535 groups; one-step regrowth exact.
-
-**Strongest evidence (for C):**
-- Short units almost always have surplus in reach: 99.7–99.9 %, p50 23 · 14 × their
-  deficit.
-- A former recipient can help its former donor in 63 % · 69 % of that donor's later
-  shortages (median delay 3–4 y).
-- Offers are a strong lever (6A).
-- Giving costs ≈ `r` kcal of next year's stores per kcal given (6A).
-
-**Strongest counterevidence:**
-- Shortages are spatially correlated (neolithic ratio 4.4).
-- Willingness stays exogenous (φ).
-- Rivalry (A) is genuine: 20 % · 62 % of foraging unit-years share a cell, +2.5 % · +4.3 %
-  of need p50 if alone. But land never binds, resources are diffuse, and better outside
-  options exist and are known (90 % · 81 %).
-- B (pooled vs independent) differs only ≈ 1 %.
-
-**Decision: D.** The physical substrate (C) exists, but the actor-level interaction does
-not: central global priority, global information, donors blind to need.
-
-**Recommended Stage 6C** (not started; needs authorization): *local need requests with
-proportional donor rationing*.
-- A short unit asks reachable units nearest first.
-- Each donor splits `φ·b` across the requests it receives, in proportion to the amounts
-  requested.
-- Bounded re-ask rounds.
-- No new persistent state; φ kept as an explicit premise.
-- Off by default (`mechanisms.local_provisioning_requests`).
-- Falsified if outcomes are within 1 % of D0 or depend on the round limit or id order.
-
-**Representation:** PopulationUnits suffice; no strata, households or individuals are
-justified.
-
 **Validation:**
-- `make check`: lint, format, mypy and 930 tests pass.
-- `make test-stat`: 3 passed.
+- 8 / 8 runs recorded fresh, all observer-neutral.
+- The original analysis on these recordings reproduces every 6B figure.
 - Oracles: MVP 2.1 raw and logical IDENTICAL; MVP 2.2 raw and logical IDENTICAL.
+- `make check`: lint, format, mypy (141 files) and 941 tests pass.
+- `make test-stat`: 3 passed.
 - `git diff --check`: clean.
 - No golden regenerated, no RNG change, no default activation.
 
@@ -91,16 +92,18 @@ justified.
 
 ```bash
 uv run pytest tests/test_opportunity_audit.py -q
-uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/stage6b/record
-uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b/record --jobs 1
+uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/stage6b_p1/record
+uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b_p1/record --jobs 1
 ```
-
-The analysis holds one recording in memory per worker (≈ 340 MB of pickles in total): use
-`--jobs 1` on small machines.
 
 Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifact.
 
-**Next:** PAUSE FOR SCIENTIFIC REVIEW. Leave Stage 6B uncommitted.
+**Carried to later substages:**
+- P2: recording provenance; transfer instrumentation (who actually received).
+- P3: joint feasibility of multiply counted surplus; the zero-arable demand (blocked units
+  that never relocate: migration does not value arable land).
+- P4: the cross-pathway synthesis, including whether A's rivalry and pressure-scenario
+  target shortfalls change the ranking.
 
 ## 2. MVP 3 so far
 
@@ -126,7 +129,8 @@ Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifa
 | 5I | Food-energy semantics: fertility's documented mechanism is intake but its input is harvest adequacy; dietary intake (H1) is exactly reconstructible, source-invariant, excludes reserves; experimental H0 branch bit-identical; H1 neutral in neolithic, +5.9 % population under pressure (granaries-regime outliers); A: separate versioned fertility-input change recommended (audit + controlled branch) | §AB |
 | 5J | Versioned correction: MVP 2.2 candidate (`mechanisms.dietary_intake_fertility`); MVP 2.1 exact; production = H1 (32 / 32); 32-seed paired: pressure +7.1 % [2.2, 13.8], neolithic +3.3 % [−1.8, 5.7]; granaries unchanged; candidate oracles reproduce; Stage 5 technically complete, pending approval | §AC |
 | 6A | Donor offers: D0 exact from raw inputs (4,000 / 4,000); unused offers never withholding; offer binds in 64 % of pressure donor-years; delivered food ≈ ∝ φ; a given kcal costs ≈ `r` kcal of next year's stores, of which ≈ 1–2 % would ever buffer the donor's later shortage; willingness unexplained (φ exogenous; no reciprocity, insurance or directional memory); security cap rejected (unanchored); B, nothing implemented (audit + static counterfactual) | §AD |
-| 6B | Comparative review (A access, B coordination, C risk pooling): land never binds, resources diffuse, outside options open and known (A not identifiable); pooled vs independent ≈ 1 % (B rejected); surplus in reach for 99.7–99.9 % of short units, bilateral reversal feasible 63–69 % (C strongest); D: substrate present, actor-level interaction missing; 6C = local need requests with proportional rationing | §AE, review |
+| 6B | Comparative review (A access, B coordination, C risk pooling; several figures corrected in 6B-P1): land never binds, resources diffuse, outside options open and known (A not identifiable); pooled vs independent ≈ 1 % (B rejected); surplus in reach for 99.7–99.9 % of short units, bilateral reversal feasible 63–69 % (C strongest); D (provisional since 6B-P1): substrate present, actor-level interaction missing; 6C = local need requests with proportional rationing | §AE, review |
+| 6B-P1 | Measurement corrections: remaining foraging target met 74 % · 29 % (not 90 % · 77 %; crops counted twice); land rationing rare and local (pressure 0.044 %, plus zero-arable demand), not "never"; collective cell utilization separated from individual share; role reversal is potential, not observed transfers (51–69 %); reachable surplus hypothetical and multiply counted; decision D provisional until P4 | §AE, review §15 |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**
