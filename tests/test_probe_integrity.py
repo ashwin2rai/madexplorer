@@ -429,3 +429,53 @@ def test_instrumented_then_ordinary_runs_agree(probe: Any) -> None:
     for blob in snapshots:  # later years did not change values captured earlier
         earlier = pickle.loads(blob)
         assert pickle.dumps(recorder.years[: len(earlier)]) == blob
+
+
+ENVIRONMENT_CHANGES = [
+    ("python_version", "3.12.0"),
+    ("numpy_version", "1.26.4"),
+    ("dependency_lock_hash", "0" * 64),
+    ("belief_backend", "dense"),
+    ("execution.numeric_platform", "numpy=1.26.4 machine=arm64 simd=unknown"),
+    ("execution.jit", False),
+    ("execution.thread_limits", {"OMP_NUM_THREADS": "4"}),
+]
+
+
+def _with(prov: dict[str, Any], key: str, value: Any) -> dict[str, Any]:
+    if key.startswith("execution."):
+        return {**prov, "execution": {**prov["execution"], key.split(".")[1]: value}}
+    return {**prov, key: value}
+
+
+@pytest.mark.parametrize(("key", "value"), ENVIRONMENT_CHANGES)
+def test_mixed_execution_environments_need_an_explicit_comparison(
+    probe: Any, runs: dict[int, dict[str, Any]], tmp_path: Path, capsys: Any, key: str, value: Any
+) -> None:
+    _write(tmp_path, runs[1])
+    data = {k: v for k, v in runs[2].items() if k != "provenance"}
+    write_recording(tmp_path / f"{PRESSURE}_2.pkl", _with(runs[2]["provenance"], key, value), data)
+    field = key.split(".")[-1]
+    with pytest.raises(RecordingError, match=f"different execution environments \\({field}\\)"):
+        select_runs(tmp_path, [PRESSURE], [1, 2], True, probe.ident_of)
+    capsys.readouterr()
+    select_runs(tmp_path, [PRESSURE], [1, 2], True, probe.ident_of, mixed_environments=True)
+    out = capsys.readouterr().out
+    assert (
+        f"MIXED EXECUTION ENVIRONMENTS (explicit comparison, not one reference set): ['{field}']"
+        in out
+    )
+    assert f"pressure+cult seed 2: {field}=" in out
+
+
+def test_harmless_metadata_differences_are_permitted(
+    probe: Any, runs: dict[int, dict[str, Any]], tmp_path: Path, capsys: Any
+) -> None:
+    _write(tmp_path, runs[1])
+    prov = _with(runs[2]["provenance"], "execution.start_method", "spawn")
+    prov = {**prov, "timestamp_utc": "2030-01-01T00:00:00+00:00"}
+    data = {k: v for k, v in runs[2].items() if k != "provenance"}
+    write_recording(tmp_path / f"{PRESSURE}_2.pkl", prov, data)
+    assert len(select_runs(tmp_path, [PRESSURE], [1, 2], True, probe.ident_of)) == 2
+    out = capsys.readouterr().out
+    assert "one execution environment" in out and "MIXED" not in out

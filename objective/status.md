@@ -50,6 +50,11 @@ stays **provisional** until P4. P2 issues no scientific decision.
   transfers (donor, recipient, shipped, delivered, need) and the trade ledger, joined by
   `(year, unit id)`. `provisioning_counterfactual` records MVP 2.1 runs, so it could not
   have been joined to the MVP 2.2 6B recordings.
+- *Mixed execution environments.* Runs that agree on source and configuration but differ
+  in Python, numpy, dependency lock, belief backend, numeric platform, JIT or thread limits
+  are refused as one analysis set; `--mixed-environments` allows an explicit comparison,
+  labelled MIXED with each run's differing values. Timestamps, durations, start method and
+  `git_dirty` are not compared.
 - *No earlier result is now uncertain:* the new recordings reproduce every P1 data field
   exactly (8 / 8 runs), so every P1 figure stands.
 
@@ -74,7 +79,7 @@ stays **provisional** until P4. P2 issues no scientific decision.
   provenance, validated record/analyse, transfer integrity checks.
 - `scripts/probes/donor_offer_audit.py`, `scripts/probes/provisioning_counterfactual.py`:
   schema 1, instance hooks, provenance, validated record/analyse.
-- `tests/test_probe_integrity.py` (new, 21 tests); `tests/test_opportunity_audit.py`
+- `tests/test_probe_integrity.py` (new, 29 tests); `tests/test_opportunity_audit.py`
   (2 transfer tests, fingerprint instead of digest).
 - Review §16; this file.
 
@@ -84,7 +89,7 @@ the source-tree hash of the P1 recordings are unchanged.
 **Validation** (reference demonstration in review §16):
 - 8 / 8 full reference runs recorded twice (`--jobs 2`: 183 s; `--jobs 1`: 239 s), all
   neutral; data bytes identical; P1 data reproduced exactly; reanalysis identical.
-- Probe tests: 71 pass (`test_probe_integrity` 21, `test_opportunity_audit` 24,
+- Probe tests: 79 pass (`test_probe_integrity` 29, `test_opportunity_audit` 24,
   `test_donor_offer` + `test_provisioning_counterfactual` 26).
 - Oracles: MVP 2.1 raw and logical IDENTICAL; MVP 2.2 raw and logical IDENTICAL.
 - `make check`: lint, format, mypy (142 files) and 964 tests pass. `make test-stat`: 3 passed.
@@ -103,10 +108,13 @@ uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b_p1
 Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifact.
 
 **Carried to later substages:**
-- P3: joint feasibility of multiply counted surplus, now against the recorded realized
-  transfers; the zero-arable demand (blocked units that never relocate).
+- P3: provisioning supply, demand and simultaneous allocation feasibility only (joint
+  feasibility of multiply counted surplus, now against the recorded realized transfers).
 - P4: the cross-pathway synthesis, including whether A's rivalry, the pressure-scenario
-  target shortfalls and land unavailability change the ranking.
+  target shortfalls, collective utilization and land unavailability change the ranking.
+- P4 / P5: the zero-arable findings (221 units repeatedly unable to establish fields;
+  migration does not consider arable land). Preserved as evidence for the synthesis and the
+  roadmap; **not** a P3 task and not a migration-behaviour implementation task.
 - P5: roadmap and MVP realignment.
 
 ## 2. MVP 3 so far

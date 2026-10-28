@@ -598,9 +598,11 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
         )
 
 
-def analyse_main(load: Path, jobs: int, seeds: list[int], explicit: bool, legacy: bool) -> None:
+def analyse_main(
+    load: Path, jobs: int, seeds: list[int], explicit: bool, legacy: bool, mixed: bool = False
+) -> None:
     try:
-        paths = select_runs(load, SCENARIOS, seeds, explicit, ident_of, legacy)
+        paths = select_runs(load, SCENARIOS, seeds, explicit, ident_of, legacy, mixed)
     except RecordingError as error:
         raise SystemExit(str(error)) from None
     runs = [load_data(path, legacy) for path in paths]
@@ -824,6 +826,11 @@ def main() -> None:
         action="store_true",
         help="record: overwrite existing recordings that do not match",
     )
+    parser.add_argument(
+        "--mixed-environments",
+        action="store_true",
+        help="analyse: explicitly compare runs from different execution environments",
+    )
     parser.add_argument("--legacy-unverified", action="store_true",
                         help="analyse: accept pre-6B-P2 recordings without provenance (unverified)")  # fmt: skip
     args = parser.parse_args()
@@ -832,7 +839,14 @@ def main() -> None:
         controlled()
         return
     if args.mode == "analyse":
-        analyse_main(args.load, args.jobs, seeds, args.seeds is not None, args.legacy_unverified)
+        analyse_main(
+            args.load,
+            args.jobs,
+            seeds,
+            args.seeds is not None,
+            args.legacy_unverified,
+            args.mixed_environments,
+        )
         return
     args.out.mkdir(parents=True, exist_ok=True)
     specs = to_record(args.out, [(n, s) for n in SCENARIOS for s in seeds], ident_of, args.replace)

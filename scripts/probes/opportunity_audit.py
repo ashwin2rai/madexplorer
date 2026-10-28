@@ -930,10 +930,12 @@ def _analyse_path(path: Path, legacy: bool) -> tuple[str, int, bool, dict[str, A
     return run["name"], run["seed"], run["neutral"], analyse_run(run)
 
 
-def analyse(load: Path, jobs: int, seeds: list[int], explicit: bool, legacy: bool) -> None:
+def analyse(
+    load: Path, jobs: int, seeds: list[int], explicit: bool, legacy: bool, mixed: bool = False
+) -> None:
     started = time.perf_counter()
     try:
-        paths = select_runs(load, list(MVP2_2), seeds, explicit, ident_of, legacy)
+        paths = select_runs(load, list(MVP2_2), seeds, explicit, ident_of, legacy, mixed)
     except RecordingError as error:
         raise SystemExit(str(error)) from None
     with Pool(jobs, maxtasksperchild=1) as pool:  # one recording in memory per worker
@@ -962,6 +964,11 @@ def main() -> None:
         action="store_true",
         help="record: overwrite existing recordings that do not match",
     )
+    parser.add_argument(
+        "--mixed-environments",
+        action="store_true",
+        help="analyse: explicitly compare runs from different execution environments",
+    )
     parser.add_argument("--legacy-unverified", action="store_true",
                         help="analyse: accept pre-6B-P2 recordings without provenance (unverified)")  # fmt: skip
     args = parser.parse_args()
@@ -980,7 +987,14 @@ def main() -> None:
                 )
     else:
         assert args.load is not None
-        analyse(args.load, args.jobs, seeds, args.seeds is not None, args.legacy_unverified)
+        analyse(
+            args.load,
+            args.jobs,
+            seeds,
+            args.seeds is not None,
+            args.legacy_unverified,
+            args.mixed_environments,
+        )
 
 
 if __name__ == "__main__":

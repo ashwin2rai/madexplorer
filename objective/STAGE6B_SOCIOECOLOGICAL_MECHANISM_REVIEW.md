@@ -471,7 +471,8 @@ fields below 0.05 ha to zero.
   toward the target. It is nevertheless a real, recurring intention of the decision rule:
   farming beats foraging there by the rule's own comparison. It has no consequence: no
   cost, no state, and migration does not value arable land, so 221 units stay blocked, some
-  for over a century. Whether this is a model gap belongs to P3 (demand) and P4.
+  for over a century. Whether this is a model gap is for P4 (synthesis) and P5 (roadmap), not a P3 or
+  migration-implementation task.
 - *Qualification of "land constraints are rare".* It holds for competition among
   cultivators (0.044 %). It does not hold for land unavailability (3.3 % of farming
   cell-years, concentrated on few units). No observation concerns exclusion.
@@ -564,6 +565,11 @@ No scientific decision is issued; transfers are recorded, not interpreted (P3, P
   runs, schema or configuration mismatches, failed neutrality and mixed sources are errors.
   A source differing from the checked-out code is allowed but flagged per run. `--seeds`
   analyses an explicit subset; the analysed set is printed with its provenance.
+- *Execution environments.* An analysis set must share Python and numpy versions,
+  dependency lock, belief backend, numeric platform, JIT and thread limits; otherwise it is
+  refused, unless `--mixed-environments` requests an explicit comparison, printed as MIXED
+  with each run's differing values. Timestamps, durations, start method (serial = parallel
+  bit for bit) and `git_dirty` (the source hashes identify the code) are not compared.
 - *Legacy policy.* Recordings without provenance load only with `--legacy-unverified`, are
   printed as PROVENANCE UNVERIFIED, are never reused by `record`, and cannot be mixed with
   verified ones. Nothing is migrated or rewritten.

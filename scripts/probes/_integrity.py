@@ -70,6 +70,12 @@ SCIENTIFIC_KEYS = (
     "config_hash",
 )
 SOURCE_KEYS = ("source_tree_sha256", "probe_sha256")
+# Execution context that can change numerical results or their raw representation: runs of
+# one analysis must agree on all of it unless a mixed comparison is requested explicitly.
+# Not compared: timestamp_utc, durations, start_method (serial and parallel recordings are
+# bit-identical, review §16), git_dirty (the source hashes identify the code).
+ENVIRONMENT_KEYS = ("python_version", "numpy_version", "dependency_lock_hash", "belief_backend")
+EXECUTION_KEYS = ("numeric_platform", "jit", "thread_limits")
 
 
 class RecordingError(Exception):
@@ -267,13 +273,16 @@ def select_runs(
     explicit: bool,
     ident_of: Callable[[str, int], dict[str, Any]],
     legacy: bool = False,
+    mixed_environments: bool = False,
 ) -> list[Path]:
     """The recordings to analyse: exactly one per requested ``(name, seed)``, validated.
 
     Raises :class:`RecordingError` listing every problem: unreadable or malformed files,
     legacy files without ``legacy``, duplicates, unexpected runs, missing runs, identities
     that differ from what this code records, or runs from different sources. Runs outside an
-    ``explicit`` seed subset are ignored (and listed). Prints the exact set analysed.
+    ``explicit`` seed subset are ignored (and listed). Runs from different execution
+    environments (:func:`environment`) are an error unless ``mixed_environments`` asks for an
+    explicit comparison, which is then labelled. Prints the exact set analysed.
     """
     wanted = {(n, s) for n in names for s in seeds}
     errors, found, ignored = [], {}, []
@@ -312,6 +321,15 @@ def select_runs(
     sources = {tuple(provs[k][x] for x in (*SOURCE_KEYS, "git_commit")) for k in verified}
     if len(sources) > 1:
         errors.append(f"runs come from {len(sources)} different sources or probe versions")
+    envs = {k: environment(provs[k]) for k in verified}
+    differing = sorted(
+        {x for e in envs.values() for x in e if len({str(v[x]) for v in envs.values()}) > 1}
+    )
+    if differing and not mixed_environments:
+        errors.append(
+            f"runs come from different execution environments ({', '.join(differing)}); "
+            "pass --mixed-environments to compare them explicitly"
+        )
     if errors:
         raise RecordingError("cannot analyse these recordings:\n  " + "\n  ".join(errors))
     current = ident_of(*sorted(found)[0]) if found else {}
@@ -337,7 +355,30 @@ def select_runs(
     if verified:
         method = provs[verified[0]]["neutrality"]["method"]
         print(f"  identities and config hashes verified; observers neutral ({method})")
+    if differing:
+        print(
+            "  MIXED EXECUTION ENVIRONMENTS (explicit comparison, not one reference set): "
+            f"{differing}"
+        )
+        for k in sorted(envs):
+            print(f"    {k[0]} seed {k[1]}: " + ", ".join(f"{x}={envs[k][x]}" for x in differing))
+    elif verified:
+        e = envs[verified[0]]
+        print(
+            f"  one execution environment: python {e['python_version']}, "
+            f"numpy {e['numpy_version']}, "
+            f"beliefs {e['belief_backend']}, jit {e['jit']}, {e['numeric_platform']}"
+        )
     return [found[k][0] for k in sorted(found)]
+
+
+def environment(prov: dict[str, Any]) -> dict[str, Any]:
+    """The execution context of a recording that runs in one analysis must share."""
+    execution = prov.get("execution") or {}
+    return {
+        **{k: prov.get(k) for k in ENVIRONMENT_KEYS},
+        **{k: execution.get(k) for k in EXECUTION_KEYS},
+    }
 
 
 # ---------------------------------------------------------------- observers
