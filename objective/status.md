@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-28 (MVP 3 Stage 6B-P2, reproducibility and audit integrity; pause for review)\
+**Updated:** 2026-10-28 (MVP 3 Stage 6B-P3, provisioning supply, demand and feasibility; pause for review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`), still the repository default.
 MVP 2.2 (`baselines/mvp2_2/`, opt-in) is the scientific reference, selected explicitly through
 `scenarios/mvp2_2_*.yaml`. Its fertility mechanism is scientifically accepted; its manifest
@@ -18,45 +18,57 @@ Stage 5J handoff at `204e413`; Stage 6A at `cabe833`; Stage 6B at `56a5122`; 6B-
 
 ## 1. Current handoff
 
-**Stage 6B-P2 — experimental reproducibility and audit integrity. COMPLETE, PAUSED FOR
-SCIENTIFIC REVIEW.** Second of the five corrective substages after the Stage 6B review
-(P1 measurements, approved and committed at `8dfe4df`; P2 integrity; P3 provisioning supply,
-demand and feasibility; P4 synthesis and the Stage 6C decision gate; P5 roadmap).
+**Stage 6B-P3 — provisioning supply, demand and simultaneous feasibility. COMPLETE, PAUSED
+FOR SCIENTIFIC REVIEW.** Third of the five corrective substages after the Stage 6B review
+(P1 measurements `8dfe4df`; P2 integrity `b4b585d`, `36c5a72`; P3 provisioning; P4 synthesis
+and the Stage 6C decision gate; P5 roadmap).
 
-**Next: 6B-P3** (not started). P4, P5 and Stage 6C are not started. Decision D / pathway C
-stays **provisional** until P4. P2 issues no scientific decision.
+**Next: 6B-P4** (not started). P5 and Stage 6C are not started. Decision D / pathway C stays
+**provisional** until P4. P3 selects no mechanism.
 
-**Starting commit:** `8dfe4df` (6B-P1 committed), clean worktree.
+**What P3 established** (review §17; kcal summed over seeds 0–3 and all trade years, % of
+the total pre-trade deficit; neolithic · pressure):
+- The production matching is reconstructed exactly from verified pre-trade inputs in every
+  trade year (2,400 · 1,600); Stage 6A (71.5 % of recipient-years short, 72.4 % of offers
+  shipped) and 6B (reachable full surplus p50 22.8 · 13.7 × deficit) reproduce.
+- Delivered: matching 62.6 · 44.0; simultaneous optimum under the same offers, reach and
+  transport 65.0 · 50.2 (+2.4 · +6.2 points; 3.9 % · 14.2 % of what the matching delivers).
+  Unavoidable under offers and reach: 35.0 · 49.8.
+- Bottlenecks are conditional, not additive. Neolithic: geography and transport (lossless
+  +15, all pairs +20), not supply (offers 9 × deficits) or matching. Pressure: all bind;
+  offer cap +37 (with transport), transport +21, reach +10, matching +6.
+- Aggregate supply is essentially never short (full surplus, all pairs, lossless: 100 ·
+  99.9): the shortage is one of access and distribution.
+- Apparent surplus is multiply counted (claimed / distinct offers 1.6 · 4.0); networks with
+  every deficit simultaneously satisfiable: 74.5 % · 15.2 %.
+- The optimum's distribution is not unique (two labelled tie-breaks differ for 18.6 % ·
+  26.4 % of recipient-years); it relieves more recipients but lowers the lower tail of
+  intake under pressure. Recipient order reassigns 15 % · 31 % of delivered food at
+  ±1.4 % total; ids have no effect (no severity ties; equal-cost ties are same-cell donors).
+- One world topology per scenario (worlds 7 · 3); robust across the four seeds.
 
-**What P2 found and corrected** (details in review §16):
-- *Reuse by filename.* The three Stage 5H–6B probes (`opportunity_audit`,
-  `donor_offer_audit`, `provisioning_counterfactual`) skipped any existing `NAME_SEED.pkl`
-  and analysed every `*.pkl` in a directory, with no provenance. Now each recording embeds
-  its provenance and a data checksum, is written atomically, is reused only if intact and
-  matching (else `record` stops; `--replace` overwrites), and `analyse` loads exactly the
-  requested runs (duplicates, unexpected, missing, mixed sources and wrong identities are
-  errors; `--seeds` gives an explicit subset).
-- *Weak neutrality check.* `physical_digest` misses ecology, trade ties, beliefs and the id
-  allocator (demonstrated in a test). New: an audit-only state fingerprint over every
-  declared unit field (`population.fields.UNIT_FIELDS`, read through authoritative storage;
-  beliefs in logical form), ecology, climate, world, RNG streams, id allocator, events and
-  strata sidecars, compared with an uninstrumented twin stepped in lockstep every 25 years
-  and at the end.
-- *Global hooks.* Observers replaced class methods (leaks into later runs in the same
-  worker were possible). Now hooks sit on the simulator's own subsystem instances; the two
-  module functions that must be observed (`agriculture_kernel.plan_fields`,
-  `migration.gather_candidates`) are swapped only for the instrumented call (`try/finally`).
-- *No realized transfers in 6B.* The opportunity probe now records the authoritative
-  transfers (donor, recipient, shipped, delivered, need) and the trade ledger, joined by
-  `(year, unit id)`. `provisioning_counterfactual` records MVP 2.1 runs, so it could not
-  have been joined to the MVP 2.2 6B recordings.
-- *Mixed execution environments.* Runs that agree on source and configuration but differ
-  in Python, numpy, dependency lock, belief backend, numeric platform, JIT or thread limits
-  are refused as one analysis set; `--mixed-environments` allows an explicit comparison,
-  labelled MIXED with each run's differing values. Timestamps, durations, start method and
-  `git_dirty` are not compared.
-- *No earlier result is now uncertain:* the new recordings reproduce every P1 data field
-  exactly (8 / 8 runs), so every P1 figure stands.
+**Files changed (NOT ACTIVE):**
+- `src/madexplorer/economy/provisioning_feasibility.py` (new): the LP, its independent
+  feasibility and duality checks, components, edges.
+- `scripts/probes/provisioning_feasibility.py` (new): analysis of the donor-offer recordings,
+  join with the opportunity recordings, benchmarks, distribution and order sensitivity.
+- `tests/test_provisioning_feasibility.py` (new, 17 tests); `tests/test_provisioning_counterfactual.py`
+  (the new inactive module may name `provisioning_counterfactual`).
+- `pyproject.toml`, `uv.lock`: SciPy 1.18.1 in the dev group (HiGHS); mypy ignores its
+  missing stubs. numpy and numba unchanged; numba imports SciPy at import time for a
+  version check; no model code uses it.
+- Review §17; this file.
+
+**Production default:** unchanged. Simulation code untouched; the re-recorded
+opportunity data are byte-identical to the P2 recordings.
+
+**Validation:**
+- 16 / 16 reference runs recorded (donor offer and opportunity), all observer-neutral, one
+  execution environment; join identical in 8 / 8; reanalysis identical (`--jobs 2` and 1).
+- `tests/test_provisioning_feasibility.py`: 17 pass. `make check`: lint, format, mypy (144
+  files) and 989 tests pass. `make test-stat`: 3 passed.
+- Oracles: MVP 2.1 raw and logical IDENTICAL; MVP 2.2 raw and logical IDENTICAL.
+- `git diff --check`: clean. No golden regenerated, no RNG change, no default activation.
 
 **P1 findings carried to P4 / P5** (accepted; review §15–15.1; neolithic · pressure):
 - Remaining foraging target met 74.0 % · 29.3 %; under pressure 63 % of eligible unit-years
@@ -72,49 +84,25 @@ stays **provisional** until P4. P2 issues no scientific decision.
 - Provisioning: nearby surplus is hypothetical and multiply counted, potential role
   reversal is not reciprocity, reach is not contact, knowledge or willingness.
 
-**Files changed (all uncommitted, NOT ACTIVE):**
-- `scripts/probes/_integrity.py` (new): provenance, atomic container, reuse and analysis
-  selection, instance hooks, lockstep neutrality, state fingerprint.
-- `scripts/probes/opportunity_audit.py`: schema 2 (transfers, trade ledger), instance hooks,
-  provenance, validated record/analyse, transfer integrity checks.
-- `scripts/probes/donor_offer_audit.py`, `scripts/probes/provisioning_counterfactual.py`:
-  schema 1, instance hooks, provenance, validated record/analyse.
-- `tests/test_probe_integrity.py` (new, 29 tests); `tests/test_opportunity_audit.py`
-  (2 transfer tests, fingerprint instead of digest).
-- Review §16; this file.
-
-**Production default:** unchanged. No file under `src/` was modified; `config_hash` and
-the source-tree hash of the P1 recordings are unchanged.
-
-**Validation** (reference demonstration in review §16):
-- 8 / 8 full reference runs recorded twice (`--jobs 2`: 183 s; `--jobs 1`: 239 s), all
-  neutral; data bytes identical; P1 data reproduced exactly; reanalysis identical.
-- Probe tests: 79 pass (`test_probe_integrity` 29, `test_opportunity_audit` 24,
-  `test_donor_offer` + `test_provisioning_counterfactual` 26).
-- Oracles: MVP 2.1 raw and logical IDENTICAL; MVP 2.2 raw and logical IDENTICAL.
-- `make check`: lint, format, mypy (142 files) and 964 tests pass. `make test-stat`: 3 passed.
-- `git diff --check`: clean. No golden regenerated, no RNG change, no default activation.
-
 **Reproduce:**
 
 ```bash
-uv run pytest tests/test_probe_integrity.py tests/test_opportunity_audit.py -q
-uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/stage6b_p2/record_a
-uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b_p2/record_a --jobs 2
-# pre-6B-P2 recordings (no provenance), explicitly unverified:
-uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b_p1/record --legacy-unverified
+uv run pytest tests/test_provisioning_feasibility.py -q
+uv run python scripts/probes/donor_offer_audit.py record --jobs 2 --out runs/stage6b_p3/donor
+uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/stage6b_p3/opportunity
+uv run python scripts/probes/provisioning_feasibility.py analyse --load runs/stage6b_p3/donor --opportunity runs/stage6b_p3/opportunity
 ```
 
 Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifact.
 
 **Carried to later substages:**
-- P3: provisioning supply, demand and simultaneous allocation feasibility only (joint
-  feasibility of multiply counted surplus, now against the recorded realized transfers).
-- P4: the cross-pathway synthesis, including whether A's rivalry, the pressure-scenario
-  target shortfalls, collective utilization and land unavailability change the ranking.
+- P4: the cross-pathway synthesis with P3's bounds: whether any actor-level provisioning
+  protocol is worth testing given that the offer cap, transport and reach bind together
+  under pressure and geography dominates in the neolithic; A's rivalry, collective
+  utilization, target shortfalls and land unavailability enter the same comparison.
 - P4 / P5: the zero-arable findings (221 units repeatedly unable to establish fields;
   migration does not consider arable land). Preserved as evidence for the synthesis and the
-  roadmap; **not** a P3 task and not a migration-behaviour implementation task.
+  roadmap; not a migration-behaviour implementation task.
 - P5: roadmap and MVP realignment.
 
 ## 2. MVP 3 so far
@@ -144,6 +132,7 @@ Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifa
 | 6B | Comparative review (A access, B coordination, C risk pooling; several figures corrected in 6B-P1): land never binds, resources diffuse, outside options open and known (A not identifiable); pooled vs independent ≈ 1 % (B rejected); surplus in reach for 99.7–99.9 % of short units, bilateral reversal feasible 63–69 % (C strongest); D (provisional since 6B-P1): substrate present, actor-level interaction missing; 6C = local need requests with proportional rationing | §AE, review |
 | 6B-P1 | Measurement corrections: remaining foraging target met 74 % · 29 % (not 90 % · 77 %; crops counted twice); land rationing rare and local (pressure 0.044 %, plus zero-arable demand), not "never"; collective cell utilization separated from individual share; role reversal is potential, not observed transfers (51–69 %); reachable surplus hypothetical and multiply counted; decision D provisional until P4 | §AE, review §15 |
 | 6B-P2 | Recording integrity: provenance container with data checksum and atomic writes; reuse and analysis only of intact, matching, requested runs (legacy recordings only with `--legacy-unverified`); state-fingerprint neutrality against a lockstep twin; instance-level hooks; authoritative transfers recorded in the opportunity probe; P1 data reproduced exactly (8 / 8); serial = parallel bit for bit | review §16 |
+| 6B-P3 | Provisioning feasibility: matching reconstructed exactly; simultaneous LP optimum (HiGHS, duality-certified) delivers 65.0 · 50.2 % of the deficit vs matching 62.6 · 44.0 %; neolithic limited by geography and transport, pressure by offer cap, transport, reach and matching together; global supply almost never short; apparent surplus multiply counted (1.6 · 4.0); optimum distribution not unique | review §17 |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**

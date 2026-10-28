@@ -623,3 +623,143 @@ Every P1 figure (§15, §15.1) is therefore reproduced from fully verified recor
   fingerprint covers state, not transient step-context values within a year.
 - Other research probes keep the older `_common.physical_digest` and class-level hooks; they
   are outside P2's scope and their results are unchanged.
+
+## 17. Stage 6B-P3 — provisioning supply, demand and simultaneous feasibility (2026-10-28)
+
+**Question.** When units are short while others nearby have surplus, how much unmet need
+is physically unavoidable, and how much comes from donor offers, transport losses, the
+recorded reach, competing demand, or the matching? No hypothesis is favoured. Everything
+here is an analyst's counterfactual on recorded inputs: a feasible allocation is not one any
+group knows of, can communicate, or would choose. P3 selects no mechanism (P4).
+
+**Data.** Fresh provenance-verified recordings (§16 infrastructure), MVP 2.2 neolithic
+600 y and pressure + cultivation 400 y, seeds 0–3, one execution environment:
+- `donor_offer_audit` (schema 1): each unit's pre-trade need, harvest, stores and
+  `social.food_sharing_propensity` (resolved per species, 0.3) as read in
+  `TradeSubsystem.evaluate`, the reachable offering donors of every deficit unit with path
+  costs (`ctx.movement.reachable`, same species), the authoritative transfers;
+- `opportunity_audit` (schema 2) of the same runs, joined by `(year, unit id)`: same
+  configuration, source and environment, the same units in every trade year, identical
+  authoritative transfers (8 / 8 runs). Its data are byte-identical to the P2 recordings,
+  so SciPy and the P3 code change nothing in the simulation.
+- MVP 2.1 `provisioning_counterfactual` recordings are not used.
+- Limitation: all neolithic runs share world 7 and all pressure runs world 3; seeds vary
+  climate and demography, not topology.
+
+**Accounting** (verified against the source; per trade year, after farming and foraging,
+before energetics). `b = harvest + stores − annual need` (need includes carried energy
+debt). Donors: `b > 0`, offer `O = phi·b`. Recipients: `b < 0` and need `> 0`, deficit
+`D = −b`. An eligible edge is a same-species offering donor in a cell reachable from the
+recipient's cell; `f = exp(−cost / transport_decay_km)` in (0, 1] (0 only by underflow).
+Gross surplus `b`, offer `phi·b`, shipped `x`, delivered `f·x` and unmet `D − Σ f·x` are kept
+apart; shipments are kcal leaving the donor, deliveries kcal arriving. The production
+matching replayed from these inputs (`provisioning_counterfactual.match`) reproduces the
+authoritative transfers in 2,400 / 2,400 · 1,600 / 1,600 trade years.
+
+**Benchmark** (`economy/provisioning_feasibility.py`, NOT ACTIVE). Per trade year:
+maximize `Σ f_ij x_ij` s.t. `Σ_j x_ij ≤ O_i`, `Σ_i f_ij x_ij ≤ D_j`, `x ≥ 0` on eligible edges;
+a sparse LP solved by HiGHS (`scipy.optimize.linprog`). Each solution is checked outside the
+solver: eligibility, `x ≥ 0`, budgets and deficits within 1e-9 of the problem scale, and
+optimality by LP duality (dual feasibility and duality gap within 1e-7; observed ≤ 7e-15).
+HiGHS feasibility tolerances are set to 1e-10; a failure raises, nothing heuristic is
+substituted. Global lossless ceilings (every same-species pair, `f = 1`) are analytic,
+`min(total budget, total deficit)`. Controlled cases with known optima are tested
+(`tests/test_provisioning_feasibility.py`), including two donors of 50 and recipients R1
+(reaches both) and R2 (reaches one): greedy 50, optimum 100, independent of ids.
+
+**Results** (kcal summed over seeds and trade years, as % of the total pre-trade deficit;
+neolithic 6.86e10 kcal, pressure 1.26e11 kcal):
+
+| measurement | neolithic | pressure |
+|---|---|---|
+| positive surplus `Σ b` | 3,111 % | 382 % |
+| offered `Σ phi·b` | 933 % | 115 % |
+| A matching: shipped / delivered | 106 % / 62.6 % | 83.0 % / 44.0 % |
+| B optimum: offers, recorded reach, transport | 65.0 % | 50.2 % |
+| C optimum: offers, recorded reach, lossless | 79.9 % | 71.4 % |
+| H ceiling: offers, all pairs, lossless | 100.0 % | 81.9 % |
+| D optimum: full surplus, recorded reach, transport | 90.7 % | 87.3 % |
+| G optimum: full surplus, recorded reach, lossless | 98.4 % | 95.6 % |
+| E ceiling: full surplus, all pairs, lossless (not realizable) | 100.0 % | 99.9 % |
+| matching at full surplus | 89.3 % | 82.0 % |
+| unavoidable shortage under offers and reach (deficit − B) | 35.0 % | 49.8 % |
+| delivery feasible beyond the matching (B − A) | 2.4 % (3.9 % of A) | 6.2 % (14.2 % of A) |
+| shipped / offered (matching); transport loss of shipments | 11.4 %; 41.2 % | 72.4 %; 47.0 % |
+| recipient-years still short: matching / optimum | 33.5 % / 28.6 % | 71.5 % / 48.7 % |
+| recipient-years receiving nothing: matching / optimum | 21.9 % / 8.2 % | 51.2 % / 21.7 % |
+
+Stage 6A reproduced (pressure): 71.5 % of recipient-years short after matching, 72.4 % of
+offers shipped. Stage 6B reproduced: reachable delivered-equivalent *full surplus* / own
+deficit p50 22.8 · 13.7 for recipients with a reachable offering donor.
+
+**Conditional comparisons** (each changes one setting with the others fixed; they are not
+additive shares and depend on the order of comparison):
+
+| change | neolithic | pressure |
+|---|---|---|
+| matching → optimum (offers) / (full surplus) | +2.4 / +1.4 | +6.2 / +5.3 |
+| transport → lossless (offers) / (full surplus) | +14.9 / +7.7 | +21.2 / +8.3 |
+| recorded reach → all pairs, lossless (offers) / (full surplus) | +20.0 / +1.6 | +10.5 / +4.3 |
+| offers → full surplus (transport) / (lossless reach) / (global) | +25.6 / +18.5 / +0.0 | +37.1 / +24.2 / +18.0 |
+
+(percentage points of the total deficit)
+
+**Competition and double counting.**
+- Delivered-equivalent offers claimed by recipients (each counts every reachable donor)
+  are 1.60 · 4.03 times the distinct offers of the claimed donors. Recipient-years sharing
+  a donor with another recipient: 90.7 % · 99.0 %; with ≥ 2 reachable donors 98 % · 99 %.
+- Connected donor-recipient networks with all deficits simultaneously satisfiable under the
+  offers: 74.5 % · 15.2 % (multi-recipient 64.6 % · 9.2 %). Networks in which every recipient
+  is individually covered by the offers it reaches but not all jointly: 7.1 % · 13.7 % of
+  those.
+- Recipient-years with no reachable offering donor: 172 / 22,299 · 122 / 38,923.
+
+**Distribution** (recipient-years; population-weighted shares close to unit-weighted).
+Under pressure the optimum raises full relief from 28.5 % to 51.3 % and cuts "nothing" from
+51.2 % to 21.7 %; 43 % of recipient-years gain and 14 % lose relative to the matching. The
+matching serves the most severe first, so the optimum *lowers* the lower tail: dietary
+intake p1 0.444 → 0.386 (pressure), 0.237 → 0.269 neolithic. The aggregate optimum does not
+identify a distribution: two labelled tie-breaks among optimal allocations (most severe
+first, least severe first) differ for 18.6 % · 26.4 % of recipient-years, by up to the whole
+deficit; aggregate shares (full relief, nothing) move by ≤ 4 points between them. Gains of
+single-donor recipients are < 0.1 % of all gains.
+
+**Order and id sensitivity of the matching** (production unchanged; same physics):
+- random recipient order: total −1.3 % · +1.4 %, different total in 337 / 2,400 ·
+  1,267 / 1,600 years, 15 % · 31 % of delivered food reassigned;
+- random donor order: −0.2 % · −2.4 %; farthest donor first: −0.6 % · −5.9 %;
+- ids relabelled: no effect. No two recipients have equal severity; equal-cost donor ties
+  (15,772 · 32,248 recipient-years) are donors in the same cell with the same reach.
+
+**Interpretation.**
+- *Neolithic:* offers exceed deficits nine-fold, yet 35 % of the deficit stays unmet under
+  the optimum: the binding constraints are geography and transport (lossless +15, all pairs
+  +20 points), not supply or matching (+2.4).
+- *Pressure:* every constraint matters. Offers exceed deficits in aggregate (115 %) but not
+  in 35 % of years; the offer cap (+37 points), transport (+21), reach (+10) and the matching
+  (+6, 14 % of what it delivers) all bind, and they interact (transport matters less at full
+  surplus, the matching less at full surplus).
+- Global supply is almost never short (E < deficit in 0.25 % of pressure years): the
+  shortage is a distribution and access problem, not an aggregate scarcity.
+- The 6B "surplus in reach p50 13.7 × deficit" counted full surpluses, before the offer
+  fraction and with each donor counted by every recipient in reach.
+- Robust across seeds: (B − A)/A 13–16 % (pressure), 1–5 % (neolithic); one topology per
+  scenario.
+
+**For P4.** These are physical bounds under the model's offers, reach and transport. Which
+actor-level protocol, if any, could approach them (information, contact, willingness,
+commitments) is not addressed. The zero-arable and shared-resource findings of §15 stand
+unchanged and are not part of P3.
+
+**Reproduce:**
+
+```bash
+uv run pytest tests/test_provisioning_feasibility.py -q
+uv run python scripts/probes/donor_offer_audit.py record --jobs 2 --out runs/stage6b_p3/donor
+uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/stage6b_p3/opportunity
+uv run python scripts/probes/provisioning_feasibility.py analyse --load runs/stage6b_p3/donor --opportunity runs/stage6b_p3/opportunity
+```
+
+SciPy (1.18.1, HiGHS) is a development dependency; no model code uses it. numba imports
+it at import time to check its version whenever it is installed; the four exactness oracles
+are unchanged.

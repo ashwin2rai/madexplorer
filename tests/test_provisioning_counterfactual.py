@@ -142,8 +142,10 @@ def test_module_is_not_active() -> None:
         capture_output=True, text=True, check=False,
     ).stdout.split()  # fmt: skip
     # economy/donor_offer.py (Stage 6A) reuses match() and is itself NOT ACTIVE
-    # (tests/test_donor_offer.py checks that nothing in src imports it)
-    inactive = ("provisioning_counterfactual.py", "donor_offer.py")
+    # (tests/test_donor_offer.py checks that nothing in src imports it);
+    # economy/provisioning_feasibility.py (Stage 6B-P3) names it and is NOT ACTIVE too
+    # (tests/test_provisioning_feasibility.py)
+    inactive = ("provisioning_counterfactual.py", "donor_offer.py", "provisioning_feasibility.py")
     assert [h for h in hits if not h.endswith(inactive)] == []
     assert not any("provisioning_counterfactual" in r.qualname for r in RULES.values())
 
