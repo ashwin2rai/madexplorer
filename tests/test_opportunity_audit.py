@@ -270,7 +270,8 @@ def test_desired_capture_agrees_with_production_planning(monkeypatch: pytest.Mon
     cols, _, _, first = run(np.full_like(base, np.inf))
     row = [u.id for u in cols.units].index(incumbent.id)
     incumbent.fields_ha = float(first[row])  # wants to keep and grow these fields
-    digest = probe.physical_digest(sim)
+    fingerprint = sys.modules["_integrity"].fingerprint
+    digest = fingerprint(sim)
     cols, now, after, desired = run(np.full_like(base, np.inf))
     assert np.array_equal(after, np.where(desired < 0.05, 0.0, desired))
     cell_of = cols.get("cell")
@@ -279,7 +280,7 @@ def test_desired_capture_agrees_with_production_planning(monkeypatch: pytest.Mon
     arable[scarce] = 0.1 * desired[cell_of == scarce].sum()
     cols, now, after, again = run(arable)
     assert np.array_equal(again, desired)  # desired fields do not depend on arable land
-    assert probe.physical_digest(sim) == digest  # no state or RNG change
+    assert fingerprint(sim) == digest  # no state or RNG change (every component)
     ids = [u.id for u in cols.units]
     out = {}
     for c in set(cell_of.tolist()):
@@ -360,3 +361,29 @@ def test_analysis_measures_and_denominators(recorded: dict[str, Any]) -> None:
             assert c["util"] >= c["max_share"] * (1 - 1e-12)
     assert all(a["capture_ok"] for a in out["arable"])
     assert out["missed"] and all(ok for ok, _ in out["missed"])  # missed => all labor applied
+
+
+def test_recorded_transfers_are_authoritative_and_joinable(recorded: dict[str, Any]) -> None:
+    checks = _probe().transfer_checks(recorded)
+    assert checks is not None
+    n, years = checks["transfers"], checks["years"]
+    assert n > 0 and years == recorded["provenance"]["years_completed"]  # every trade year
+    assert checks["ids_recorded"] == n  # donor and recipient known that year by unit id
+    assert checks["delivery_exact"] == n  # delivered = shipped x exp(-path cost / decay)
+    assert checks["need_exact"] == n and checks["recipient_short"] == n
+    assert checks["ledger_exact"] == years  # shipped and transport loss = authoritative ledger
+    assert checks["ids_reappearing"] == 0  # ids name one unit for its recorded life
+    assert sum(not ts for ts in recorded["transfers"].values()) == checks["empty_years"]
+
+
+def test_transfer_capture_agrees_with_an_independent_observer(recorded: dict[str, Any]) -> None:
+    path = ROOT / "scripts/probes/donor_offer_audit.py"
+    spec = importlib.util.spec_from_file_location("donor_offer_probe_check", path)
+    assert spec and spec.loader
+    donor: Any = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(donor)
+    cultivation = {"mechanisms.cultivation": True}
+    donor.MVP2_2 = {"pressure+cult": ("scenarios/mvp2_2_pressure.yaml", 100, cultivation)}
+    other = donor.record_job(("pressure+cult", 1))  # a separate run, observed by another probe
+    ours = {y: [t[:4] for t in ts] for y, ts in recorded["transfers"].items()}
+    assert ours == {y["year"]: y["actual"] for y in other["trade"]}

@@ -15,18 +15,17 @@ accounting (MVP 3 Stage 5H). Observation only. COUNTERFACTUAL / NOT ACTIVE.
 ``economy/provisioning_counterfactual.py`` (H0 must reproduce every transfer exactly), then
 measures donor choice, tie information, same-year static rerouting (H1 / H2), reciprocity,
 and how often harvest-based ``food_ratio`` departs from the energy actually available.
-Nothing is re-simulated per setting and nothing feeds back (checked by digest).
+Nothing is re-simulated per setting and nothing feeds back.
 
 ``controlled`` prints the deterministic nutritional-accounting cases.
 
 Usage:
-    uv run python scripts/probes/provisioning_counterfactual.py record [--jobs 2] --out DIR
-    uv run python scripts/probes/provisioning_counterfactual.py analyse --load DIR [--jobs 2]
+    uv run python scripts/probes/provisioning_counterfactual.py record [--jobs 2] [--seeds 0 1 2 3] [--replace] --out DIR
+    uv run python scripts/probes/provisioning_counterfactual.py analyse --load DIR [--jobs 2] [--seeds ...] [--legacy-unverified]
     uv run python scripts/probes/provisioning_counterfactual.py controlled
 """
 
 import argparse
-import pickle
 import sys
 import time
 from collections import Counter, defaultdict
@@ -38,7 +37,18 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from _common import SEEDS, physical_digest, q, scenario_for
+from _common import REFERENCE, SEEDS, q, scenario_for
+from _integrity import (
+    RecordingError,
+    hook,
+    identity,
+    load_data,
+    provenance,
+    run_observed,
+    select_runs,
+    to_record,
+    write_recording,
+)
 
 from madexplorer.core.simulation import Simulator
 from madexplorer.economy.provisioning_counterfactual import (
@@ -57,7 +67,10 @@ from madexplorer.population.energetics import (
     energy_balance,
 )
 
-SCENARIOS = ("neolithic", "pressure+cult")
+SCENARIOS = ("neolithic", "pressure+cult")  # the MVP 2.1 reference runs (_common.REFERENCE)
+WEIGHT = 0.0  # strata.field_output_claim_weight of the recordings (passive strata)
+PROBE = "provisioning_counterfactual"
+SCHEMA = 1  # 6B-P2 provenance container (earlier recordings: legacy, no provenance)
 TIE = 1e-6  # a tie counts as present above this: floating-point "dust" transfers leave ~1e-10 ties
 WEIGHTS = (0.0, 0.25, 0.5, 0.75, 1.0)
 USEFUL = (0.01, 0.05, 0.1, 0.25, 0.5)
@@ -75,17 +88,16 @@ class Recorder:
     def __init__(self) -> None:
         self.trade: list[dict[str, Any]] = []
         self.energy: dict[int, dict[str, tuple[float, ...]]] = {}
-        self._saved: dict[str, Any] = {}
 
-    def install(self) -> None:
+    def install(self, sim: Simulator) -> None:
+        """Read-only hooks on ``sim``'s own subsystem instances (``_integrity.hook``)."""
         rec = self
-        trade0, energy0 = TradeSubsystem.evaluate, EnergeticsSubsystem.evaluate
 
         def trade(sub: Any, state: Any, ctx: Any) -> Any:
             ties = {
                 u.id: dict(u.trade_ties) for u in state.units.values()
             }  # before this year's apply
-            proposals = trade0(sub, state, ctx)
+            proposals = TradeSubsystem.evaluate(sub, state, ctx)
             cols = ctx.columns(state)
             if not len(cols):
                 return proposals
@@ -135,7 +147,7 @@ class Recorder:
             return proposals
 
         def energy(sub: Any, state: Any, ctx: Any) -> Any:
-            proposals = energy0(sub, state, ctx)
+            proposals = EnergeticsSubsystem.evaluate(sub, state, ctx)
             if proposals:
                 u = proposals[0]
                 cols = u.cols
@@ -156,38 +168,29 @@ class Recorder:
                 }  # fmt: skip
             return proposals
 
-        self._saved = {"trade": trade0, "energy": energy0}
-        TradeSubsystem.evaluate = trade  # type: ignore[method-assign]
-        EnergeticsSubsystem.evaluate = energy  # type: ignore[method-assign]
+        assert hook(sim, TradeSubsystem, trade)
+        assert hook(sim, EnergeticsSubsystem, energy)
 
-    def remove(self) -> None:
-        TradeSubsystem.evaluate = self._saved["trade"]  # type: ignore[method-assign]
-        EnergeticsSubsystem.evaluate = self._saved["energy"]  # type: ignore[method-assign]
+
+def ident_of(name: str, seed: int) -> dict[str, Any]:
+    """What a recording of ``(name, seed)`` made now would declare (``_integrity``)."""
+    path, _, settings = REFERENCE[name]
+    settings = {**settings, "strata.field_output_claim_weight": WEIGHT}
+    return identity(PROBE, SCHEMA, name, scenario_for(name, seed, WEIGHT), path, settings, __file__)
 
 
 def record_job(spec: tuple[str, int]) -> dict[str, Any]:
+    """One instrumented run, its uninstrumented twin compared in lockstep; the data plus
+    its ``provenance`` (split off when written)."""
     name, seed = spec
-    scenario = scenario_for(name, seed, 0.0)
+    scenario = scenario_for(name, seed, WEIGHT)
     rec = Recorder()
-    rec.install()
-    try:
-        sim = Simulator(scenario)
-        years = 0
-        for years in range(1, scenario.config.simulation.n_years + 1):  # noqa: B007
-            sim.step()
-            if not sim.state.units:
-                break
-    finally:
-        rec.remove()
-    plain = Simulator(scenario)
-    for _ in range(years):
-        plain.step()
-        if not plain.state.units:
-            break
+    sim, years, neutrality = run_observed(scenario, rec.install)
     events = [(e.year, e.kind, dict(e.data)) for e in sim.events
               if e.kind in ("population_split", "population_merge", "unit_extinct")]  # fmt: skip
     return {"name": name, "seed": seed, "trade": rec.trade, "energy": rec.energy, "events": events,
-            "neutral": physical_digest(sim) == physical_digest(plain)}  # fmt: skip
+            "neutral": neutrality["neutral"],
+            "provenance": provenance(ident_of(name, seed), scenario, years, neutrality)}  # fmt: skip
 
 
 # ---------------------------------------------------------------- analysis helpers
@@ -595,11 +598,12 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
         )
 
 
-def analyse_main(load: Path, jobs: int) -> None:
-    runs = []
-    for path in sorted(load.glob("*.pkl")):
-        with path.open("rb") as fh:
-            runs.append(pickle.load(fh))
+def analyse_main(load: Path, jobs: int, seeds: list[int], explicit: bool, legacy: bool) -> None:
+    try:
+        paths = select_runs(load, SCENARIOS, seeds, explicit, ident_of, legacy)
+    except RecordingError as error:
+        raise SystemExit(str(error)) from None
+    runs = [load_data(path, legacy) for path in paths]
     started = time.perf_counter()
     with Pool(jobs) as workers:
         outs = list(workers.imap(analyse_run, runs, chunksize=1))
@@ -810,20 +814,28 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("mode", choices=("record", "analyse", "controlled"))
     parser.add_argument("--jobs", type=int, default=2)
-    parser.add_argument("--seeds", type=int, nargs="*", default=list(SEEDS))
+    parser.add_argument(
+        "--seeds", type=int, nargs="*", help=f"explicit subset (default {list(SEEDS)})"
+    )
     parser.add_argument("--out", type=Path)
     parser.add_argument("--load", type=Path)
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="record: overwrite existing recordings that do not match",
+    )
+    parser.add_argument("--legacy-unverified", action="store_true",
+                        help="analyse: accept pre-6B-P2 recordings without provenance (unverified)")  # fmt: skip
     args = parser.parse_args()
+    seeds = list(SEEDS) if args.seeds is None else args.seeds
     if args.mode == "controlled":
         controlled()
         return
     if args.mode == "analyse":
-        analyse_main(args.load, args.jobs)
+        analyse_main(args.load, args.jobs, seeds, args.seeds is not None, args.legacy_unverified)
         return
     args.out.mkdir(parents=True, exist_ok=True)
-    specs = [
-        (n, s) for n in SCENARIOS for s in args.seeds if not (args.out / f"{n}_{s}.pkl").exists()
-    ]
+    specs = to_record(args.out, [(n, s) for n in SCENARIOS for s in seeds], ident_of, args.replace)
     started = time.perf_counter()
     with Pool(args.jobs) as workers:
         for h in workers.imap_unordered(record_job, specs, chunksize=1):
@@ -831,8 +843,7 @@ def main() -> None:
                 f"done {h['name']} seed {h['seed']} after {time.perf_counter() - started:.0f} s; trade years {len(h['trade'])}; neutral {h['neutral']}",
                 flush=True,
             )
-            with (args.out / f"{h['name']}_{h['seed']}.pkl").open("wb") as fh:
-                pickle.dump(h, fh)
+            write_recording(args.out / f"{h['name']}_{h['seed']}.pkl", h.pop("provenance"), h)
 
 
 if __name__ == "__main__":

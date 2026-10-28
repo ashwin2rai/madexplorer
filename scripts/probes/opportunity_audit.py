@@ -3,29 +3,43 @@
 """Socioecological opportunity structure: resource access, coordination, risk pooling
 (MVP 3 Stage 6B). Observation only. READ-ONLY / NOT ACTIVE.
 
-``record`` runs the MVP 2.2 reference scenarios with three read-only hooks:
+``record`` runs the MVP 2.2 reference scenarios with read-only hooks on the simulator's own
+subsystem instances (``_integrity.hook``):
 
 - ``ForagingSubsystem.evaluate``: every cell's wild stocks and capacities before harvest;
   each unit's need, labor, efficiency, foraging target, fields, crop, stores, cell and
   population; each (cell, species) foraging group with its members and the authoritative
   harvest; analyst-computed outside options (true accessible stock per prospective head in
   every reachable cell) and the occupied cells in reach;
-- ``FieldPlanningSubsystem.evaluate``: fields before and after planning (arable sharing);
-- ``migration.gather_candidates``: the cells each unit actually believes in, with believed
-  food and others (actor-known outside options).
+- ``TradeSubsystem.evaluate``: the year's authoritative transfers (donor, recipient,
+  shipped, delivered, recipient need; an empty list in a year without any), and after each
+  step the trade ledger (shipped, transport loss). Joined to the observations above by
+  ``(year, unit id)``; unit ids are never reused;
+- ``FieldPlanningSubsystem.evaluate``: fields before and after planning (arable sharing) and
+  the kernel's desired fields;
+- ``MigrationSubsystem.evaluate`` (``migration.gather_candidates`` swapped for that call):
+  the cells each unit actually believes in, with believed food and others (actor-known
+  outside options).
+
+An uninstrumented twin runs in lockstep and is compared by state fingerprint
+(``_integrity.run_observed``). Each recording embeds its provenance and is written
+atomically; ``record`` keeps an existing recording only if it is intact and matches (else it
+stops; ``--replace`` overwrites), and ``analyse`` loads exactly the requested runs
+(``--seeds`` for an explicit subset; ``--legacy-unverified`` for pre-6B-P2 recordings, whose
+provenance cannot be checked).
 
 ``analyse`` replays pooled foraging exactly (``economy/opportunity_audit.py``) and computes
 the pathway measures (pre-registered in the design document §AE): A resource access and
-rivalry, B pooled vs independent use, C complementary shortage and surplus.
+rivalry, B pooled vs independent use, C complementary shortage and surplus; it checks the
+recorded transfers' integrity but measures nothing from them (P3, P4).
 
 Usage:
-    uv run python scripts/probes/opportunity_audit.py record [--jobs 2] [--seeds 0 1 2 3] --out DIR
-    uv run python scripts/probes/opportunity_audit.py analyse --load DIR [--jobs 2]
+    uv run python scripts/probes/opportunity_audit.py record [--jobs 2] [--seeds 0 1 2 3] [--replace] --out DIR
+    uv run python scripts/probes/opportunity_audit.py analyse --load DIR [--jobs 2] [--seeds ...] [--legacy-unverified]
 """
 
 import argparse
 import inspect
-import pickle
 import sys
 import time
 from collections import Counter, defaultdict
@@ -37,7 +51,19 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from _common import SEEDS, physical_digest
+from _common import SEEDS
+from _integrity import (
+    RecordingError,
+    hook,
+    identity,
+    load_data,
+    provenance,
+    run_observed,
+    select_runs,
+    swapped,
+    to_record,
+    write_recording,
+)
 
 import madexplorer.economy.agriculture_kernel as agriculture_kernel
 import madexplorer.mobility.migration as migration
@@ -57,7 +83,8 @@ from madexplorer.economy.opportunity_audit import (
     remaining_target_met,
     utilization,
 )
-from madexplorer.economy.trade import delivered_fraction
+from madexplorer.economy.trade import TradeSubsystem, delivered_fraction
+from madexplorer.mobility.migration import MigrationSubsystem
 from madexplorer.population.energetics import annual_need_columns
 
 MVP2_2 = {
@@ -65,6 +92,10 @@ MVP2_2 = {
     "pressure+cult": ("scenarios/mvp2_2_pressure.yaml", 400, {"mechanisms.cultivation": True}),
 }
 LATER = 10  # years ahead for later shortage and assistance
+PROBE = "opportunity_audit"
+# Recording schema: 1 = Stage 6B-P1 layout (no provenance; legacy); 2 = 6B-P2: provenance
+# container, authoritative transfers and the trade ledger.
+SCHEMA = 2
 DESIRED_ARG = list(
     inspect.signature(
         getattr(agriculture_kernel.plan_fields, "py_func", agriculture_kernel.plan_fields)
@@ -89,20 +120,18 @@ def plan_with_desired(
     Not a second calculation: the production kernel writes them into its ``desired`` scratch
     argument and never rewrites it while sharing arable land, so the array is copied after
     the same call returns. No other interface exposes it. ``None`` when nothing was planned.
+    The kernel is replaced only for the duration of this call.
     """
-    kernel0 = agriculture_kernel.plan_fields
     captured: list[np.ndarray] = []
+    kernel0 = agriculture_kernel.plan_fields
 
     def kernel(*args: Any) -> Any:
         count = kernel0(*args)
         captured.append(np.array(args[DESIRED_ARG], dtype=float))
         return count
 
-    agriculture_kernel.plan_fields = kernel
-    try:
+    with swapped(agriculture_kernel, "plan_fields", kernel):
         proposals = evaluate(sub, state, ctx)
-    finally:
-        agriculture_kernel.plan_fields = kernel0
     assert len(captured) <= 1
     return proposals, captured[0] if captured else None
 
@@ -112,16 +141,17 @@ class Recorder:
         self.years: list[dict[str, Any]] = []
         self.static: dict[str, Any] = {}
         self.known: dict[int, dict[str, tuple[int, float, float, float]]] = {}
-        self._saved: dict[str, Any] = {}
+        # Authoritative trade, per year in which trade was evaluated (an empty list: no
+        # transfer); None if trade is not in the pipeline.
+        self.transfers: dict[int, list[tuple[str, str, float, float, float]]] | None = None
+        self.ledger: dict[int, tuple[float, float]] = {}
 
-    def install(self) -> None:
+    def install(self, sim: Simulator) -> None:
+        """Read-only hooks on ``sim``'s own subsystem instances (``_integrity.hook``)."""
         rec = self
-        forage0 = ForagingSubsystem.evaluate
-        plan0 = FieldPlanningSubsystem.evaluate
-        gather0 = migration.gather_candidates
 
         def forage(sub: Any, state: Any, ctx: Any) -> Any:
-            proposals = forage0(sub, state, ctx)
+            proposals = ForagingSubsystem.evaluate(sub, state, ctx)
             if not proposals:
                 return proposals
             cols = ctx.columns(state)
@@ -198,8 +228,19 @@ class Recorder:
             })  # fmt: skip
             return proposals
 
+        def trade(sub: Any, state: Any, ctx: Any) -> Any:
+            proposals = TradeSubsystem.evaluate(sub, state, ctx)
+            assert rec.transfers is not None
+            rec.transfers[state.year] = [
+                (t.donor_id, t.recipient_id, t.sent_kcal, t.received_kcal, t.recipient_need_kcal)
+                for p in proposals for t in p.transfers
+            ]  # fmt: skip
+            return proposals
+
         def plan(sub: Any, state: Any, ctx: Any) -> Any:
-            proposals, captured = plan_with_desired(plan0, sub, state, ctx)
+            proposals, captured = plan_with_desired(
+                FieldPlanningSubsystem.evaluate, sub, state, ctx
+            )
             cols = ctx.columns(state)
             ids = [u.id for u in cols.units]
             before = dict(zip(ids, cols.get("fields_ha").tolist(), strict=True))
@@ -214,62 +255,66 @@ class Recorder:
                 }
             return proposals
 
-        def gather(
-            cols: Any, species: Any, store: Any, memory: Any, reachable: Any, year: int
-        ) -> Any:
-            found = gather0(cols, species, store, memory, reachable, year)
-            if found is not None:
-                out = {}
-                population = cols.population().astype(float)
-                start = 0
-                for k, row in enumerate(found.index.tolist()):
-                    n = int(found.counts[k])
-                    sl = slice(start, start + n)
-                    start += n
-                    pop = population[row]
-                    per_head = found.food[sl] / np.maximum(pop + found.others[sl], 1.0)
-                    stay = found.staying[sl]
-                    home = float(per_head[stay][0]) if stay.any() else float("nan")
-                    alts = per_head[~stay]
-                    out[cols.units[row].id] = (n - int(stay.sum()), home,
-                                               float(alts.max()) if alts.size else float("nan"),
-                                               float((alts >= home).mean()) if alts.size else 0.0)  # fmt: skip
-                rec.known[year] = out
-            return found
+        def migrate(sub: Any, state: Any, ctx: Any) -> Any:
+            gather0 = migration.gather_candidates
 
-        self._saved = {"forage": forage0, "plan": plan0, "gather": gather0}
-        ForagingSubsystem.evaluate = forage  # type: ignore[method-assign]
-        FieldPlanningSubsystem.evaluate = plan  # type: ignore[method-assign]
-        migration.gather_candidates = gather
+            def gather(
+                cols: Any, species: Any, store: Any, memory: Any, reachable: Any, year: int
+            ) -> Any:
+                found = gather0(cols, species, store, memory, reachable, year)
+                if found is not None:
+                    out = {}
+                    population = cols.population().astype(float)
+                    start = 0
+                    for k, row in enumerate(found.index.tolist()):
+                        n = int(found.counts[k])
+                        sl = slice(start, start + n)
+                        start += n
+                        pop = population[row]
+                        per_head = found.food[sl] / np.maximum(pop + found.others[sl], 1.0)
+                        stay = found.staying[sl]
+                        home = float(per_head[stay][0]) if stay.any() else float("nan")
+                        alts = per_head[~stay]
+                        out[cols.units[row].id] = (n - int(stay.sum()), home,
+                                                   float(alts.max()) if alts.size else float("nan"),
+                                                   float((alts >= home).mean()) if alts.size else 0.0)  # fmt: skip
+                    rec.known[year] = out
+                return found
 
-    def remove(self) -> None:
-        ForagingSubsystem.evaluate = self._saved["forage"]  # type: ignore[method-assign]
-        FieldPlanningSubsystem.evaluate = self._saved["plan"]  # type: ignore[method-assign]
-        migration.gather_candidates = self._saved["gather"]
+            with swapped(migration, "gather_candidates", gather):
+                return MigrationSubsystem.evaluate(sub, state, ctx)
+
+        assert hook(sim, ForagingSubsystem, forage)
+        if hook(sim, TradeSubsystem, trade):
+            rec.transfers = {}
+        hook(sim, FieldPlanningSubsystem, plan)
+        hook(sim, MigrationSubsystem, migrate)
+
+    def after_step(self, sim: Simulator, ctx: Any) -> None:
+        """The step's authoritative trade totals (shipped, transport loss)."""
+        if self.transfers is not None:
+            self.ledger[sim.state.year] = (
+                ctx.ledger.trade_volume_kcal,
+                ctx.ledger.transport_loss_kcal,
+            )
 
 
-def _run(sc: Scenario, years: int | None = None) -> tuple[Simulator, int]:
-    sim = Simulator(sc)
-    done = 0
-    for done in range(1, (years or sc.config.simulation.n_years) + 1):  # noqa: B007
-        sim.step()
-        if not sim.state.units:
-            break
-    return sim, done
+def ident_of(name: str, seed: int) -> dict[str, Any]:
+    """What a recording of ``(name, seed)`` made now would declare (``_integrity``)."""
+    path, _, settings = MVP2_2[name]
+    return identity(PROBE, SCHEMA, name, scenario(name, seed), path, settings, __file__)
 
 
 def record_job(spec: tuple[str, int]) -> dict[str, Any]:
+    """One instrumented run, its uninstrumented twin compared in lockstep; the data plus
+    its ``provenance`` (split off when written)."""
     name, seed = spec
     sc = scenario(name, seed)
     rec = Recorder()
-    rec.install()
-    try:
-        sim, years = _run(sc)
-    finally:
-        rec.remove()
-    plain, _ = _run(sc, years)
+    _sim, years, neutrality = run_observed(sc, rec.install, rec.after_step)
     return {"name": name, "seed": seed, "years": rec.years, "static": rec.static, "known": rec.known,
-            "neutral": physical_digest(sim) == physical_digest(plain)}  # fmt: skip
+            "transfers": rec.transfers, "trade_ledger": rec.ledger, "neutral": neutrality["neutral"],
+            "provenance": provenance(ident_of(name, seed), sc, years, neutrality)}  # fmt: skip
 
 
 # ---------------------------------------------------------------- analysis
@@ -369,6 +414,44 @@ def potential_role_reversal(
                 out.append((a, t, k, specific, anyone))
                 break
     return out
+
+
+def transfer_checks(run: dict[str, Any]) -> dict[str, int] | None:
+    """Integrity of the recorded authoritative transfers (no behavioural statistics).
+
+    Join key with the opportunity observations: ``(year, unit id)``. Unit ids are never
+    reused (``IdAllocator``), so a recorded id names one unit for its whole recorded life.
+    """
+    transfers = run.get("transfers")
+    if transfers is None:
+        return None
+    by_year = {y["year"]: y["units"] for y in run["years"]}
+    decay = run["static"]["decay"]
+    c = Counter(years=len(transfers), empty_years=sum(not t for t in transfers.values()))
+    for year, ts in transfers.items():
+        units = by_year.get(year, {})
+        shipped = lost = 0.0
+        for donor, recipient, sent, received, need in ts:
+            shipped += sent
+            lost += sent - received
+            c["transfers"] += 1
+            if donor not in units or recipient not in units:
+                continue
+            c["ids_recorded"] += 1
+            d, r = units[donor], units[recipient]
+            cost = 0.0 if d["cell"] == r["cell"] else dict(r["occupied_reach"]).get(d["cell"])
+            c["delivery_exact"] += cost is not None and received == sent * delivered_fraction(
+                cost, decay
+            )
+            c["need_exact"] += need == r["need"]
+            c["recipient_short"] += balance(r) < 0 and balance(d) > 0
+        c["ledger_exact"] += (shipped, lost) == run["trade_ledger"].get(year)
+    span: dict[str, list[int]] = defaultdict(list)
+    for y in run["years"]:
+        for uid in y["units"]:
+            span[uid].append(y["year"])
+    c["ids_reappearing"] = sum(v[-1] - v[0] + 1 != len(v) for v in span.values())
+    return dict(c)
 
 
 def analyse_run(run: dict[str, Any]) -> dict[str, Any]:
@@ -551,6 +634,7 @@ def analyse_run(run: dict[str, Any]) -> dict[str, Any]:
         for y in years
     }
     out["later"] = potential_role_reversal(seq, LATER)
+    out["transfer_checks"] = transfer_checks(run)
     return dict(out)
 
 
@@ -822,18 +906,39 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
             f"     per distinct later shortage (most recent origin) {len(ev)}: formerly short neighbour {rate(ev[:, 1])}; any unit {rate(ev[:, 2])}; delay p50 {np.median(ev[:, 0]):.0f} y"
         )
 
+    tc = [o["transfer_checks"] for o in outs]
+    if any(t is None for t in tc):
+        print(
+            "\n-- realized transfers: not recorded (legacy recordings, or trade not in the pipeline)"
+        )
+        return
+    t = Counter()
+    for x in tc:
+        t.update(x)
+    n = t["transfers"]
+    print(
+        "\n-- realized transfers (authoritative TradeSubsystem proposals, joined by (year, unit id); integrity only, no reciprocity measure)"
+    )
+    print(f"   trade years {t['years']} (without any transfer {t['empty_years']}); transfers {n}; donor and recipient recorded that year {t['ids_recorded']}/{n}; "
+          f"delivered = shipped x delivered fraction of the recorded path cost {t['delivery_exact']}/{n}; recipient need = recorded need {t['need_exact']}/{n}")  # fmt: skip
+    print(f"   recipient short and donor in surplus by the recorded pre-trade balances {t['recipient_short']}/{n}; "
+          f"shipped and transport loss = trade ledger in {t['ledger_exact']}/{t['years']} years; unit ids reappearing after a gap {t['ids_reappearing']}")  # fmt: skip
 
-def _analyse_path(path: Path) -> tuple[str, int, bool, dict[str, Any]]:
-    with path.open("rb") as f:
-        run = pickle.load(f)
+
+def _analyse_path(path: Path, legacy: bool) -> tuple[str, int, bool, dict[str, Any]]:
+    run = load_data(path, legacy)
     return run["name"], run["seed"], run["neutral"], analyse_run(run)
 
 
-def analyse(load: Path, jobs: int) -> None:
+def analyse(load: Path, jobs: int, seeds: list[int], explicit: bool, legacy: bool) -> None:
     started = time.perf_counter()
+    try:
+        paths = select_runs(load, list(MVP2_2), seeds, explicit, ident_of, legacy)
+    except RecordingError as error:
+        raise SystemExit(str(error)) from None
     with Pool(jobs, maxtasksperchild=1) as pool:  # one recording in memory per worker
-        results = pool.map(_analyse_path, sorted(load.glob("*.pkl")), chunksize=1)
-    print("observer-neutral (physical digest):", {f"{n}/{s}": ok for n, s, ok, _ in results})
+        results = pool.starmap(_analyse_path, [(p, legacy) for p in paths], chunksize=1)
+    print("observer-neutral:", {f"{n}/{s}": ok for n, s, ok, _ in results})
     by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for name, _seed, _ok, out in results:
         by_name[name].append(out)
@@ -849,25 +954,33 @@ def main() -> None:
     parser.add_argument("--out", type=Path)
     parser.add_argument("--load", type=Path)
     parser.add_argument("--jobs", type=int, default=2)
-    parser.add_argument("--seeds", type=int, nargs="*", default=list(SEEDS))
+    parser.add_argument(
+        "--seeds", type=int, nargs="*", help=f"explicit subset (default {list(SEEDS)})"
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="record: overwrite existing recordings that do not match",
+    )
+    parser.add_argument("--legacy-unverified", action="store_true",
+                        help="analyse: accept pre-6B-P2 recordings without provenance (unverified)")  # fmt: skip
     args = parser.parse_args()
+    seeds = list(SEEDS) if args.seeds is None else args.seeds
     if args.command == "record":
         assert args.out is not None
         args.out.mkdir(parents=True, exist_ok=True)
-        specs = [
-            (n, s) for n in MVP2_2 for s in args.seeds if not (args.out / f"{n}_{s}.pkl").exists()
-        ]
+        specs = to_record(args.out, [(n, s) for n in MVP2_2 for s in seeds], ident_of, args.replace)
         with Pool(args.jobs) as pool:
             for run in pool.imap_unordered(record_job, specs):
-                with (args.out / f"{run['name']}_{run['seed']}.pkl").open("wb") as f:
-                    pickle.dump(run, f)
+                path = args.out / f"{run['name']}_{run['seed']}.pkl"
+                write_recording(path, run.pop("provenance"), run)
                 print(
                     f"recorded {run['name']} seed {run['seed']}: {len(run['years'])} years, neutral {run['neutral']}",
                     flush=True,
                 )
     else:
         assert args.load is not None
-        analyse(args.load, args.jobs)
+        analyse(args.load, args.jobs, seeds, args.seeds is not None, args.legacy_unverified)
 
 
 if __name__ == "__main__":

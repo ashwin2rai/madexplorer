@@ -3909,6 +3909,11 @@ original-vs-corrected record is in review §15. In summary:
 
 The 6B decision and the 6C recommendation are **provisional**, to be re-examined in 6B-P4.
 P1 issues no decision.
+
+**6B-P2 integrity (2026-10-28).** The probe recordings now embed provenance, are reused and
+analysed only when intact and matching, are checked for observer neutrality by a full state
+fingerprint against a lockstep twin, and (opportunity probe) record the authoritative
+transfers. The re-recorded data reproduce every P1 figure exactly. Review §16.
 - Full review: `objective/STAGE6B_SOCIOECOLOGICAL_MECHANISM_REVIEW.md` (sources, matrix,
   methods, results, 6C specification).
 - Helpers: `economy/opportunity_audit.py` (NOT ACTIVE).

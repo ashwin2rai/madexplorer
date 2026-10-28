@@ -522,5 +522,98 @@ uv run python scripts/probes/opportunity_audit.py record --jobs 2 --out runs/sta
 uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b_p1/record --jobs 1
 ```
 
-Older recordings made before 6B-P1 lack desired fields and cannot be analysed by the current
-probe.
+Recordings made before 6B-P1 lack desired fields and cannot be analysed by the current
+probe. The 6B-P1 recordings (`runs/stage6b_p1/record`) carry no provenance; since 6B-P2 they
+load only with `--legacy-unverified` (§16), and the 6B-P2 recordings reproduce their data
+exactly.
+
+## 16. Stage 6B-P2 — recording provenance and audit integrity (2026-10-28)
+
+**Scope.** Engineering and scientific integrity of recording, validation and analysis. No
+file under `src/` changed; the model, scenarios, RNG, goldens and oracles are unchanged.
+No scientific decision is issued; transfers are recorded, not interpreted (P3, P4).
+
+**Weaknesses found** (probes `opportunity_audit`, `donor_offer_audit`,
+`provisioning_counterfactual`):
+- an existing `NAME_SEED.pkl` was skipped because of its name, and analysis read every
+  `*.pkl` in the directory: a wrong, partial, duplicated or stale file was used silently;
+- recordings had no provenance (configuration, source, schema, environment), and a killed
+  writer could leave a truncated file under the final name;
+- neutrality was `physical_digest`: events, RNG states and a few unit fields. It misses
+  ecological stocks, trade ties, beliefs, familiarity, the id allocator and other state
+  (a test shows it unchanged after editing stocks and ties);
+- hooks replaced class methods and a module function for the whole run; jobs reusing a pool
+  worker relied on every `remove()` running;
+- 6B observed potential assistance only. `provisioning_counterfactual` records
+  authoritative transfers, but of MVP 2.1 runs (`_common.REFERENCE`), so they cannot be
+  joined to the MVP 2.2 6B recordings.
+
+**Corrections** (`scripts/probes/_integrity.py`, shared by the three probes):
+- *Container and provenance.* One pickle per run, `{format, provenance, data_sha256, data}`
+  with the data as pickled bytes, written to a temporary file, fsynced and renamed. The
+  provenance is `core.provenance.run_manifest` (config hash, source-tree hash, git commit and
+  dirty flag, package, lock, Python and numpy versions, belief backend, timestamp) plus the
+  identity of the run (probe, `recording_schema_version`, run key, scenario path, settings,
+  seed, world seed, requested horizon, `probe_sha256` over the probe script and its helper
+  modules), execution settings (numeric platform, JIT, start method, thread limits), years
+  completed and the neutrality record. Schemas: opportunity 2 (1 = the P1 layout), the others 1.
+- *Reuse.* `record` keeps a recording only if it is intact and every identity key, including
+  source and probe hash, matches; anything else stops the command and lists why
+  (`--replace` overwrites deliberately).
+- *Analysis.* Exactly one recording per requested run; duplicates, unexpected runs, missing
+  runs, schema or configuration mismatches, failed neutrality and mixed sources are errors.
+  A source differing from the checked-out code is allowed but flagged per run. `--seeds`
+  analyses an explicit subset; the analysed set is printed with its provenance.
+- *Legacy policy.* Recordings without provenance load only with `--legacy-unverified`, are
+  printed as PROVENANCE UNVERIFIED, are never reused by `record`, and cannot be mixed with
+  verified ones. Nothing is migrated or rewritten.
+- *State fingerprint* (audit-only, one hash per component). Control (year, id allocator, RNG
+  stream states read without creating streams, events), world, climate, ecology, strata ids
+  and sidecars, storage slots, unit order, and every unit field declared in
+  `population.fields.UNIT_FIELDS` read through its authoritative storage (table, belief
+  store, strata table): cohorts, cell, stores, reserves, harvests, fields, knowledge,
+  technologies, trade ties, familiarity, residence, beliefs (logical: current entries by
+  cell, backend-independent), strata and the rest. *Excluded*, because no later year reads
+  them: caches (capability maps, reachability, step-context transients), belief-store
+  capacity and expired rows (raw rows are the raw oracle's), unit-object caches, timings,
+  metrics recorders (probes record no metrics).
+- *Neutrality.* An uninstrumented twin is stepped in lockstep; fingerprints are compared
+  every 25 years and at the last year, and `physical_digest` at the end.
+- *Hooks.* On the simulator's own subsystem instances (`hook`); the class and every other
+  simulator are untouched. `plan_fields` and `gather_candidates` are swapped only during the
+  instrumented call (`swapped`, restored on any exit). Captured values are copies or
+  immutable. Pool workers are separate processes (`fork`); within one, hooks cannot leak.
+- *Transfers.* The opportunity probe records each year's authoritative `Transfer`s
+  (donor, recipient, shipped, delivered, recipient need; an empty list in a year without
+  any) and the step's trade ledger. They join the observations by `(year, unit id)`: ids are
+  allocated monotonically and never reused, fission creates new ids, fusion and extinction
+  retire them.
+
+**Reference demonstration** (MVP 2.2 neolithic 600 y and pressure + cultivation 400 y,
+seeds 0–3; 2 CPUs; sparse beliefs; JIT on):
+
+| check | result |
+|---|---|
+| record, `--jobs 2` (set A) | 8 / 8 runs, 183 s, all neutral (fingerprint at every 25-year checkpoint and the end; `physical_digest` equal) |
+| record again into A | 8 / 8 valid recordings kept, nothing re-recorded |
+| record, `--jobs 1` (set B) | 239 s; data bytes identical to A in 8 / 8 runs; provenance differs only in `timestamp_utc` |
+| A versus the P1 recordings | `years`, `static`, `known` equal in 8 / 8 runs (NaN-aware deep comparison); A adds `transfers`, `trade_ledger` |
+| analyse A twice (`--jobs 2`, `--jobs 1`) | identical output except elapsed time |
+| analyse A versus P1 recordings (legacy mode) | identical figures; only the transfer section differs |
+| legacy P1 recordings without the flag | refused, listing each file |
+| `--seeds 0` subset | 2 runs analysed, 6 listed as ignored |
+| transfer integrity (neolithic · pressure) | 59,588 · 76,603 transfers in 2,400 · 1,600 trade years (1,098 · 10 without any); ids recorded, delivery = shipped × exp(−cost/decay), need, and recipient short / donor in surplus: all exact; shipped and loss = ledger in every year; no id reappears |
+
+Every P1 figure (§15, §15.1) is therefore reproduced from fully verified recordings.
+
+**Limitations.**
+- Pickle is trusted input: open only recordings you made.
+- Source identity covers the `madexplorer` package and the probe scripts; scenario and
+  species files enter through `config_hash`, the dependency lock through its hash. Compiled
+  JIT caches and the numeric platform are recorded, not verified.
+- Analysis accepts a consistent recording set made with other source code (flagged); the
+  recording schema version, not the source hash, guards structural compatibility.
+- Neutrality is checked at checkpoints (every 25 y and the end), not every year; the
+  fingerprint covers state, not transient step-context values within a year.
+- Other research probes keep the older `_common.physical_digest` and class-level hooks; they
+  are outside P2's scope and their results are unchanged.

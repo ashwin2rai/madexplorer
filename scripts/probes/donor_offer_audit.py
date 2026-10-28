@@ -4,7 +4,8 @@
 COUNTERFACTUAL / NOT ACTIVE.
 
 ``record`` runs the MVP 2.2 reference scenarios (``scenarios/mvp2_2_*.yaml``) with two
-read-only hooks:
+read-only hooks (on the simulator's own subsystem instances; an
+uninstrumented twin is compared in lockstep by state fingerprint, ``_integrity``):
 
 - ``TradeSubsystem.evaluate``: each unit's pre-trade need, harvest, stores, body reserve and
   cap, storage retention, last year's deficit, harvest memory and tie total; the reachable
@@ -17,15 +18,14 @@ every authoritative transfer exactly. It then decomposes each donor-year (surplu
 shipment, delivery, retention), measures offer use and the static and later cost of giving
 to the donor, tests what the donor could know, and re-matches each recorded year with the
 offer fraction replaced (``PHIS``: sensitivity conditions, not strategies). Nothing is
-re-simulated per setting and nothing feeds back (checked by digest).
+re-simulated per setting and nothing feeds back.
 
 Usage:
-    uv run python scripts/probes/donor_offer_audit.py record [--jobs 2] [--seeds 0 1 2 3] --out DIR
-    uv run python scripts/probes/donor_offer_audit.py analyse --load DIR [--jobs 2]
+    uv run python scripts/probes/donor_offer_audit.py record [--jobs 2] [--seeds 0 1 2 3] [--replace] --out DIR
+    uv run python scripts/probes/donor_offer_audit.py analyse --load DIR [--jobs 2] [--seeds ...] [--legacy-unverified]
 """
 
 import argparse
-import pickle
 import sys
 import time
 from collections import defaultdict
@@ -37,7 +37,18 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from _common import SEEDS, physical_digest, q
+from _common import SEEDS, q
+from _integrity import (
+    RecordingError,
+    hook,
+    identity,
+    load_data,
+    provenance,
+    run_observed,
+    select_runs,
+    to_record,
+    write_recording,
+)
 
 from madexplorer.config.loader import Scenario
 from madexplorer.core.simulation import Simulator
@@ -68,6 +79,8 @@ MVP2_2 = {  # the MVP 2.2 reference runs (baselines/mvp2_2)
 PHIS = (0.0, 0.1, 0.2, 0.3, 0.45, 0.6, 1.0)  # offer fraction of surplus; 0.3 = production (D0)
 REMATCH_PHIS = (0.15, 0.3, 0.6)  # network rematching without the primary donor (costly)
 HORIZONS = (1, 3, 5, 10)
+PROBE = "donor_offer_audit"
+SCHEMA = 1  # 6B-P2 provenance container (earlier recordings: legacy, no provenance)
 MID, SCALE = 0.8, 0.1  # human.yaml fertility_food_midpoint / scale
 
 
@@ -95,14 +108,13 @@ class Recorder:
     def __init__(self) -> None:
         self.trade: list[dict[str, Any]] = []
         self.energy: dict[int, dict[str, tuple[float, ...]]] = {}
-        self._saved: dict[str, Any] = {}
 
-    def install(self) -> None:
+    def install(self, sim: Simulator) -> None:
+        """Read-only hooks on ``sim``'s own subsystem instances (``_integrity.hook``)."""
         rec = self
-        trade0, energy0 = TradeSubsystem.evaluate, EnergeticsSubsystem.evaluate
 
         def trade(sub: Any, state: Any, ctx: Any) -> Any:
-            proposals = trade0(sub, state, ctx)
+            proposals = TradeSubsystem.evaluate(sub, state, ctx)
             cols = ctx.columns(state)
             if not len(cols):
                 return proposals
@@ -150,7 +162,7 @@ class Recorder:
             return proposals
 
         def energy(sub: Any, state: Any, ctx: Any) -> Any:
-            proposals = energy0(sub, state, ctx)
+            proposals = EnergeticsSubsystem.evaluate(sub, state, ctx)
             if proposals:
                 u = proposals[0]
                 cols = u.cols
@@ -165,39 +177,28 @@ class Recorder:
                 }  # fmt: skip
             return proposals
 
-        self._saved = {"trade": trade0, "energy": energy0}
-        TradeSubsystem.evaluate = trade  # type: ignore[method-assign]
-        EnergeticsSubsystem.evaluate = energy  # type: ignore[method-assign]
-
-    def remove(self) -> None:
-        TradeSubsystem.evaluate = self._saved["trade"]  # type: ignore[method-assign]
-        EnergeticsSubsystem.evaluate = self._saved["energy"]  # type: ignore[method-assign]
+        assert hook(sim, TradeSubsystem, trade)
+        assert hook(sim, EnergeticsSubsystem, energy)
 
 
-def _run(sc: Scenario, years: int | None = None) -> tuple[Simulator, int]:
-    sim = Simulator(sc)
-    done = 0
-    for done in range(1, (years or sc.config.simulation.n_years) + 1):  # noqa: B007
-        sim.step()
-        if not sim.state.units:
-            break
-    return sim, done
+def ident_of(name: str, seed: int) -> dict[str, Any]:
+    """What a recording of ``(name, seed)`` made now would declare (``_integrity``)."""
+    path, _, settings = MVP2_2[name]
+    return identity(PROBE, SCHEMA, name, scenario(name, seed), path, settings, __file__)
 
 
 def record_job(spec: tuple[str, int]) -> dict[str, Any]:
+    """One instrumented run, its uninstrumented twin compared in lockstep; the data plus
+    its ``provenance`` (split off when written)."""
     name, seed = spec
     sc = scenario(name, seed)
     rec = Recorder()
-    rec.install()
-    try:
-        sim, years = _run(sc)
-    finally:
-        rec.remove()
-    plain, _ = _run(sc, years)
+    sim, years, neutrality = run_observed(sc, rec.install)
     events = [(e.year, e.kind, dict(e.data)) for e in sim.events
               if e.kind in ("population_split", "population_merge", "unit_extinct")]  # fmt: skip
     return {"name": name, "seed": seed, "trade": rec.trade, "energy": rec.energy, "events": events,
-            "neutral": physical_digest(sim) == physical_digest(plain)}  # fmt: skip
+            "neutral": neutrality["neutral"],
+            "provenance": provenance(ident_of(name, seed), sc, years, neutrality)}  # fmt: skip
 
 
 # ---------------------------------------------------------------- analysis helpers
@@ -663,15 +664,13 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
     )
 
 
-def analyse(load: Path, jobs: int) -> None:
-    runs = []
-    for path in sorted(load.glob("*.pkl")):
-        with path.open("rb") as f:
-            runs.append(pickle.load(f))
-    print(
-        "observer-neutral (physical digest):",
-        {f"{r['name']}/{r['seed']}": r["neutral"] for r in runs},
-    )
+def analyse(load: Path, jobs: int, seeds: list[int], explicit: bool, legacy: bool) -> None:
+    try:
+        paths = select_runs(load, list(MVP2_2), seeds, explicit, ident_of, legacy)
+    except RecordingError as error:
+        raise SystemExit(str(error)) from None
+    runs = [load_data(path, legacy) for path in paths]
+    print("observer-neutral:", {f"{r['name']}/{r['seed']}": r["neutral"] for r in runs})
     started = time.perf_counter()
     with Pool(jobs) as pool:
         outs = pool.map(analyse_run, runs)
@@ -690,24 +689,33 @@ def main() -> None:
     parser.add_argument("--out", type=Path)
     parser.add_argument("--load", type=Path)
     parser.add_argument("--jobs", type=int, default=2)
-    parser.add_argument("--seeds", type=int, nargs="*", default=list(SEEDS))
+    parser.add_argument(
+        "--seeds", type=int, nargs="*", help=f"explicit subset (default {list(SEEDS)})"
+    )
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="record: overwrite existing recordings that do not match",
+    )
+    parser.add_argument("--legacy-unverified", action="store_true",
+                        help="analyse: accept pre-6B-P2 recordings without provenance (unverified)")  # fmt: skip
     args = parser.parse_args()
+    seeds = list(SEEDS) if args.seeds is None else args.seeds
     if args.command == "record":
         assert args.out is not None
         args.out.mkdir(parents=True, exist_ok=True)
-        specs = [(n, s) for n in MVP2_2 for s in args.seeds
-                 if not (args.out / f"{n}_{s}.pkl").exists()]  # fmt: skip
+        specs = to_record(args.out, [(n, s) for n in MVP2_2 for s in seeds], ident_of, args.replace)
         with Pool(args.jobs) as pool:
             for run in pool.imap_unordered(record_job, specs):
-                with (args.out / f"{run['name']}_{run['seed']}.pkl").open("wb") as f:
-                    pickle.dump(run, f)
+                path = args.out / f"{run['name']}_{run['seed']}.pkl"
+                write_recording(path, run.pop("provenance"), run)
                 print(
                     f"recorded {run['name']} seed {run['seed']}: {len(run['trade'])} trade years, neutral {run['neutral']}",
                     flush=True,
                 )
     else:
         assert args.load is not None
-        analyse(args.load, args.jobs)
+        analyse(args.load, args.jobs, seeds, args.seeds is not None, args.legacy_unverified)
 
 
 if __name__ == "__main__":
