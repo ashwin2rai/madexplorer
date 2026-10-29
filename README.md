@@ -8,12 +8,27 @@ patterns emerge from local mechanisms rather than hard-coded historical rules.
 The full objective and specification is in
 [`objective/SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`](objective/SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md).
 
-## Status: MVP 2.1 frozen — consolidation before MVP 3
+## Status: MVP 2.1 frozen/default; Simulation V1 strategy adopted (documentation only)
 
-MVP 2.1 is the frozen scientific base (`baselines/mvp2_1/freeze_manifest.json`). The code is
-being consolidated and simplified without changing its results before MVP 3 (distributional
-society) begins. See `objective/status.md` for the current handoff, accepted limitations and
-open questions.
+MVP 2.1 remains the frozen default base (`baselines/mvp2_1/freeze_manifest.json`). The
+scientifically accepted MVP 2.2 dietary-intake fertility correction is **opt-in** via the
+`scenarios/mvp2_2_*.yaml` scenarios; its manifest's `CANDIDATE` label is an administrative
+status, not a reversal of scientific acceptance.
+
+The project has adopted a **Simulation V1-first roadmap**: complete a minimal,
+reproducible ecological-demographic-social-institutional feedback loop, then replace
+explicitly documented scientific approximations in controlled research. This decision
+**does not implement or activate V1 social mechanisms**. The earlier MVP 3 studies and
+Stage 6B review remain scientific evidence rather than mandatory sequencing gates.
+
+- **Active roadmap:** [`objective/SIMULATION_V1_ROADMAP.md`](objective/SIMULATION_V1_ROADMAP.md)
+- **Declared V1 assumptions and limitations:** [`objective/SCIENTIFIC_DEBT_REGISTER.md`](objective/SCIENTIFIC_DEBT_REGISTER.md)
+- **Current code and handoff:** [`objective/status.md`](objective/status.md)
+- **Long-term goal and scientific constraints:** [`objective/SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`](objective/SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md)
+
+V1 deliberately begins with collective **between-unit** arrangements, an **assumed** small
+rule repertoire, and **bounded revocable** decision rights. Active within-unit inequality,
+coercion and full state formation are deferred, not silently declared solved.
 
 | Implemented | Mechanism |
 |---|---|
@@ -44,9 +59,10 @@ cultivation starts around years 160–240, farming supplies a quarter of the har
 mechanism demonstrations, not historical calibration; why growth stays so sustained is an
 open question (`objective/status.md`).
 
-Next milestones (objective §15): MVP 3 distributional society (joint socioeconomic strata:
-wealth, health, occupations), MVP 4 hierarchy, institutions and politics, MVP 5+ richer worlds
-and species.
+Near-term planned milestones (objective §15; see V1 roadmap): V1-0 research contract,
+V1-1 consequential local choices, V1-2 persistent arrangements, V1-3 bounded decision
+rights, V1-4 end-to-end feedback tests, V1-5 research release. The original MVP 3/4/5
+science remains in the longer-term roadmap; the old dependency ordering has changed.
 
 ## Setup
 

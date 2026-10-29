@@ -3,8 +3,8 @@
 ## Canonical Objective and Architectural Direction
 
 **Project:** `madexplorer`\
-**Document version:** 3.1 (2026-10-07)\
-**Current scientific milestone:** MVP 2.1 frozen; MVP 3 in progress (strata passive)\
+**Document version:** 3.2 (Simulation V1 strategy adoption; prior scientific record retained)\
+**Current scientific milestone:** MVP 2.1 frozen/default; MVP 2.2 scientifically accepted opt-in; Simulation V1 roadmap adopted (no V1 social mechanisms added by this decision)\
 **Current implementation:** Python 3.13+\
 **Document role:** durable project objective, scientific principles, and architectural constraints
 
@@ -19,8 +19,11 @@ When sources differ, interpret them by role:
 - this document: durable scientific intent and architectural constraints;
 - `baselines/` manifests and frozen artifacts: the recorded scientific baseline;
 - scenarios, source, tests and the model-rule registry: the executable model;
-- `objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`: the MVP 3 contract and stage findings;
-- `objective/status.md`: current handoff, accepted limitations and working discipline.
+- `objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`: the existing strata contract and historical stage findings;
+- `objective/STAGE6B_SOCIOECOLOGICAL_MECHANISM_REVIEW.md`: Stage 6B evidence and historical candidate recommendations;
+- `objective/SIMULATION_V1_ROADMAP.md`: adopted near-term milestone scope and independent progress gates;
+- `objective/SCIENTIFIC_DEBT_REGISTER.md`: deliberately accepted V1 simplifications, scientific limitations and replacement triggers;
+- `objective/status.md`: actual implementation state, current handoff and working discipline.
 
 Documents keep current conclusions, not appended logs; git keeps the history. A scientific
 change updates the executable model and its baseline deliberately, and this document when
@@ -203,16 +206,43 @@ MVP 2 contains accepted coarse abstractions that bundle several rows of the tabl
 notably the Boolean technologies (§8). They are modeling hypotheses at a stated resolution,
 not the project's final ontology.
 
+### 2.8 Functional completeness and scientific fidelity are independent
+
+The active development strategy explicitly distinguishes two dimensions:
+
+- **Functional completeness:** whether a capability is represented, causally active, and
+  linked to the wider ecological-demographic-social feedback loop.
+- **Scientific fidelity:** whether its assumptions, evidence, invariants, tests, uncertainty
+  and limits justify the *specific* claim being investigated.
+
+Before Simulation V1, prioritize a complete minimal causal loop while maintaining a
+minimum scientific-fidelity gate for every new mechanism. After V1, prioritize controlled
+replacement of documented assumptions. Neither dimension is a single trustworthy
+numerical score. An inactive but rigorously tested counterfactual is not a functioning
+social capability; an active heuristic is not thereby externally validated.
+
+V1 deliberately starts with social arrangements **between collective population units**,
+limited and revocable decision rights, and a small **assumed** repertoire of permissible
+rules. This does not establish within-unit class inequality, coercive states, or invention
+of the repertoire. These omissions are accepted specifically to reach an interpretable V1
+and are recorded in `objective/SCIENTIFIC_DEBT_REGISTER.md`.
+
 ---
 
 ## 3. Canonical Project State
 
-### 3.1 Scientific base: MVP 2.1
+### 3.1 Scientific base: frozen MVP 2.1 and accepted opt-in MVP 2.2
 
 MVP 1, MVP 2 and Performance Hardening are complete. MVP 2.1 (MVP 2 plus the B1
 merge-familiarity fix) is the frozen base, recorded in `baselines/mvp2_1/freeze_manifest.json`.
 Later refactors are validated against its golden fixtures and raw/logical exactness
 oracles, not against the manifest's original source hash.
+
+MVP 2.2 adds the scientifically accepted dietary-intake fertility correction, selected
+explicitly through the `scenarios/mvp2_2_*.yaml` scenarios. Its manifest retains the
+administrative `CANDIDATE` label; that does not change its scientific acceptance, nor does
+it change the MVP 2.1 repository default. New V1 research should opt in explicitly to the
+accepted 2.2 mechanism. No existing baseline is silently rewritten by the roadmap.
 
 The frozen simulator models generated worlds (terrain, water, climate, hydrology,
 vegetation, soil, food stocks); configurable species physiology, life history, movement,
@@ -661,6 +691,19 @@ A correction to scientific semantics is not an ordinary refactor. Record it as a
 change, explain the reason, update tests and baselines intentionally, and preserve prior
 milestone artifacts when they remain useful for comparison.
 
+### 11.5 V1 mechanism gate and documented scientific debt
+
+A deliberately simplified mechanism may enter V1 only with: a clear function and causal
+schedule; explicit assumed versus endogenous behavior; relevant feasibility and lifecycle
+checks; controlled cases and a meaningful comparison; bounded dynamic/sensitivity tests;
+and provenance, limitations and a replacement trigger. The precise gate and stop/reopen
+rules are in `objective/SIMULATION_V1_ROADMAP.md` §5.
+
+Every consequential accepted approximation is entered in
+`objective/SCIENTIFIC_DEBT_REGISTER.md` at the same review stage as implementation. Open
+scientific questions are not automatic prerequisites. Impossible information, violated
+conservation, untestable claims and forced outcomes remain immediate blockers.
+
 ---
 
 ## 12. Engineering Principles
@@ -811,10 +854,46 @@ results without requiring the simulation core to know about UI concerns.
 
 ---
 
-## 15. Roadmap
+## 15. Roadmap: Simulation V1 first, with a retained long-term research program
 
-The roadmap is conceptual. Exact milestone contents may change as experiments reveal which
-mechanisms matter.
+**Adopted near-term priority:** a complete, reproducible exploratory Simulation V1 before
+full scientific refinement of every layer. The prior five-MVP ordering is retained below
+as *historical scientific scope*, not a strict dependency chain. The detailed governing
+plan, evidence gates and stopping rules are in `objective/SIMULATION_V1_ROADMAP.md`; accepted
+simplifications and replacements are in `objective/SCIENTIFIC_DEBT_REGISTER.md`.
+
+This strategic adoption changes **documentation and development priority only**. It does
+not activate a mechanism, change a frozen baseline, or establish that institutional
+outcomes have already emerged.
+
+### Adopted V1 capability sequence
+
+1. **V1-0 - Research contract:** specify opt-in MVP 2.2 foundation, experiment families,
+   testable claims, scenario identity, decision and scientific debt boundaries.
+2. **V1-1 - Consequential social participation:** local decisions about interunit
+   assistance/allocation using existing material accounting; C1 is a candidate component,
+   not a mandatory independent Stage 6C research gate.
+3. **V1-2 - Persistent arrangements:** one continuing resource-allocation arrangement with
+   consequential membership, rules, revision, exit and dissolution.
+4. **V1-3 - Minimal political decision rights:** conditional, bounded, operational and
+   revocable delegation over a consequential shared activity, with a decentralized path.
+5. **V1-4 - Integrated feedback:** multigenerational material/social feedback, ablations,
+   multiple seeds and world topologies, and explicit checks on ecological outside options.
+6. **V1-5 - Research release:** documented executable contract, recorded event histories,
+   provenance, comparison experiments, tests and limitation/debt reports.
+
+**V1 scope simplifications deliberately adopted:** collective rather than differentiated
+within-unit social actors; no active internal class mechanism; a small assumed institutional
+rule repertoire; bounded reversible rather than coercive political control; simplified
+contact, memory and decision rules with explicit configuration and sensitivity. These
+permit specific exploratory questions but not claims about the origin of all institutions,
+within-unit inequality or coercive state formation. Every milestone must pass separate
+functional and minimum scientific-fidelity gates.
+
+### Previous milestones and longer-term scientific scope (not deleted)
+
+The original roadmap was conceptual; its scientific aims remain relevant, but the ordering
+of full within-unit differentiation before *any* institution is no longer mandatory.
 
 ### MVP 1 — Ecological-demographic sandbox — COMPLETE
 
@@ -835,9 +914,9 @@ measurements while preserving frozen semantics.
 
 The enduring result is architectural, not the historical benchmark numbers.
 
-### MVP 3 — Distributional Society — IN PROGRESS
+### MVP 3 — Distributional Society — REPRESENTATION IN PLACE; ACTIVE INTERNAL MECHANISMS DEFERRED
 
-MVP 3 should introduce the minimum within-group socioeconomic structure required for
+The original MVP 3 program aims to introduce the minimum within-group socioeconomic structure required for
 heterogeneous behavior.
 
 Core goals:
@@ -869,8 +948,12 @@ Candidate mechanisms include:
 - legitimacy, autonomy, resistance, and rebellion;
 - political fission, federation, conquest, and collapse.
 
-These should build on MVP 3 distributions rather than invent a parallel political actor
-model disconnected from material society.
+Long-term political research should connect authority and inequality to material and
+distributional mechanisms, not to arbitrary categorical labels. For V1, a bounded
+**between-unit** arrangement and delegated decision right may be implemented before active
+within-unit strata, because the units already make material decisions and experience
+material consequences. This is an explicit scope limitation, not a conclusion that
+within-unit distribution is unimportant.
 
 ### MVP 5+ — Richer Worlds and Species
 

@@ -1,11 +1,22 @@
 # MVP 3 — Socioeconomic Strata: Design
 
-**Status:** current contract plus findings register (rewritten 2026-10-07; the full
-stage-by-stage text, including the Stage 0 plan §A–§K, is in git at `aae0974`). Latest
-stage: 6B-P1 (§AE, measurement corrections; the 6B decision D / pathway C is provisional until
-6B-P4; nothing activated; review in `STAGE6B_SOCIOECOLOGICAL_MECHANISM_REVIEW.md` §15). 6A (§AD) decision B. Stage 5 closed
-(approved 2026-10-27). Strata are a passive accounting overlay; the physical-feedback gate (§N7) is
-closed.\
+> **Adopted Simulation V1 roadmap disposition:** This is the existing technical contract
+> and scientific findings register, **not** the active prerequisite sequence for Simulation
+> V1. The project has accepted collective **between-unit** social decisions, persistent
+> arrangements and bounded revocable authority as the initial V1 route. Active
+> **within-unit** socioeconomic differentiation remains deferred and explicitly recorded
+> as scientific debt (V1-D01/V1-D02). Any future mechanism reading strata still must
+> satisfy the relevant representation/resolution and accounting gates. The findings below
+> remain valid within their stated scope; no V1 mechanism was activated by this decision.
+> See `SIMULATION_V1_ROADMAP.md`, `SCIENTIFIC_DEBT_REGISTER.md` and `status.md`.
+
+**Status:** existing technical contract and findings register (rewritten 2026-10-07;
+the full earlier stage-by-stage text, including Stage 0 §A-§K, is in git at `aae0974`).
+Stage 6B-P1 corrections are in §AE / review §15; the most recent Stage 6B-P4 synthesis
+is in review §18. The project's **6B-P5 roadmap decision now prioritizes Simulation V1**
+as defined in `SIMULATION_V1_ROADMAP.md`; prior recommendations below are historical,
+not automatic gates. Stage 5 is closed (approved 2026-10-27). Strata remain passive;
+the physical-feedback gate (§N7) remains closed. No V1 social mechanism has been added.\
 **Base:** MVP 2.1 frozen (`baselines/mvp2_1/`), post-consolidation architecture
 (`PopulationStore`, `population/fields.py`). MVP 2.2 (dietary-intake fertility,
 `baselines/mvp2_2/`, opt-in; manifest still CANDIDATE) is the Stage 6A scientific reference.
@@ -4013,8 +4024,10 @@ actor-level interaction does not:
 - donors that never see a need;
 - exogenous φ.
 
-**Stage 6C (recommended, not started; on hold until 6B-P4):** *local need requests with proportional donor
-rationing*.
+**Historical Stage 6C proposal (pre-P4; not started or authorized under the V1 roadmap):**
+*local need requests with proportional donor rationing*. The original falsification rule
+below was replaced by the contact-matched comparisons in review §18; after 6B-P5 this is
+only a candidate component for V1-1, not a mandatory stage.
 - A short unit asks reachable units nearest first.
 - Each donor splits its offer `φ·b` across the requests it actually receives, in proportion
   to the amounts requested.

@@ -1,5 +1,14 @@
 # Stage 6B — Socioecological Mechanism Review
 
+> **Roadmap disposition after strategic reassessment (6B-P5):** This is a historical
+> scientific review. The Stage 6B-P4 recommendation of C1 remains a candidate for a
+> local social participation component, but **Stage 6C is no longer the mandatory next
+> development gate and is not authorized by adoption of the V1 roadmap**. The adopted
+> V1 strategy first creates a minimal interunit-to-institution feedback loop, explicitly
+> simplifying collective actors, rule repertoires and bounded authority. Existing results,
+> corrections, nulls and uncertainty below are **not** reinterpreted or overwritten.
+> See `SIMULATION_V1_ROADMAP.md` and `SCIENTIFIC_DEBT_REGISTER.md`.
+
 **Status:** comparative review, read-only experiment and mechanism selection (2026-10-27).
 Nothing implemented or activated. Starting commit `cabe833` (Stage 6A committed), clean tree.
 Reference model: MVP 2.2, selected explicitly (`scenarios/mvp2_2_*.yaml`). The MVP 2.2

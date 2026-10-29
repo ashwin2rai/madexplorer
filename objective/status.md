@@ -1,30 +1,80 @@
 # Implementation Status
 
-**Updated:** 2026-10-29 (MVP 3 Stage 6B-P4, scientific synthesis and Stage 6C decision gate; pause for review)\
+**Updated:** Simulation V1 strategy adoption (documentation-only handoff; prior Stage 6B-P4 record retained below)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`), still the repository default.
 MVP 2.2 (`baselines/mvp2_2/`, opt-in) is the scientific reference, selected explicitly through
 `scenarios/mvp2_2_*.yaml`. Its fertility mechanism is scientifically accepted; its manifest
 still reads CANDIDATE (administrative baseline state, unchanged).\
-**Current milestone:** MVP 3, staged socioeconomic differentiation
-(`objective/MVP3_SOCIOECONOMIC_STRATA_DESIGN.md`)
+**Current milestone:** Simulation V1 strategic plan **adopted**, functional milestones
+**not yet implemented**. Original MVP 3 strata investigations remain a preserved scientific
+record; Stage 6C is not started. See `objective/SIMULATION_V1_ROADMAP.md` and
+`objective/SCIENTIFIC_DEBT_REGISTER.md`.
 
-How to read this file: the current handoff, then what MVP 3 has established, then the MVP
-2.1 base. Scientific intent lives in `SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`; equations and
-stage evidence in the MVP 3 design document; executable truth in code, tests and model
-rules (`madexplorer rules -v`). Older stage handoffs are in git (before `aae0974` the full
+How to read this file: the adopted V1 handoff first, the historical Stage 6B-P4 handoff,
+what MVP 3 established, then the MVP 2.1 base. Scientific intent lives in
+`SOCIAL_ECOLOGY_SIMULATOR_OBJECTIVE.md`; the new near-term roadmap and documented
+simplifications live in `SIMULATION_V1_ROADMAP.md` and `SCIENTIFIC_DEBT_REGISTER.md`;
+equations and stage evidence remain in the MVP 3 design and Stage 6B review;
+**executable truth** remains in code, scenarios, tests and model rules
+(`madexplorer rules -v`). Older stage handoffs are in git (before `aae0974` the full
 per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening logs; the
 Stage 5J handoff at `204e413`; Stage 6A at `cabe833`; Stage 6B at `56a5122`; 6B-P1 at
 `8dfe4df`; 6B-P3 at `11febe2`, closure `efe2603`).
 
 ## 1. Current handoff
 
+### Strategic decision: 6B-P5 roadmap reassessment adopted
+
+**Decision:** pursue **Simulation V1 first**, using progressive scientific fidelity built
+around one complete ecological-demographic-social-institutional feedback loop. Preserve
+the long-term scientific goal and the findings of Stages 5-6B. The new roadmap is a
+**planning decision**, not permission to activate C1 or other unreviewed code.
+
+**Three accepted V1 simplifications:**
+
+1. Population units are collective social decision-makers. V1 can examine material and
+   organizational inequality **between units**; active inequality **within units** is
+   deferred. The current strata stay passive and their existing representation gate still
+   applies if later activated.
+2. Political capabilities are initially **bounded and reversible** delegated decision
+   rights. Coercion, conquest, inherited offices, and states are beyond V1's claim scope.
+3. The feasible **repertoire of institutional rules is assumed**, while selection,
+   persistence, revision and dissolution may be conditional outcomes. V1 does not explain
+   the original invention of the repertoire.
+
+Additional simplifications (contact, donor offers, choice heuristics, memory, temporal and
+ecological scale) are recorded individually, including bias, evidence limits and
+replacement triggers, in `SCIENTIFIC_DEBT_REGISTER.md`.
+
+**Next work:** V1-0, an implementation-neutral, testable V1 contract, then separate
+reviewable implementation stages V1-1 through V1-5. V1-1 should consider a **minimal
+necessary** local participation protocol; C1 is a candidate, not an automatic scientific
+prerequisite. Original Stage 6C remains unstarted. Multi-seed, multi-topology feedback
+and an adequacy check on zero-arable agricultural outside options are required before
+V1's relevant claims. Do not activate mechanisms or change defaults without a specific
+implementation review and version decision.
+
+**What this documentation update does not change:** the supplied simulator code,
+existing baseline manifests, opt-in 2.2 scenarios, production default, exactness oracles,
+scientific results of Stages 5-6B, or passive strata state. No tests or historical
+experiments have been rerun for this documentation-only adoption.
+
+**Separate progress dimensions:** track each capability as absent / represented / active /
+integrated, alongside a qualitative scientific-fidelity record with evidence and explicit
+limits. Do not assign an unsupported numerical completeness/validity percentage. Each
+future milestone has a functional gate and an independent minimum scientific-fidelity
+gate, with a stop/defer decision to avoid recurring prerequisite research loops.
+
+### Previous handoff: Stage 6B-P4 (historical recommendation under earlier sequencing)
+
 **Stage 6B-P4 — scientific synthesis and Stage 6C decision gate. COMPLETE, PAUSED FOR
 SCIENTIFIC REVIEW (uncommitted; documentation only).** Fourth of the five corrective
 substages (P1 `8dfe4df`; P2 `b4b585d`, `36c5a72`; P3 `11febe2`, `efe2603`; P4 review §18;
 P5 roadmap).
 
-**Next: 6B-P5** (strategic roadmap reassessment; not started). Stage 6C is not started and
-needs approval after P5. The P4 decision is a recommendation, not permission to implement.
+**Historical next step:** 6B-P5 strategic roadmap reassessment. That decision has now
+been adopted above; Stage 6C remains unstarted and is not automatically authorized. The
+P4 C1 selection remains useful evidence and a candidate design, not the V1 critical path.
 
 **What P4 recommends** (review §18):
 - *Symmetric comparison* (same level for all pathways: a consequential interaction and the
@@ -146,7 +196,7 @@ uv run python scripts/probes/provisioning_feasibility.py analyse --load runs/sta
 
 Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifact.
 
-**Carried to P5** (review §18.9):
+**Carried into the adopted V1 roadmap and debt register** (review §18.9):
 - zero-arable cultivation (221 units, up to 136 years): field planning and migration do not
   share arable information; a model-adequacy question, not a migration feature request;
 - shared-resource rivalry as a substrate for later access decisions, without ownership;
@@ -158,6 +208,10 @@ Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifa
   topology per scenario).
 
 ## 2. MVP 3 so far
+
+This table preserves completed investigations and their findings. It is **not** the new
+critical path for V1; in particular, active within-unit strata are deferred while minimal
+interunit arrangements and decision rights are developed (see roadmap §1 and §9).
 
 | Stage | Result | Design |
 |---|---|---|
@@ -344,6 +398,11 @@ Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifa
 - **`baselines/mvp2/golden/`** stays, because the frozen MVP 2.1 manifest cites it.
 
 ## 6. Open questions
+
+For V1 prioritization, use `SCIENTIFIC_DEBT_REGISTER.md` and the decision rules in
+`SIMULATION_V1_ROADMAP.md`. Unresolved questions here remain scientific context but are
+not automatic V1 blockers.
+
 
 1. **Agriculture representation.** Is the `plant_cultivation` affordance sufficient long
    term, or should local domesticability and domestication become continuous ecological
