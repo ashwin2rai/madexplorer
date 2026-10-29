@@ -18,8 +18,9 @@ Stage 5J handoff at `204e413`; Stage 6A at `cabe833`; Stage 6B at `56a5122`; 6B-
 
 ## 1. Current handoff
 
-**Stage 6B-P3 — provisioning supply, demand and simultaneous feasibility. COMPLETE, PAUSED
-FOR SCIENTIFIC REVIEW.** Third of the five corrective substages after the Stage 6B review
+**Stage 6B-P3 — provisioning supply, demand and simultaneous feasibility. COMPLETE
+(`11febe2`); interpretation check done 2026-10-29 (uncommitted), PAUSED FOR SCIENTIFIC
+REVIEW.** Third of the five corrective substages after the Stage 6B review
 (P1 measurements `8dfe4df`; P2 integrity `b4b585d`, `36c5a72`; P3 provisioning; P4 synthesis
 and the Stage 6C decision gate; P5 roadmap).
 
@@ -33,18 +34,27 @@ the total pre-trade deficit; neolithic · pressure):
   shipped) and 6B (reachable full surplus p50 22.8 · 13.7 × deficit) reproduce.
 - Delivered: matching 62.6 · 44.0; simultaneous optimum under the same offers, reach and
   transport 65.0 · 50.2 (+2.4 · +6.2 points; 3.9 % · 14.2 % of what the matching delivers).
-  Unavoidable under offers and reach: 35.0 · 49.8.
+  Unmet even under the optimum, given offers, reach, transport and a one-year horizon:
+  35.0 · 49.8 (not physical inevitability).
 - Bottlenecks are conditional, not additive. Neolithic: geography and transport (lossless
   +15, all pairs +20), not supply (offers 9 × deficits) or matching. Pressure: all bind;
   offer cap +37 (with transport), transport +21, reach +10, matching +6.
-- Aggregate supply is essentially never short (full surplus, all pairs, lossless: 100 ·
-  99.9): the shortage is one of access and distribution.
-- Apparent surplus is multiply counted (claimed / distinct offers 1.6 · 4.0); networks with
-  every deficit simultaneously satisfiable: 74.5 % · 15.2 %.
+- Years are solved separately (no food crosses years). Cumulative offers 933 · 115 % of the
+  deficit, but yearly offers fall short in 1.0 · 35.0 % of years; the annual aggregate offer
+  gap (deficit − H) is 0.04 · 18.1 %, reach and transport given the offers (H − B) 34.9 ·
+  31.7 %. Full surplus is almost never short within a year (E 100 · 99.9), but that ceiling
+  removes the offer cap.
+- Apparent surplus is multiply counted (claimed / distinct offers 1.6 · 4.0). Networks with
+  every deficit simultaneously satisfiable: 74.5 % · 15.2 % of network-years, but only
+  25.4 % · 2.0 % weighted by recipients and 15.6 % · 1.1 % by deficit (small networks
+  dominate the count).
 - The optimum's distribution is not unique (two labelled tie-breaks differ for 18.6 % ·
-  26.4 % of recipient-years); it relieves more recipients but lowers the lower tail of
-  intake under pressure. Recipient order reassigns 15 % · 31 % of delivered food at
-  ±1.4 % total; ids have no effect (no severity ties; equal-cost ties are same-cell donors).
+  26.4 % of recipient-years). Robust across the three optima examined: more full relief
+  (pressure 28.5 → 50.5–53.7 %) and fewer with nothing. Pressure intake p1 is lower under all
+  three (0.444 → 0.366–0.386), which is not tested for every optimum; neolithic p1 depends on
+  the tie-break. Removing the severity priority (random recipient order) reassigns 15 % ·
+  31 % of delivered food at ±1.4 % total: a policy change. Arbitrary ids have no effect (no
+  severity ties; equal-cost ties are interchangeable same-cell donors).
 - One world topology per scenario (worlds 7 · 3); robust across the four seeds.
 
 **Files changed (NOT ACTIVE):**
@@ -52,7 +62,7 @@ the total pre-trade deficit; neolithic · pressure):
   feasibility and duality checks, components, edges.
 - `scripts/probes/provisioning_feasibility.py` (new): analysis of the donor-offer recordings,
   join with the opportunity recordings, benchmarks, distribution and order sensitivity.
-- `tests/test_provisioning_feasibility.py` (new, 17 tests); `tests/test_provisioning_counterfactual.py`
+- `tests/test_provisioning_feasibility.py` (new, 18 tests after the interpretation check); `tests/test_provisioning_counterfactual.py`
   (the new inactive module may name `provisioning_counterfactual`).
 - `pyproject.toml`, `uv.lock`: SciPy 1.18.1 in the dev group (HiGHS); mypy ignores its
   missing stubs. numpy and numba unchanged; numba imports SciPy at import time for a
@@ -69,6 +79,10 @@ opportunity data are byte-identical to the P2 recordings.
   files) and 989 tests pass. `make test-stat`: 3 passed.
 - Oracles: MVP 2.1 raw and logical IDENTICAL; MVP 2.2 raw and logical IDENTICAL.
 - `git diff --check`: clean. No golden regenerated, no RNG change, no default activation.
+- Interpretation check (2026-10-29): 8 / 8 donor-offer runs re-recorded from `11febe2`,
+  observer-neutral, one environment; every §17 number reproduced; replay exact in all years.
+  18 feasibility tests, `make check` (990 tests), `make test-stat` (3), four oracles
+  IDENTICAL, `git diff --check` clean. Diagnostics added to the probe report only.
 
 **P1 findings carried to P4 / P5** (accepted; review §15–15.1; neolithic · pressure):
 - Remaining foraging target met 74.0 % · 29.3 %; under pressure 63 % of eligible unit-years
@@ -132,7 +146,7 @@ Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifa
 | 6B | Comparative review (A access, B coordination, C risk pooling; several figures corrected in 6B-P1): land never binds, resources diffuse, outside options open and known (A not identifiable); pooled vs independent ≈ 1 % (B rejected); surplus in reach for 99.7–99.9 % of short units, bilateral reversal feasible 63–69 % (C strongest); D (provisional since 6B-P1): substrate present, actor-level interaction missing; 6C = local need requests with proportional rationing | §AE, review |
 | 6B-P1 | Measurement corrections: remaining foraging target met 74 % · 29 % (not 90 % · 77 %; crops counted twice); land rationing rare and local (pressure 0.044 %, plus zero-arable demand), not "never"; collective cell utilization separated from individual share; role reversal is potential, not observed transfers (51–69 %); reachable surplus hypothetical and multiply counted; decision D provisional until P4 | §AE, review §15 |
 | 6B-P2 | Recording integrity: provenance container with data checksum and atomic writes; reuse and analysis only of intact, matching, requested runs (legacy recordings only with `--legacy-unverified`); state-fingerprint neutrality against a lockstep twin; instance-level hooks; authoritative transfers recorded in the opportunity probe; P1 data reproduced exactly (8 / 8); serial = parallel bit for bit | review §16 |
-| 6B-P3 | Provisioning feasibility: matching reconstructed exactly; simultaneous LP optimum (HiGHS, duality-certified) delivers 65.0 · 50.2 % of the deficit vs matching 62.6 · 44.0 %; neolithic limited by geography and transport, pressure by offer cap, transport, reach and matching together; global supply almost never short; apparent surplus multiply counted (1.6 · 4.0); optimum distribution not unique | review §17 |
+| 6B-P3 | Provisioning feasibility: matching reconstructed exactly; simultaneous LP optimum (HiGHS, duality-certified) delivers 65.0 · 50.2 % of the deficit vs matching 62.6 · 44.0 %; neolithic limited by geography and transport, pressure by offer cap, transport, reach and matching together; annual aggregate offer gap 0.04 · 18.1 % (full surplus almost never short within a year); apparent surplus multiply counted (1.6 · 4.0); networks jointly satisfiable 74.5 · 15.2 % by count, 15.6 · 1.1 % by deficit; optimum distribution not unique (pressure p1 lower under the three optima tested) | review §17 |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**

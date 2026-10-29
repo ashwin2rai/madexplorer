@@ -134,7 +134,7 @@ def analyse_year(y: dict[str, Any], seed: int) -> dict[str, Any]:
     for donors, recs in components(live):
         alone = all(sum(f * offers[d] for d, f in reach[r]) >= deficit[r] * (1 - REL) for r in recs)
         joint = all(got["B"].get(r, 0.0) >= deficit[r] * (1 - REL) for r in recs)
-        comp_rows.append((len(donors), len(recs), alone, joint))
+        comp_rows.append((len(donors), len(recs), alone, joint, sum(deficit[r] for r in recs)))
     out["components"] = comp_rows
     out["no_donor"] = sum(1 for r in deficit if r not in reach)
     # --- recipients
@@ -233,6 +233,13 @@ def _q(values: Any, qs: tuple[float, ...] = (0.1, 0.5, 0.9)) -> str:
     return "/".join(f"{np.quantile(a, x):.3g}" for x in qs) if a.size else "-"
 
 
+def _wq(values: Any, weights: Any, q: float) -> float:
+    """Weighted quantile: the smallest value whose cumulative weight reaches ``q``."""
+    order = np.argsort(values, kind="stable")
+    cum = np.cumsum(np.asarray(weights, dtype=float)[order])
+    return float(np.asarray(values)[order][np.searchsorted(cum, q * cum[-1])])
+
+
 def report(name: str, outs: list[dict[str, Any]]) -> None:
     years = [y for o in outs for y in o["years"]]
     T = {
@@ -315,6 +322,16 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
     print(
         f"   all deficits met: matching {_pct(((yr('A') >= d * (1 - REL)) & (d > 0)).sum(), (d > 0).sum())}; optimum B {_pct(((yr('B') >= d * (1 - REL)) & (d > 0)).sum(), (d > 0).sum())}; offers in total >= deficits {_pct(((yr('offered') >= d) & (d > 0)).sum(), (d > 0).sum())}"
     )
+    short_years = (yr("offered") < d * (1 - REL)) & (d > 0)
+    print(
+        f"   annual vs cumulative offers (no food moves between years): cumulative offers / deficits {_pct(T['offered'], dfc)}; "
+        f"sum of yearly min(offers, deficit) = H {_pct(T['H'], dfc)}; years with offers < deficit {_pct(short_years.sum(), (d > 0).sum())}, holding {_pct(d[short_years].sum(), dfc)} of the deficit; "
+        f"offers / deficit in those years p10/p50/p90 {_q(yr('offered')[short_years] / d[short_years])}"
+    )
+    print(
+        f"   shortfall under the optimum (deficit - B) = annual aggregate offer gap (deficit - H) {_pct(dfc - T['H'], dfc)} + reach and transport given the offers (H - B) {_pct(T['H'] - T['B'], dfc)}; "
+        f"in years with offers >= deficit: unmet under B {_pct((d - yr('B'))[~short_years & (d > 0)].sum(), d[~short_years & (d > 0)].sum())} of their deficit"
+    )
     print(
         f"   matching below optimum B by > 1e-6 of the deficit: {_pct(((yr('B') - yr('A')) > 1e-6 * d).sum(), (d > 0).sum())}; (B - A) / deficit per year p50/p90/max {_q(((yr('B') - yr('A')) / np.maximum(d, 1e-300))[d > 0], (0.5, 0.9, 1.0))}"
     )
@@ -328,6 +345,12 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
         )
         print(
             f"   components {len(comps)} (multi-recipient {_pct(multi.sum(), len(comps))}); all deficits satisfiable simultaneously (optimum) {_pct(joint.sum(), len(comps))}; multi-recipient {_pct((joint & multi).sum(), multi.sum())}"
+        )
+        nrec = np.array([c[1] for c in comps], dtype=float)
+        cdef = np.array([c[4] for c in comps])
+        print(
+            f"   all deficits satisfiable simultaneously, weighted: by recipients {_pct(nrec[joint].sum(), nrec.sum())}; by deficit {_pct(cdef[joint].sum(), cdef.sum())}; "
+            f"recipients per component p50/p90/max {_q(nrec, (0.5, 0.9, 1.0))}"
         )
         print(
             f"   every recipient individually covered by the offers it reaches {_pct(alone.sum(), len(comps))}; of those, not jointly satisfiable {_pct((alone & ~joint).sum(), alone.sum())}"
@@ -382,7 +405,8 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
         )  # dietary intake (dietary_intake_ratio) after trade
         print(
             f"   {label:<28} full relief {_pct(full_.sum(), len(recs))} (pop {100 * w[full_].sum():.2f} %); partial {_pct((~full_ & ~none).sum(), len(recs))}; nothing {_pct(none.sum(), len(recs))} (pop {100 * w[none].sum():.2f} %); "
-            f"still short {_pct((~full_).sum(), len(recs))}; unmet / need p50/p90/p99 {_q(short / R['need'], (0.5, 0.9, 0.99))}; intake p1/p10 {_q(intake, (0.01, 0.1))}"
+            f"still short {_pct((~full_).sum(), len(recs))}; unmet / need p50/p90/p99 {_q(short / R['need'], (0.5, 0.9, 0.99))}; intake p1/p10 {_q(intake, (0.01, 0.1))} "
+            f"(pop p1 {_wq(intake, w, 0.01):.3g}); mean intake {intake.mean():.4f}"
         )
     for key, label in (
         ("B", "solver's choice"),
@@ -408,8 +432,10 @@ def report(name: str, outs: list[dict[str, Any]]) -> None:
         diff_years = sum(
             abs(y["orders"][k][0] - y["A"]) > 1e-6 * max(y["deficit"], 1.0) for y in years
         )
+        net = sum(abs(y["orders"][k][0] - y["A"]) for y in years) / 2
         print(
-            f"   {k:<24} delivered {_pct(tot - T['A'], T['A'])} vs actual; years with a different total {diff_years}/{len(years)}; food reassigned {_pct(mov, T['A'])} of actual delivery"
+            f"   {k:<24} delivered {_pct(tot - T['A'], T['A'])} vs actual; years with a different total {diff_years}/{len(years)}; food reassigned {_pct(mov, T['A'])} of actual delivery "
+            f"(sum |received - actual| / 2; of which at most {_pct(net, T['A'])} from changed yearly totals)"
         )
     print(
         f"   exact ties: recipient-years with equal severity {sum(y['severity_ties'] for y in years)}; recipients with equal-cost donors {sum(y['cost_ties'] for y in years)}"

@@ -224,7 +224,7 @@ def test_module_is_not_active() -> None:
 
 
 @pytest.fixture(scope="module")
-def analysed() -> tuple[dict[str, Any], dict[str, Any], bytes]:
+def analysed() -> tuple[dict[str, Any], dict[str, Any], bytes, Any]:
     import importlib.util
     import pickle
 
@@ -240,15 +240,15 @@ def analysed() -> tuple[dict[str, Any], dict[str, Any], bytes]:
     before = pickle.dumps(run)
     out = probe.analyse_run(run)
     assert pickle.dumps(run) == before  # the recording is not modified
-    return run, out, pickle.dumps(probe.analyse_run(run))
+    return run, out, pickle.dumps(probe.analyse_run(run)), probe
 
 
 def test_probe_replays_production_and_orders_the_benchmarks(
-    analysed: tuple[dict[str, Any], dict[str, Any], bytes],
+    analysed: tuple[dict[str, Any], dict[str, Any], bytes, Any],
 ) -> None:
     import pickle
 
-    run, out, again = analysed
+    run, out, again, _ = analysed
     assert pickle.dumps(out) == again  # reanalysis is deterministic
     years = out["years"]
     assert len(years) == len(run["trade"]) and all(y["exact"] for y in years)
@@ -264,3 +264,21 @@ def test_probe_replays_production_and_orders_the_benchmarks(
             for k in ("A", "B", "Bsev", "Banti"):
                 assert -s <= r[k] <= r["deficit"] * (1 + 1e-9) + s
     assert sum(y["B"] - y["A"] for y in years) >= 0 and sum(y["deficit"] for y in years) > 0
+
+
+def test_probe_report_weights_networks_by_recipients_and_deficit(
+    analysed: tuple[dict[str, Any], dict[str, Any], bytes, Any], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _, out, _, probe = analysed
+    for y in out["years"]:
+        # components partition the recipients that reach an offering donor, and their deficit
+        reached = [r for r in y["recipients"] if r["donors"] > 0]
+        assert sum(c[1] for c in y["components"]) == len(reached)
+        reached_deficit = sum(r["deficit"] for r in reached)
+        assert sum(c[4] for c in y["components"]) == pytest.approx(reached_deficit)
+    assert probe._wq([3.0, 1.0, 2.0], [1.0, 1.0, 1.0], 0.5) == 2.0
+    assert probe._wq([1.0, 2.0], [1.0, 9.0], 0.01) == 1.0
+    assert probe._wq([1.0, 2.0], [1.0, 9.0], 0.2) == 2.0
+    probe.report("pressure+cult", [out])
+    text = capsys.readouterr().out
+    assert "weighted: by recipients" in text and "annual vs cumulative offers" in text

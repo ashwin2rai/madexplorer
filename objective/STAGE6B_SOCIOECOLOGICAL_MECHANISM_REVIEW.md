@@ -682,7 +682,7 @@ neolithic 6.86e10 kcal, pressure 1.26e11 kcal):
 | G optimum: full surplus, recorded reach, lossless | 98.4 % | 95.6 % |
 | E ceiling: full surplus, all pairs, lossless (not realizable) | 100.0 % | 99.9 % |
 | matching at full surplus | 89.3 % | 82.0 % |
-| unavoidable shortage under offers and reach (deficit − B) | 35.0 % | 49.8 % |
+| unmet under the optimum given offers, reach and transport (deficit − B) | 35.0 % | 49.8 % |
 | delivery feasible beyond the matching (B − A) | 2.4 % (3.9 % of A) | 6.2 % (14.2 % of A) |
 | shipped / offered (matching); transport loss of shipments | 11.4 %; 41.2 % | 72.4 %; 47.0 % |
 | recipient-years still short: matching / optimum | 33.5 % / 28.6 % | 71.5 % / 48.7 % |
@@ -691,6 +691,20 @@ neolithic 6.86e10 kcal, pressure 1.26e11 kcal):
 Stage 6A reproduced (pressure): 71.5 % of recipient-years short after matching, 72.4 % of
 offers shipped. Stage 6B reproduced: reachable delivered-equivalent *full surplus* / own
 deficit p50 22.8 · 13.7 for recipients with a reachable offering donor.
+
+**Annual versus cumulative supply** (closure check). Each trade year is solved alone; no
+food moves between years, and a counterfactual allocation does not feed back into later
+recorded states (every year is evaluated on the actual history). Pooled over seeds and years
+the pressure offers are 115 % of the deficit, but the offer-constrained ceiling is
+`H = Σ_t min(offers_t, deficit_t)` = 81.9 %: offers in surplus years cannot cover other
+years' deficits (nor another seed's, an independent run). Yearly offers fall short of yearly
+deficits in 35.0 % of pressure years with a deficit (1.0 % neolithic), and those years hold
+60.8 % of the pressure deficit (offers / deficit there p50 0.74). So the shortfall under
+the optimum (49.8 %) splits, in this one order, into an annual aggregate offer gap
+(deficit − H) of 18.1 % (neolithic 0.04 %), which no spatial or transport change can close
+without larger offers, and reach plus transport given the offers (H − B) of 31.7 % (34.9 %).
+In years whose offers do cover the deficit, 35.0 % · 34.9 % of it stays unmet under the
+optimum: there the limit is spatial and transport, not aggregate offers.
 
 **Conditional comparisons** (each changes one setting with the others fixed; they are not
 additive shares and depend on the order of comparison):
@@ -709,27 +723,61 @@ additive shares and depend on the order of comparison):
   are 1.60 · 4.03 times the distinct offers of the claimed donors. Recipient-years sharing
   a donor with another recipient: 90.7 % · 99.0 %; with ≥ 2 reachable donors 98 % · 99 %.
 - Connected donor-recipient networks with all deficits simultaneously satisfiable under the
-  offers: 74.5 % · 15.2 % (multi-recipient 64.6 % · 9.2 %). Networks in which every recipient
+  offers: 74.5 % · 15.2 % of network-years (multi-recipient 64.6 % · 9.2 %). The
+  denominator is every connected component of the usable edges (offer > 0, deficit > 0,
+  `f > 0`) in every trade year, pooled over seeds (3,365 · 1,869), each counted once
+  whatever its size; recipients reaching no offering donor belong to no network. Networks
+  are mostly small in the neolithic (recipients p50 1, max 204; pressure p50 9, max 100), so
+  weighted shares are far lower: by recipients 25.4 % · 2.0 %, by deficit 15.6 % · 1.1 %. Networks in which every recipient
   is individually covered by the offers it reaches but not all jointly: 7.1 % · 13.7 % of
   those.
 - Recipient-years with no reachable offering donor: 172 / 22,299 · 122 / 38,923.
 
-**Distribution** (recipient-years; population-weighted shares close to unit-weighted).
-Under pressure the optimum raises full relief from 28.5 % to 51.3 % and cuts "nothing" from
-51.2 % to 21.7 %; 43 % of recipient-years gain and 14 % lose relative to the matching. The
-matching serves the most severe first, so the optimum *lowers* the lower tail: dietary
-intake p1 0.444 → 0.386 (pressure), 0.237 → 0.269 neolithic. The aggregate optimum does not
-identify a distribution: two labelled tie-breaks among optimal allocations (most severe
-first, least severe first) differ for 18.6 % · 26.4 % of recipient-years, by up to the whole
-deficit; aggregate shares (full relief, nothing) move by ≤ 4 points between them. Gains of
-single-donor recipients are < 0.1 % of all gains.
+**Distribution.** Population: recipient-years, i.e. units with `b < 0` and need `> 0` in a
+trade year (zero-need and non-deficit units are not recipients, as in production), pooled
+over seeds and years (22,299 · 38,923); unit-weighted, and population-weighted ("pop", by the
+unit's people at trade). Intake is the authoritative `dietary_intake_ratio` after trade; for
+a recipient it equals `(harvest + stores + received) / need` = `1 − unmet / need`, with need
+including carried energy debt. Static: no feedback into later years. Three aggregate-optimal
+allocations are compared, the solver's own and two labelled tie-breaks (most severe first,
+least severe first, by `deficit / need`); none is a distribution rule, and they do not span
+every optimal allocation:
 
-**Order and id sensitivity of the matching** (production unchanged; same physics):
-- random recipient order: total −1.3 % · +1.4 %, different total in 337 / 2,400 ·
-  1,267 / 1,600 years, 15 % · 31 % of delivered food reassigned;
-- random donor order: −0.2 % · −2.4 %; farthest donor first: −0.6 % · −5.9 %;
-- ids relabelled: no effect. No two recipients have equal severity; equal-cost donor ties
-  (15,772 · 32,248 recipient-years) are donors in the same cell with the same reach.
+| recipient-years | matching | optima (solver · severe · least severe) |
+|---|---|---|
+| full relief, neolithic | 66.5 % (pop 68.8) | 71.4 · 72.6 · 72.9 % (pop 75.0 · 76.1 · 74.2) |
+| nothing, neolithic | 21.9 % (pop 16.5) | 8.2 · 16.5 · 13.2 % |
+| intake p1, neolithic | 0.237 (pop 0.307) | 0.269 · 0.236 · 0.219 (pop 0.321 · 0.306 · 0.263) |
+| full relief, pressure | 28.5 % (pop 28.8) | 51.3 · 50.5 · 53.7 % (pop 54.5 · 53.7 · 56.9) |
+| nothing, pressure | 51.2 % (pop 49.3) | 21.7 · 25.0 · 21.7 % |
+| intake p1, pressure | 0.444 (pop 0.479) | 0.386 · 0.385 · 0.366 (pop 0.409 · 0.406 · 0.389) |
+| mean intake, pressure | 0.900 | 0.907 · 0.908 · 0.907 |
+
+- Robust across the three optima: more full relief and fewer recipients with nothing, in
+  both scenarios (pressure +22 to +25 points of full relief).
+- Pressure intake p1 is lower under all three optima (0.37–0.39 vs 0.44), unit- and
+  population-weighted. This is shown for these three allocations only; whether every
+  aggregate-optimal allocation must lower the tail was not tested (no tail-protecting
+  objective was run, by design). Neolithic p1 rises or falls with the tie-break
+  (0.219–0.269 vs 0.237): optimizer-dependent, no conclusion.
+- The two tie-breaks differ for 18.6 % · 26.4 % of recipient-years, by up to the whole
+  deficit. Versus the matching, 12–22 % · 39–46 % of recipient-years gain and 4–9 % · 13–15 %
+  lose, depending on the optimum. Gains of single-donor recipients are < 0.1 % of all gains.
+
+**Order and id sensitivity of the matching** (production unchanged; same physics).
+"Reassigned" is `Σ |received_variant − received_actual| / 2` over recipient-years, as a share
+of total actual delivery; changes in yearly totals account for at most 0.9 · 2.0 points of
+it, so it is almost entirely redistribution at a near-equal total. Two kinds of change are
+distinguished:
+- *Policy changes* (the severity priority or nearest-donor rule replaced): random recipient
+  order, i.e. no severity priority: total −1.3 % · +1.4 %, different total in 337 / 2,400 ·
+  1,267 / 1,600 years, 15.4 % · 31.1 % reassigned; random donor order −0.2 % · −2.4 %
+  (1.0 · 3.9 % reassigned); farthest donor first −0.6 % · −5.9 % (1.5 · 6.3 %).
+- *Arbitrary ids and tie-breaks* (policy kept): every unit id relabelled at random: no
+  effect in any year. Ids decide only exact ties: no two recipients have equal severity, and
+  equal-cost donor ties (15,772 · 32,248 recipient-years) are donors in the same cell with
+  the same reach, interchangeable for every recipient. The controlled tests show id effects
+  where such ties exist; the recorded runs contain none that matter.
 
 **Interpretation.**
 - *Neolithic:* offers exceed deficits nine-fold, yet 35 % of the deficit stays unmet under
@@ -739,8 +787,12 @@ single-donor recipients are < 0.1 % of all gains.
   in 35 % of years; the offer cap (+37 points), transport (+21), reach (+10) and the matching
   (+6, 14 % of what it delivers) all bind, and they interact (transport matters less at full
   surplus, the matching less at full surplus).
-- Global supply is almost never short (E < deficit in 0.25 % of pressure years): the
-  shortage is a distribution and access problem, not an aggregate scarcity.
+- Full positive surplus is almost never short within a year (E < deficit in 0.25 % of
+  pressure years), but that ceiling removes the offer cap. Under the existing offers the
+  annual aggregate gap is 18.1 % of the pressure deficit (35 % of years): pressure shortage is
+  partly offer-limited in aggregate, partly spatial and transport. In the neolithic it is
+  spatial and transport. "Unavoidable" here always means unmet under the stated offers,
+  reach, transport and one-year horizon on the recorded history, not physically inevitable.
 - The 6B "surplus in reach p50 13.7 × deficit" counted full surpluses, before the offer
   fraction and with each donor counted by every recipient in reach.
 - Robust across seeds: (B − A)/A 13–16 % (pressure), 1–5 % (neolithic); one topology per
