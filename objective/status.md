@@ -1,6 +1,6 @@
 # Implementation Status
 
-**Updated:** 2026-10-28 (MVP 3 Stage 6B-P3, provisioning supply, demand and feasibility; pause for review)\
+**Updated:** 2026-10-29 (MVP 3 Stage 6B-P4, scientific synthesis and Stage 6C decision gate; pause for review)\
 **Scientific base:** MVP 2.1, frozen (`baselines/mvp2_1/`), still the repository default.
 MVP 2.2 (`baselines/mvp2_2/`, opt-in) is the scientific reference, selected explicitly through
 `scenarios/mvp2_2_*.yaml`. Its fertility mechanism is scientifically accepted; its manifest
@@ -14,24 +14,61 @@ stage evidence in the MVP 3 design document; executable truth in code, tests and
 rules (`madexplorer rules -v`). Older stage handoffs are in git (before `aae0974` the full
 per-stage text; before `53c0491` the detailed MVP 2.1 and Performance Hardening logs; the
 Stage 5J handoff at `204e413`; Stage 6A at `cabe833`; Stage 6B at `56a5122`; 6B-P1 at
-`8dfe4df`).
+`8dfe4df`; 6B-P3 at `11febe2`, closure `efe2603`).
 
 ## 1. Current handoff
 
-**Stage 6B-P3 — provisioning supply, demand and simultaneous feasibility. COMPLETE
-(`11febe2`); interpretation check done 2026-10-29 (uncommitted), PAUSED FOR SCIENTIFIC
-REVIEW.** Third of the five corrective substages after the Stage 6B review
-(P1 measurements `8dfe4df`; P2 integrity `b4b585d`, `36c5a72`; P3 provisioning; P4 synthesis
-and the Stage 6C decision gate; P5 roadmap).
+**Stage 6B-P4 — scientific synthesis and Stage 6C decision gate. COMPLETE, PAUSED FOR
+SCIENTIFIC REVIEW (uncommitted; documentation only).** Fourth of the five corrective
+substages (P1 `8dfe4df`; P2 `b4b585d`, `36c5a72`; P3 `11febe2`, `efe2603`; P4 review §18;
+P5 roadmap).
 
-**Next: 6B-P4** (not started). P5 and Stage 6C are not started. Decision D / pathway C stays
-**provisional** until P4. P3 selects no mechanism.
+**Next: 6B-P5** (strategic roadmap reassessment; not started). Stage 6C is not started and
+needs approval after P5. The P4 decision is a recommendation, not permission to implement.
+
+**What P4 recommends** (review §18):
+- *Symmetric comparison* (same level for all pathways: a consequential interaction and the
+  smallest new unit-level decision). A, B and C all have a causal foundation. Exhausted
+  labor removes A's effort margin, not its choice among rival cells; the pooling test
+  (1.010–1.017 in all 8 runs) bounds only the stopping rule, not choice among cells (A) or
+  untested coordination of access, timing or distribution (B).
+- *Decision: pathway C, as C1* (local contact, requests and donor rationing; φ = 0.3 fixed),
+  by a narrower margin than in 6B: its first question is exactly identifiable in static
+  counterfactuals within one step against the P3 ceiling, and it replaces a non-actor
+  implementation (global matcher, global visibility) of an already active interaction.
+  A1's margin is unmeasured, not small. "Decision D" was 6B's option label for choosing C.
+- *6C evaluation:* arms S (severity matching), R (random priority), G_S / G_R (centralized,
+  severity / random, on the 6C contact graph), L (local requests, same graph), F (P3 ceiling
+  on that graph: bounds G, L and other graph-restricted allocations, not S or R unless the
+  graphs coincide), plus scheduling noise. Allocation policy is isolated only against
+  contact-matched controls (L vs G_S, G_R). Proceed if differences are scientifically
+  meaningful and interpretable across seeds, with uncertainty and heterogeneity reported,
+  traceable to a named assumption, invariant to K and ids, and not reducible to a priority
+  change; better delivery is not a criterion. A well-measured null is a useful result; stop
+  at 6C-2 if contact cannot be grounded (pathway then conditional). Repeated dyads are
+  tested against a contact-matched null. 6C-1 must check the termination rule against
+  requesters with untried contacts.
+- *Fallback:* A1, choice among rival resource-use opportunities with crowding and arable
+  land in view; first step read-only. P5 may also prioritize it as a model correction.
+- *Literature* re-verified (§18.3): no source shows provisioning rules emerging; Moritz et
+  al. 2018 (PNAS, open regimes) and 2019 (Curr. Anthropol., no support for economic
+  defensibility; title level only) are distinct; Aktipis 2016's threshold concerns the
+  probability of honoring affordable requests, not the amount offered; Jaeggi & Gurven pool
+  32 human and primate populations; coordination literature is an evidence gap.
+- *Corrected citation:* 6B coverage medians are 22.5 · 13.7 (all recipient-years), 22.8 ·
+  13.8 (with a reachable offering donor).
+- *P4 checks:* per-seed A and B measures on fresh verified opportunity recordings (8 / 8
+  neutral) and 6B medians on the P3 recordings, by scratch scripts using existing probe
+  functions; no repository code, test or baseline changed; tests and oracles not rerun.
+
+**Previous handoff — 6B-P3 (committed):**
 
 **What P3 established** (review §17; kcal summed over seeds 0–3 and all trade years, % of
 the total pre-trade deficit; neolithic · pressure):
 - The production matching is reconstructed exactly from verified pre-trade inputs in every
   trade year (2,400 · 1,600); Stage 6A (71.5 % of recipient-years short, 72.4 % of offers
-  shipped) and 6B (reachable full surplus p50 22.8 · 13.7 × deficit) reproduce.
+  shipped) and 6B (reachable full surplus p50 22.5 · 13.7 × deficit over all recipient-years;
+  22.8 · 13.8 with a reachable offering donor, corrected in P4) reproduce.
 - Delivered: matching 62.6 · 44.0; simultaneous optimum under the same offers, reach and
   transport 65.0 · 50.2 (+2.4 · +6.2 points; 3.9 % · 14.2 % of what the matching delivers).
   Unmet even under the optimum, given offers, reach, transport and a one-year horizon:
@@ -109,15 +146,16 @@ uv run python scripts/probes/provisioning_feasibility.py analyse --load runs/sta
 
 Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifact.
 
-**Carried to later substages:**
-- P4: the cross-pathway synthesis with P3's bounds: whether any actor-level provisioning
-  protocol is worth testing given that the offer cap, transport and reach bind together
-  under pressure and geography dominates in the neolithic; A's rivalry, collective
-  utilization, target shortfalls and land unavailability enter the same comparison.
-- P4 / P5: the zero-arable findings (221 units repeatedly unable to establish fields;
-  migration does not consider arable land). Preserved as evidence for the synthesis and the
-  roadmap; not a migration-behaviour implementation task.
-- P5: roadmap and MVP realignment.
+**Carried to P5** (review §18.9):
+- zero-arable cultivation (221 units, up to 136 years): field planning and migration do not
+  share arable information; a model-adequacy question, not a migration feature request;
+- shared-resource rivalry as a substrate for later access decisions, without ownership;
+- passive strata: representation is not mechanism;
+- provisioning premises (φ, central matching, global priority, geographic contact);
+- verification vs scientific validation;
+- the order of between-unit interaction and internal differentiation in the MVP sequence;
+- missing model capabilities (within-year timing, joint production, clumped resources, one
+  topology per scenario).
 
 ## 2. MVP 3 so far
 
@@ -147,6 +185,7 @@ Never run `make golden`, and never overwrite any `*mvp2_1*` or `*mvp2_2*` artifa
 | 6B-P1 | Measurement corrections: remaining foraging target met 74 % · 29 % (not 90 % · 77 %; crops counted twice); land rationing rare and local (pressure 0.044 %, plus zero-arable demand), not "never"; collective cell utilization separated from individual share; role reversal is potential, not observed transfers (51–69 %); reachable surplus hypothetical and multiply counted; decision D provisional until P4 | §AE, review §15 |
 | 6B-P2 | Recording integrity: provenance container with data checksum and atomic writes; reuse and analysis only of intact, matching, requested runs (legacy recordings only with `--legacy-unverified`); state-fingerprint neutrality against a lockstep twin; instance-level hooks; authoritative transfers recorded in the opportunity probe; P1 data reproduced exactly (8 / 8); serial = parallel bit for bit | review §16 |
 | 6B-P3 | Provisioning feasibility: matching reconstructed exactly; simultaneous LP optimum (HiGHS, duality-certified) delivers 65.0 · 50.2 % of the deficit vs matching 62.6 · 44.0 %; neolithic limited by geography and transport, pressure by offer cap, transport, reach and matching together; annual aggregate offer gap 0.04 · 18.1 % (full surplus almost never short within a year); apparent surplus multiply counted (1.6 · 4.0); networks jointly satisfiable 74.5 · 15.2 % by count, 15.6 · 1.1 % by deficit; optimum distribution not unique (pressure p1 lower under the three optima tested) | review §17 |
+| 6B-P4 | Synthesis and decision gate: pathways compared at the same level; A, B and C all have causal foundations (pooling test bounds only the stopping rule, 1.010–1.017); pathway C retained as C1 (local contact, requests, donor rationing, φ fixed) by a narrower margin, for identifiability and the actor-semantics gap; 6C judged by distinguishable, interpretable consequences against centralized controls on the same contact graph and the P3 ceiling, no expected direction; fallback A1 (choice among rival opportunities); zero-arable, rivalry, strata and premises reserved for P5 | review §18 |
 
 **Locked decisions** (details in the design document):
 - **No invented social categories.**

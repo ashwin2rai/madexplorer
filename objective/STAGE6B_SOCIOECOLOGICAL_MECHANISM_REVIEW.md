@@ -20,6 +20,14 @@ strong. What is missing is an actor-level interaction:
 **Recommended Stage 6C:** one explicit, local *need request → response* event, with
 proportional rationing by each donor (§14).
 
+**Stage 6B-P4 decision (2026-10-29, for review; §18):** pathway C retained under a symmetric
+comparison, by a narrower margin than in 6B (A and B also have causal foundations): local
+contact, requests and donor rationing with φ fixed, assumptions unbundled, evaluated for
+distinguishable and interpretable consequences against centralized controls on the same
+contact graph and the P3 ceiling, with no expected direction. Fallback: choice among rival
+resource-use opportunities (A1), pending P5. "Decision D" was 6B's option label, not a
+pathway (§18.6).
+
 ---
 
 ## 1. Question and scope
@@ -313,7 +321,8 @@ reversal, at a low material cost to donors. What fails is the actor level:
   land-limited production; closed outside options) are measurably absent. Building
   exclusion now would manufacture the mechanism. (6B-P1: land rationing is rare and local
   rather than absent, and under pressure most foraging units miss their remaining target.
-  The cross-pathway judgement is reopened for 6B-P4.)
+  The cross-pathway judgement is reopened for 6B-P4.) *Superseded by §18.4: this table
+  judged A at Levels 4–5 and C at Levels 1–2; P4 compares both at the same level.*
 
 **Cross-cutting:**
 - Mobility undermines A (open, known exits) and supports C (large networks).
@@ -371,6 +380,10 @@ The pooled foraging rule is not an institution.
   (source 10). The recorded synchrony is year-level only.
 
 ## 14. Recommended Stage 6C interaction: local need requests with proportional donor rationing
+
+*Revised in §18.6 (6B-P4): assumptions unbundled; the falsification criterion "< 1 % from D0"
+replaced by comparisons with centralized controls on the same contact graph, scheduling
+noise and the P3 ceiling. Kept as the original record.*
 
 Stated in ODD terms (source 13):
 
@@ -690,7 +703,8 @@ neolithic 6.86e10 kcal, pressure 1.26e11 kcal):
 
 Stage 6A reproduced (pressure): 71.5 % of recipient-years short after matching, 72.4 % of
 offers shipped. Stage 6B reproduced: reachable delivered-equivalent *full surplus* / own
-deficit p50 22.8 · 13.7 for recipients with a reachable offering donor.
+deficit p50 22.8 · 13.8 for recipients with a reachable offering donor (22.5 · 13.7 over all
+recipient-years; corrected in 6B-P4, which found 22.8 paired with the all-recipient 13.7).
 
 **Annual versus cumulative supply** (closure check). Each trade year is solved alone; no
 food moves between years, and a counterfactual allocation does not feed back into later
@@ -815,3 +829,332 @@ uv run python scripts/probes/provisioning_feasibility.py analyse --load runs/sta
 SciPy (1.18.1, HiGHS) is a development dependency; no model code uses it. numba imports
 it at import time to check its version whenever it is installed; the four exactness oracles
 are unchanged.
+
+## 18. Stage 6B-P4 — scientific synthesis and Stage 6C decision gate (2026-10-29)
+
+**Status:** synthesis and recommendation for review. No simulator, scenario, test or
+baseline file changed. Starting commit `efe2603`, clean tree. P5 (roadmap) and Stage 6C
+are not started; this section is not permission to implement.
+
+### 18.1 Question and scope
+
+Which pathway, A (rival resource access), B (productive or distributive coordination) or C
+(provisioning and risk pooling), gives the strongest *scientifically interpretable,
+actor-level interaction* to investigate next, grounded in the existing ecology, without
+presupposing an institution, inequality or a social form? The question is not which pathway
+most readily produces hierarchy.
+
+The 6B comparison (§9) was asymmetric. A was judged on economic defensibility and exclusion
+(Levels 4–5 of §3), C only on whether a material opportunity exists (Levels 1–2). P4
+compares all three at the same level first:
+
+> Does the modeled ecology create a consequential interaction between units, and is there a
+> small, explicit unit-level decision that responds to it and is not already represented?
+
+### 18.2 Consolidated evidence
+
+Evidence kinds, in decreasing weight: **O** observed in active simulations; **R** read-only
+counterfactual on recorded states; **F** mathematical feasibility bound; **P** behavioural
+premise built into the model; **H** hypothesized, not implemented; **S** sociological
+interpretation not established by measurement. All figures: MVP 2.2, neolithic 600 y ·
+pressure + cultivation 400 y, seeds 0–3, one world topology per scenario (worlds 7 · 3).
+Unit-years within a run are not independent replicates; the four seeds are the replicates.
+
+| finding | source | kind | supports | does not support | confidence, limits | pathway |
+|---|---|---|---|---|---|---|
+| Co-located units share one finite wild stock: 20 % · 62 % of foraging unit-years in multi-unit cells | 6B §6, `opportunity_audit` | O | rival use is common, especially under pressure | contested ownership, exclusion | high; exact replay of pooled harvest (339,771 · 75,764 groups) | A |
+| Being alone would raise harvest by p50 2.5 % · 4.3 % of need; > 10 % in ≈ 20 % · 23 % | 6B §6 (P1), `alone_harvest` | R (static, one year) | rivalry is consequential, moderately at the median and strongly in the tail | that units would act on it; dynamic cost | per seed p50 1.6–3.0 % · 3.8–4.9 %, > 10 % in 14–22 % · 20–25 % (P4 reanalysis); no feedback | A |
+| Collective utilization > 0.5 in 4.0 % · 28.8 % of foraging cell-years; crop-net target met 74.0 % · 29.3 %; full labor applied and target missed 21.5 % · 62.9 % of eligible unit-years; labor elasticity at full effort p50 0.76 · 0.70 | P1 §15, §15.1 | O / R | under pressure shared stocks are heavily used and most foragers miss their target | a single binding input; stock "limitation" (0.5 is descriptive) | high for the measures; labor and stock limit jointly | A (and B: effort margins are absent where labor is exhausted) |
+| Intertemporal cost: 0.18 · 0.29 kcal of next year's stock per kcal removed, ≈ 5.3 % · 3.7 % of co-users' need | 6B §6 | R | a weak intertemporal commons | a commons dilemma | one-step regrowth exact | A, B |
+| Zero arable land with positive desired fields: 1,928 / 58,716 pressure farming cell-years, 2,803 unit-years, 221 units, p50 6 and up to 136 years each; neolithic none | P1 §15.1 | O | a recurrent mismatch between a decision rule (field planning) and the location it is made in; migration does not value arable land | that better information would cause migration; land scarcity | high; one topology | A (location), P5 |
+| Competition for positive arable land: 25 / 56,788 cell-years (0.044 %); no exclusion rule | P1 §15.1 | O | land competition is rare and local | land-limited production (Kohler et al. 2025) | high; one topology, current parameters | A |
+| Better-stocked cells reachable for 84 % · 72 % of units in shared cells; believed in by 90 % · 81 % | 6B §6 | O (beliefs) / R | outside options are usually known | that moving is costless or would be chosen | travel, carrying and familiarity costs not counted | A |
+| Pooled vs independent satisficing in multi-unit cells: total harvest 1.012 · 1.012; members differing by > 10 % of need 8.5 % · 7.0 % | 6B §7 | R | the cooperative-stopping convention changes little | that coordination in general is unimportant | per seed 1.011–1.013 · 1.010–1.017 (P4); harvest depends only on total effort (no synergy, no task needing several units, annual step: no timing) | B, A |
+| Shortages before trade 5.8 % · 30.6 % of unit-years; spatially correlated (neighbour-short ratio 4.4 · 1.5); hypothetical surplus in reach | 6B §8, P1 | O | complementary shortage and surplus recur | that anyone knows of the surplus; joint availability | high | C |
+| Donor offer `φ·b`, φ = 0.3 for every unit with surplus; central matching, most severe first, nearest donor first; global visibility | 6A §AD, `trade.py` | **P** | — | an endogenous sharing decision | a premise, not a finding | C |
+| Production matching reconstructed exactly (2,400 · 1,600 trade years); delivered 62.6 % · 44.0 % of the pre-trade deficit; 71.5 % of pressure recipient-years still short | P3 §17 | O | the realized transfers are understood quantitatively | that transfers are negotiated assistance | exact | C |
+| Optimum, same offers, reach, transport: 65.0 % · 50.2 %; lossless 79.9 % · 71.4 %; full surplus 90.7 % · 87.3 %; global lossless full surplus 100 % · 99.9 % | P3 §17 | F | allocation adds little under fixed offers (+2.4 · +6.2 points); offers (+25.6 · +37.1 with transport) and transport (+14.9 · +21.2) are the large levers; not additive | that any actor could realize them; causal shares | duality-certified; conditional comparisons | C |
+| Annual aggregate offer gap (deficit − H) 0.04 % · 18.1 % of the deficit; yearly offers short in 1.0 % · 35.0 % of years | P3 closure §17 | F | under pressure part of the shortfall is aggregate offers within a year | that it is physically unavoidable (it is conditional on φ) | one-year horizon, no feedback | C |
+| Apparent nearby offers counted 1.6 · 4.0 × the distinct offers; networks jointly satisfiable 74.5 % · 15.2 % by count, 15.6 % · 1.1 % by deficit | P3 §17 | F | "surplus in reach" greatly overstates jointly available help, especially under pressure | — | — | C |
+| Three aggregate-optimal allocations: full relief 28.5 → 50.5–53.7 % (pressure); intake p1 0.444 → 0.366–0.386 | P3 closure | F | a large redistribution is possible at a small aggregate change | that the tail loss is inevitable, or that any allocation is "right" | three optima only | C |
+| Removing the severity priority (random order) reassigns 15.4 % · 31.1 % of delivered food at ±1.4 % total; id relabelling: no effect | P3 §17 | R | allocation policy decides *who* is served much more than *how much* | id artifacts in the recorded runs | — | C |
+| Self-insurance cap on offers: no non-arbitrary magnitude, ≈ 1–2 % of withheld kcal would reach a later shortage; rejected | 6A §AD | R | willingness has no motive in the current physics | that willingness is irrelevant | — | C |
+| Potential role reversal 51–69 % (by weighting); realized pair reversal under central matching 9 % | P1 §15, 5H §AA | R / O | the physical room for two-way relations exists, but the central queue does not produce two-way dyads | reciprocity | potential only | C |
+| Passive strata: representation without consequential difference; Stage 4–5 differentiators rejected or negligible (5B–5F) | MVP3 §L–§AC | O / R | internal distinctions are not yet behaviourally meaningful | that strata are unnecessary in principle | — | P5 |
+
+**Number check (P4).** Every figure above matches the authoritative record (§6–8, §15–17,
+§AD, §AE), re-derived where stated. One mixed-denominator citation is corrected: the 6B
+measure "reachable delivered-equivalent full surplus / own deficit" is p50 22.5 · 13.7 over all
+recipient-years and 22.8 · 13.8 for recipients with a reachable offering donor; §17 and
+`status.md` paired 22.8 with 13.7. The task brief's figures agree with the record; its
+phrase "18.1 % of cumulative deficit" is correct as the sum of yearly gaps (deficit − H), not a
+gap in cumulative offers (which exceed the deficit, 115 %).
+
+**Robust within these experiments:** direction and order of magnitude of every finding
+above across all four seeds; replay exactness; the ordering of the P3 benchmarks. **Likely
+dependent on topology or parameters:** the zero-arable counts (one pressure world), the
+shared-cell frequency and outside options (map, density), the offer lever (φ, storage
+retention `r`), transport (`transport_decay_km`, reach), and the correlation of shocks.
+
+### 18.3 Literature
+
+Verified for P4 (Crossref DOI records; access stated honestly). It extends §2, whose
+access labels and the corrections below stand.
+
+| source | access | studied | demonstrated | not inferable | MadExplorer hypothesis |
+|---|---|---|---|---|---|
+| Dyson-Hudson & Smith 1978, *Am. Anthropol.* 80:21, doi:10.1525/aa.1978.80.1.02a00020 | abstract | 3 ethnographic cases | territoriality "seems to accord" with dense, predictable resources | a test; anything about non-exclusive shared use | exclusion pays only on dense, predictable cells once defence has a cost (no cost exists here) |
+| Smith & Codding 2021, *PNAS* 118:e2016134118, doi:10.1073/pnas.2016134118 | abstract | 89 Pacific-coast forager societies | reliance on and *ownership* of clumped aquatic resources associates with institutionalized inequality; pressure and warfare do not | causation; ownership sits inside the predictor | needs a clumped resource class, absent here |
+| Kohler et al. 2025, *PNAS* 122:e2400691122, doi:10.1073/pnas.2400691122 | full text | > 1,100 sites, house-size Ginis | enduring inequality lags cultivation > 1 millennium; associates with land-limited production, scale, settlement hierarchy (authors: exploratory, cross-sectional) | causal paths; actor interactions | relevant only if land becomes limiting |
+| Moritz et al. 2018, "Emergent sustainability in open property regimes", *PNAS* 115:12859, doi:10.1073/pnas.1812028115 | full text | framework + 8 illustrative cases | open access can be sustained by mobile users tracking patches; low circumscription is one boundary condition; when conditions change, systems shift to exclusion or overuse | a test (cases illustrate) | rival use stays open while exits are cheap; rising density or movement cost should precede any advantage of exclusion |
+| Moritz, Gardiner, Hubbe, Johnson et al. 2019, "Comparative study of pastoral property regimes in Africa offers no support for economic defensibility model", *Curr. Anthropol.* 60(5):609–636, doi:10.1086/705240 (a distinct publication) | metadata and title only (Crossref; no abstract in the record) | comparative African pastoral property regimes (per title) | per its title, no support for the economic-defensibility model in that sample | anything beyond the title; how defensibility was operationalized; generality beyond African pastoralism | weakens defensibility (Dyson-Hudson & Smith) as the default frame for A; it does not bear on non-exclusive rivalry |
+| Schlager & Ostrom 1992, *Land Econ.* 68:249, doi:10.2307/3146375 | metadata | conceptual | operational (access, withdrawal) vs collective-choice rights (management, exclusion, alienation) | — | today every co-located unit has access and withdrawal only |
+| Aktipis et al. 2016, *Hum. Ecol.* 44:353, doi:10.1007/s10745-016-9823-z | full text | pairs of agents, Maasai-inspired | need-based transfers outperform account-keeping in volatile settings, but neither beats no exchange unless "generosity", the probability that an agent honors a request it can afford, is ≥ ≈ 0.8, in that model's pairwise setting, shock regime and herd dynamics | emergence (rules imposed); multi-agent networks; any threshold on the *amount* given | the threshold is about the reliability of honoring affordable requests, not the share of surplus offered: it does not map onto φ = 0.3. It suggests that request-honoring reliability, if ever modelled, may matter non-linearly |
+| Hao et al. 2015 (online 2014), *Evol. Hum. Behav.* 36:265, doi:10.1016/j.evolhumbehav.2014.12.003 | metadata | network ABM | (reported via Campennì) asking the wealthiest partner beats asking a random one | emergence; verified content | whom to ask matters, and depends on information about partners |
+| Campennì, Cronk & Aktipis 2022 (online 2021), *Hum. Ecol.* 50:35, doi:10.1007/s10745-021-00273-6 | abstract + preprint full text | NetLogo ABM, 6–50 agents | need-based > debt-based for survival; advantage largest in small groups with weakly correlated shocks; asking rule uses full knowledge of partners' herds | emergence; spatial correlation (theirs is synchrony) | correlated shortfalls among a unit's contacts should limit any provisioning protocol |
+| Jaeggi & Gurven 2013, *Proc. R. Soc. B* 280:20131615, doi:10.1098/rspb.2013.1615 | abstract | meta-analysis of 32 independent study populations, human (foragers and other small-scale societies) and non-human primate, pooled | overall weighted reciprocity effect r = 0.20 (most conservative measure) to 0.48 (least conservative); no human / primate difference; relative effects of reciprocity, kinship and tolerated scrounging similar (abstract; on which subset of populations the three were compared is not stated in the abstract, and the full text was not read) | motives; causation (correlational within populations); that reciprocity dominates; anything about need-based requests | contingency on past giving is empirically comparable in size to kinship and tolerated scrounging, so need-based giving should not be assumed to be the default motive |
+| Claessens, Ayers, Cronk & Aktipis 2021, *Evol. Hum. Behav.* 42:104, doi:10.1016/j.evolhumbehav.2020.08.004 | preprint abstract | 3 economic-game experiments | when resources are hidden, people ask without need and refuse when able | field behaviour; dynamics | visibility is a variable: global visibility (current matcher) is a strong assumption |
+| Gurven 2004, *Behav. Brain Sci.* 27:543, doi:10.1017/s0140525x04000123 | abstract | review | kin selection, reciprocity, tolerated scrounging and signalling each explain part of sharing; donor control is central | a single rule | donor control and demand pressure are separable assumptions |
+| Grimm et al. 2020, *JASSS* 23(2):7, doi:10.18564/jasss.4259 | most of text | method | ODD second update ("purpose and patterns"; optional rationale) | — | specification standard for 6C |
+| Winterhalder 1986, *J. Anthropol. Archaeol.* 5:369, doi:10.1016/0278-4165(86)90017-6 | metadata (DOI now verified) | simulation | — (not re-checked) | — | — |
+
+**Corrections to §2.** Source 10: the need-based advantage is largest in *small* groups;
+its "correlation" is synchrony across all agents, not spatial correlation; the asking rule
+uses full information on partners' herds; access upgraded to abstract + preprint. Source 11
+DOI verified. Source 2: "ownership" is part of the predictor. Source 6: the authors call the
+analysis exploratory.
+
+**Synthesis.**
+- *C:* no source shows request or giving rules emerging; every provisioning model imposes
+  them (Aktipis 2011, 2016; Hao 2015; Campennì 2022). Benefits depend on willingness (a
+  threshold in Aktipis 2016), group size and synchrony. Empirically, reciprocity matters as
+  much as kinship and tolerated scrounging (Jaeggi & Gurven), and hidden resources change
+  asking and giving (Claessens). The literature therefore supports C's *questions*
+  (whom to ask, what is visible, who decides), not any particular rule.
+- *A:* territoriality and inequality sources concern exclusion and ownership, under
+  conditions measurably absent here (clumped, dense resources; land-limited production).
+  Moritz et al. 2018 is the only source here on non-exclusive shared use, and it makes
+  mobility and circumscription, not defence, the first-order variables. Moritz et al. 2019
+  (a separate comparative study, read at title level only) reports no support for the
+  defensibility model among African pastoral regimes. Neither speaks against rivalry
+  *without* exclusion as a substrate for allocation decisions; the A literature reviewed
+  simply does not address that question.
+- *B:* almost no direct support in this set (Gurven's coordination during acquisition;
+  labor exchange in one Moritz 2018 case). **Recorded as an evidence gap of this review, not
+  disconfirming evidence:** the coordination literature (e.g. on collective action in
+  acquisition or timing) was not searched.
+- *Method:* ODD and pattern-oriented modelling separate verification (the code does what is
+  specified) from validation (the specification is adequate). The oracle infrastructure
+  addresses the first only.
+
+### 18.4 Symmetric comparison
+
+*Revised at P4 closure (2026-10-29). The first P4 draft said A's decisions had "little
+margin" and B "no representable" form. Both overstated the evidence and are corrected below.*
+
+Same criteria, same level (a consequential interaction and the smallest new unit-level
+decision). No numerical scores. "Not measured" is not "small".
+
+| criterion | A rival access | B coordination | C provisioning |
+|---|---|---|---|
+| 1 material foundation | **yes:** rival use common (20 % · 62 %), median cost of co-use 1.6–4.9 % of need by seed, > 10 % for 14–25 % of shared-cell unit-years; zero-arable blockage (221 units) | **narrow form tested, small:** pooling of effort within a cell changes total harvest ≈ 1 % (no synergy in the production function). **Untested:** coordination of access (who uses which stock), of timing, of distribution | **yes:** transfers change intake; offers and transport are large levers (P3) |
+| 2 smallest new decision | choose among rival resource-use opportunities: which reachable cell to forage or settle, informed by crowding and arable land (not exclusion) | agree on who uses which stock or when (access or timing coordination) | whom to contact; whether and what to request; how a donor rations among requests (offer fixed) |
+| 3 margin for that decision | **plausible, not measured.** Exhausted labor (62.9 % of pressure eligible unit-years) removes the *effort* margin, not the *where* margin. Pooled vs independent tested only the stopping rule within one cell, not choice among cells. Better cells are believed for 81–90 % of crowded units (believed best / home p50 1.5–1.9); whether units under-respond is unknown. Migration counts believed co-users but ignores arable land | **not measured.** Access coordination over rival stocks is possible in principle; timing is not representable at an annual step; distributive coordination overlaps C | **measured and bounded:** priority alone reassigns 15–31 % of delivered food; aggregate gain ≤ +2.4 · +6.2 points under fixed offers |
+| 4 motivation | own need (represented) | own need; any gain from agreement would need a joint objective (new) | recipient: own deficit (represented). Donor: none; φ is a premise (6A) |
+| 5 information | own beliefs on cells and co-users (represented); arable land of other cells (not in migration's utility) | others' intentions (not represented) | own deficit (represented); contact set (to be grounded, §18.6); others' surplus not visible to actors |
+| 6 consequences | location, depletion, cultivation, survival, dispersal | allocation of stocks among co-users | who is served, intake, unused offers, contact dependence |
+| 7 falsifiability | static: believed and true options vs realized moves; dynamic: requires changing migration | requires a joint-decision model first | static and exact on recorded states, with a physical ceiling (P3) |
+| 8 representation | unit level | unit level | unit level |
+| 9 complexity and isolation | modifies an existing, central decision; every move changes later states, so consequences are dynamic by nature | needs a new decision structure among co-users | one event inside the trade step; static counterfactuals are exact |
+| 10 explanatory value | high: open access under mobility and circumscription (Moritz 2018) is a central question for later access decisions | potentially high; currently unspecified | replaces a non-actor allocation (global matcher, global visibility) in an *already active* between-unit interaction; risk: only a different allocation algorithm |
+
+**Reading of the matrix.**
+- A, B and C all have a causal foundation at Level 2 (B through rivalry, which any access
+  coordination would act on). Neither A nor B is deprioritized for lacking foundation, and
+  neither is asked to justify exclusion, property, synergy or institutions.
+- The tested pooling result is small for the stopping rule; it does not bound choice among
+  rival cells (A) or untested coordination of access, timing or distribution (B).
+- What still separates C at this level:
+  1. *Identifiability.* C's first question can be answered by exact static counterfactuals
+     on recorded states inside one step, against a certified physical ceiling. A1's
+     consequences are intrinsically dynamic (moves change every later state); B lacks a
+     specified decision.
+  2. *Size of the actor-semantics gap.* The current between-unit food interaction is
+     implemented without actors (central queue, global visibility). A's crowding response
+     is already mediated by actor beliefs in migration; its gap is a missing information
+     item (arable land) in an existing decision.
+  These are properties of the mechanisms, not of the repository's infrastructure.
+- The margin for C is *larger in evidence*, not necessarily larger in reality: A1's margin
+  is unmeasured. C's preference is therefore narrower than the first draft stated.
+
+### 18.5 Candidate actor-level mechanisms (comparable, not instructions)
+
+| | A1: choice among rival resource-use opportunities | B1: coordination of access or timing | C1: local contact, requests and donor rationing (φ fixed) | C2: endogenous willingness |
+|---|---|---|---|---|
+| hypothesis | units choosing where to forage or settle with crowding and arable land in view change dispersal, depletion and cultivation outcomes beyond the current migration rule | co-users agreeing on access or timing changes outcomes beyond independent use | local contact, requests and donor rationing produce distinguishable, interpretable consequences relative to central matching on the same contact graph | a donor decision on how much to give changes delivery materially |
+| decision | which reachable cell to use or move to | who uses which stock, when | whom to ask, what to request, how to ration | fraction of surplus to give |
+| information | own beliefs (exist); arable land of believed cells (new to migration) | others' intentions (new) | own deficit; contact set; donor sees only requests received | own state; perhaps past interactions (absent) |
+| existing support | `migration.py` (food per head counts believed others); opportunity recordings | none | P3 recordings, `match`, `provisioning_feasibility.solve` | `donor_offer`, 6A recordings |
+| new assumptions | arable term (and possibly crowding) in location utility | a joint decision procedure | contact rule, request content, rationing rule, termination | a motive and a magnitude (none anchored, 6A) |
+| null / rejection | static re-evaluation shows the current rule already follows the better believed options; or blocked units have no believed arable alternative | — (to be specified) | §18.6 items 5–6 | magnitude cannot be anchored without an arbitrary parameter |
+| first step | read-only: do blocked or crowded units have believed better options and stay? | specify a decision | static comparisons (§18.6) | φ sensitivity only |
+| scope | migration change (P5 decides whether this is a model correction) | new decision model | analysis first, then opt-in | blocked by motive |
+| confounds | travel, familiarity, belief staleness | — | contact definition; φ; transport; no feedback | `r`; budget convention |
+
+### 18.6 Decision
+
+**Decision labels.** The letters used in stage decisions are *option labels of each stage's
+brief*, not pathways. Stage 6B chose "Decision D", the option under which pathway C (risk
+pooling) was selected and a C mechanism recommended; 6A's "Decision B" is unrelated. P4's own
+options are A–D, where Option D is a prerequisite investigation. Below, "C" always means the
+*pathway*.
+
+1. **Recommendation: pathway C remains the next investigation, as C1** (local contact,
+   requests and donor rationing, φ fixed), not P4 Option D. The preference over A is
+   narrower than in the first draft and rests on identifiability and on the actor-semantics
+   gap (§18.4), not on A lacking foundation.
+2. **Why over A and B at the same level.** All three have a foundation. C1's question is
+   answerable exactly and statically within one step against a physical ceiling, and it
+   removes a non-actor implementation of an interaction that is already active. A1 is a
+   strong candidate whose margin is unmeasured and whose consequences are dynamic; its first
+   component (arable information in migration) may be a model-adequacy correction for P5
+   rather than a social-pathway choice. B is unspecified beyond the tested pooling rule.
+3. **Behavioural assumptions C1 introduces:** a contact rule; what a request communicates;
+   a donor rationing rule; a termination rule. It *keeps* φ = 0.3 and transport. It adds no
+   memory, preference, debt, kin or visibility of others' surplus.
+4. **First falsifiable question (6C-2).** Holding offers, deficits, transport and the
+   contact graph fixed, do request sequencing and donor rationing produce consequences
+   (delivered food, recipients served, unmet need, lower-tail intake, contact dependence)
+   that differ from a centralized control on the same graph by more than arbitrary
+   scheduling does, and can each difference be traced to a named assumption? No direction
+   is expected: lower delivery is as informative as higher.
+
+**Protocol questions for 6C-1** (to be specified there, not decided here; each is a
+behavioural assumption and is varied alone):
+
+| question | options to examine | default for the first static test, and why |
+|---|---|---|
+| contact eligibility | same species within the current reach (geographic, as the matcher now); same or adjacent cell; units met in prior years | current reach, so contact is held equal to production and the protocol's other parts are isolated; flagged as a premise. If no contact rule can be grounded better than geography, the pathway stays **conditional** |
+| requester information | own deficit and contact set only; plus contacts' surplus (visibility as a variable) | own deficit and contact set; others' surplus hidden (the matcher's global visibility is what is being removed) |
+| request content | need only (a signal); a quantity | a quantity: remaining deficit grossed up for the edge's transport fraction, so donor shipments can be checked against it |
+| donor knowledge | all requests of a round at once; requests one at a time | all requests of a round at once (avoids arrival-order artifacts) |
+| rationing | proportional to requested amounts; equal split with redistribution of unused shares; donor's own severity order | proportional and equal both tested; severity order is the central rule's policy and serves as a control |
+| donor budget | commitments `Σ_j x_ij ≤ O_i` over all rounds, offer remaining carried between rounds | as stated: the original offer is never exceeded |
+| recipient cap | ask one donor per round, or split the request; shipments capped at remaining deficit / f before shipment | one donor per round in the first test (no over-commitment), split-request as a variant |
+| termination | no transfer in a round; all requesters satisfied or out of contacts; a round limit K | the first two; K only as a safety bound, and results must be invariant to it. *To check in 6C-1:* "no transfer in a round" can end the protocol while some requesters still have untried contacts (e.g. every request in a round reached an exhausted donor); the rule must be verified against that case, or replaced by "no untried contact with remaining offer" |
+
+**Comparisons (6C-2), all on the same recorded years and offers:**
+
+| arm | contact graph | sequencing | rationing | isolates |
+|---|---|---|---|---|
+| S existing severity-priority matching | current reach | global, most severe first | donor nearest first | — (production; exact) |
+| R centralized random priority | current reach | global, random | nearest first | priority policy on the current reach graph (S vs R) |
+| G contact-restricted centralized control | the 6C-1 contact graph | global: severity (G_S) and random (G_R) | nearest first | contact constraint (G_S vs S, G_R vs R). If the contact graph equals current reach, G_S = S, G_R = R and the contact effect is zero by construction |
+| L local requests | the same graph as G | requester-driven rounds | proportional / equal | sequencing and rationing (L vs G); rationing alone (L-proportional vs L-equal) |
+| F physical ceiling | the same graph | — | — | P3 optimum restricted to the 6C contact graph: an upper bound for G, L and any allocation restricted to that graph. S and R use the current reach graph and need not fall below it unless the two graphs coincide (their own bound is the P3 optimum on current reach) |
+| scheduling noise | as in each arm | random orders, ids, K | — | the yardstick for "distinguishable" |
+
+**Contact matching.** Any comparison that isolates allocation policy (priority, sequencing,
+rationing) from contact must hold the contact graph fixed: L is compared with G_S and G_R, not
+with S or R, unless the 6C contact graph equals current reach.
+
+**Metrics:** delivered food; recipients served (any, full, partial, none); unmet deficit and
+its distribution; intake p1 and p10 (authoritative definition); unused offers; contact
+dependence (share of a recipient's receipts from its main donor; replaceability when that
+donor is removed); scheduling sensitivity. **Repeated dyads** are compared with a
+contact-matched null (recurrence under G and R on the same graph, and under random donor
+choice within the contact set), never read as relationships by themselves.
+
+5. **Proceed to dynamic implementation (6C-3, 6C-4) only if:**
+   - the 6C-1 contact rule is grounded well enough to state as a premise (otherwise C stays
+     conditional);
+   - the comparison of L with its contact-matched controls (G_S, G_R) gives scientifically
+     meaningful, interpretable differences, assessed across the four seeds with seed-level
+     uncertainty and heterogeneity reported (alongside the scheduling-noise range), rather
+     than a fixed every-seed threshold;
+   - each such difference is traced to a named assumption (contact, sequencing or rationing);
+   - results are invariant to K and ids, and no graph-restricted arm (G, L) exceeds F;
+   - the difference is not merely a reshuffle equivalent to a priority change (L vs the
+     contact-matched random-priority control G_R).
+   Improved delivery or nutrition is **not** a criterion.
+6. **Do not implement C1 dynamically (stop at 6C-2)** if L is indistinguishable from its
+   contact-matched controls given the cross-seed uncertainty; if its differences depend on
+   K, ids or arbitrary order; if they reduce to a priority change (L vs G_R); or if the
+   contact rule cannot be grounded. A redistribution alone is not evidence of a meaningful
+   social mechanism. A well-measured null is a scientifically useful result, recorded as
+   such: it shows that, under these premises, local contact and rationing add nothing beyond
+   central allocation on the same graph.
+7. **Fallback: A1** (choice among rival resource-use opportunities with crowding and arable
+   land in view). Return to it if C1 is rejected, if contact cannot be grounded, or if P5
+   judges the zero-arable / migration mismatch to be a model-adequacy defect that should be
+   corrected first. Its first step is read-only (§18.5).
+8. **Not assuming the outcome.** No memory, debt, reputation, kin or partner preference; no
+   new persistent state; offers unchanged; outcomes may be cooperative, competitive,
+   unequal or neutral.
+9. **Not yet:** willingness rules, directional memory, reciprocity, credit, partner
+   commitment, exclusion, territory, ownership, strata activation, authority, any change to
+   migration, any production configuration switch.
+
+**Changes to the 6B proposal (§14).** Assumptions unbundled; the "< 1 % from D0" criterion
+replaced by the comparisons above; aggregate gains bounded by F; φ held fixed deliberately
+(it is the largest lever, +25.6 · +37.1 points, but has no grounded motive, 6A, and changing it
+together with contact would confound both).
+
+**Status labels.** *Demonstrated physical substrate:* complementary shortage and surplus;
+rival use of shared stocks; zero-arable blockage. *Proposed actor-level mechanism:* C1.
+*Experimentally supported behavioural consequence:* none yet. *Hypothesized persistent
+relationship:* none proposed (recurring dyads are first tested against a contact-matched
+null). *Hypothesized institution:* none. Food-sharing opportunities are not insurance;
+rivalry is not property; the production matcher is not negotiated coordination.
+
+### 18.7 Proposed Stage 6C structure (conditional on approval after P5)
+
+P5 may reorder MVP milestones or implementation priority; this sequence applies only if C1
+is retained.
+
+| step | content | exit gate |
+|---|---|---|
+| 6C-1 | specify contact, request, rationing and termination (table above), in ODD terms | every assumption named and separately variable; contact rule grounded, or the pathway stays conditional |
+| 6C-2 | static comparisons S, R, G, L, F with scheduling noise (no simulator change) | §18.6 items 5–6 |
+| 6C-3 | minimal opt-in rule, versioned, default off; oracles identical when off | exact equivalence when off; static results reproduced in-run |
+| 6C-4 | branched dynamic runs: intake, survival, migration, fission, contact dependence, dyads against the contact-matched null | promote, revise or reject |
+
+### 18.8 Limitations
+
+- One topology per scenario; four seeds; one parameterization (φ, `r`, transport decay,
+  reach). C's preference over A rests on identifiability and the actor-semantics gap
+  (§18.4); A1's margin is unmeasured, and a measured A1 margin, a scenario making land
+  limiting or exits costly, or a P5 adequacy judgement on migration could reverse it.
+- All counterfactuals are static: no feedback into demography, migration or stores.
+- The literature supports C's questions, not its rules; no source shows provisioning rules
+  emerging. B is under-covered by the literature reviewed.
+- Several sources were accessed at abstract or metadata level only (§18.3).
+- The analyst's information (P3 optimum) exceeds any actor's; the optimum is a bound, not a
+  target.
+
+### 18.9 Issues reserved for P5
+
+P5 remains free to reorder the MVP milestones and the implementation priority, including
+placing an A1-type correction or capability work before C1.
+
+1. **Zero-arable cultivation** (221 units, up to 136 years): field planning and migration
+   do not share information about arable land. A model-adequacy question, not a migration
+   feature request.
+2. **Shared-resource rivalry** remains a substrate for later resource-access decisions
+   (Moritz: mobility and circumscription first), without ownership or territory.
+3. **Passive strata:** representation is not mechanism. Strata become necessary only when a
+   mechanism makes outcomes depend on within-unit position (e.g. who bears the cost of a
+   transfer or of foraging effort).
+4. **Provisioning premises:** φ = 0.3, central matching, global priority and geographic
+   contact are assumptions whose effects must not be read as endogenous decisions.
+5. **Validation vs verification:** exact reproducibility does not establish sociological
+   adequacy.
+6. **Sequence:** consequential between-unit interaction before internal differentiation;
+   whether the MVP order (strata before interaction) should change.
+7. **Model capabilities:** no within-year timing, no joint production, no clumped resource
+   class, one topology per scenario: each limits a pathway (B, A) independently of evidence.
+
+**Reproduce (P4 reanalysis):** the per-seed A and B figures use the probe's own
+`analyse_run` on fresh verified `opportunity_audit` recordings (8 / 8 neutral, commit
+`efe2603`); the 6B coverage medians use `donor_offer_audit.inputs` on the P3 recordings.
+No repository code was added.

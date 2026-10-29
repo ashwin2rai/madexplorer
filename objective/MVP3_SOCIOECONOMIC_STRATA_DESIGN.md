@@ -3999,6 +3999,13 @@ transfers. The re-recorded data reproduce every P1 figure exactly. Review §16.
 - No source shows deliberate maximization of insurance benefit. Willingness stays a
   premise.
 
+*6B-P4 (2026-10-29, for review; review §18): pathway C retained under a symmetric
+comparison, by a narrower margin (A and B also have causal foundations) — local contact,
+requests and donor rationing with φ fixed, assumptions unbundled, judged by distinguishable,
+interpretable consequences against centralized controls on the same contact graph and the
+P3 ceiling. Fallback A1 (choice among rival resource-use opportunities), pending P5.
+"Decision D" below is 6B's option label for choosing pathway C.*
+
 **Decision (provisional since 6B-P1; re-examined in 6B-P4): D (pathway C).** The physical substrate for risk pooling exists. The
 actor-level interaction does not:
 - central global priority;
@@ -4079,7 +4086,8 @@ uv run python scripts/probes/opportunity_audit.py analyse --load runs/stage6b_p1
   Under pressure, however, most foraging units miss their crop-net target, and collective
   cell utilization often exceeds individual shares. Which input limits such groups is open.
   Provisional Stage 6C candidate: local need requests with proportional donor rationing
-  (pathway C, decision D), re-examined in 6B-P4.
+  (pathway C, decision D), re-examined in 6B-P4: retained and revised (review §18.6), with
+  the zero-arable / migration mismatch and rivalry reserved for P5 (§18.9).
 - **Dust transfers (§AA §1).** Floating-point residues create ~1e-7 kcal transfers (0.7–1.5 %
   of transfers) and transient near-zero ties that can consume adoption draws.
 - **Hidden coordination assumptions (§Z).** Cooperative stopping in shared foraging patches;
